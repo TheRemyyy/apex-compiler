@@ -1110,7 +1110,7 @@ impl TypeChecker {
                     let t1 = self.check_expr(&args[0].node, args[0].span.clone());
                     let t2 = self.check_expr(&args[1].node, args[1].span.clone());
                     if !t1.is_numeric() || !t2.is_numeric() {
-                        self.error(format!("pow() requires numeric types"), span);
+                        self.error("pow() requires numeric types".to_string(), span);
                     }
                 }
                 Some(ResolvedType::Float)
@@ -1259,10 +1259,10 @@ impl TypeChecker {
                         let k = self.check_expr(&args[0].node, args[0].span.clone());
                         let v = self.check_expr(&args[1].node, args[1].span.clone());
                         if !self.types_compatible(key_type, &k) {
-                            self.error(format!("Map key type mismatch"), args[0].span.clone());
+                            self.error("Map key type mismatch".to_string(), args[0].span.clone());
                         }
                         if !self.types_compatible(val_type, &v) {
-                            self.error(format!("Map value type mismatch"), args[1].span.clone());
+                            self.error("Map value type mismatch".to_string(), args[1].span.clone());
                         }
                     }
                     ResolvedType::None
@@ -1272,7 +1272,7 @@ impl TypeChecker {
                     if !args.is_empty() {
                         let k = self.check_expr(&args[0].node, args[0].span.clone());
                         if !self.types_compatible(key_type, &k) {
-                            self.error(format!("Map key type mismatch"), args[0].span.clone());
+                            self.error("Map key type mismatch".to_string(), args[0].span.clone());
                         }
                     }
                     (**val_type).clone()
@@ -1282,7 +1282,7 @@ impl TypeChecker {
                     if !args.is_empty() {
                         let k = self.check_expr(&args[0].node, args[0].span.clone());
                         if !self.types_compatible(key_type, &k) {
-                            self.error(format!("Map key type mismatch"), args[0].span.clone());
+                            self.error("Map key type mismatch".to_string(), args[0].span.clone());
                         }
                     }
                     ResolvedType::Boolean

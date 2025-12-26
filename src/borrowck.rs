@@ -7,7 +7,7 @@
 //! - Use-after-move detection
 
 use crate::ast::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Borrow checking error
 #[derive(Debug, Clone)]
@@ -131,7 +131,7 @@ impl BorrowChecker {
             Decl::Function(func) => {
                 self.functions.insert(
                     func.name.clone(),
-                    func.params.iter().map(|p| p.mode.clone()).collect(),
+                    func.params.iter().map(|p| p.mode).collect(),
                 );
             }
             Decl::Class(class) => {
@@ -139,13 +139,13 @@ impl BorrowChecker {
                 for method in &class.methods {
                     methods.insert(
                         method.name.clone(),
-                        method.params.iter().map(|p| p.mode.clone()).collect(),
+                        method.params.iter().map(|p| p.mode).collect(),
                     );
                 }
                 let constructor = class
                     .constructor
                     .as_ref()
-                    .map(|c| c.params.iter().map(|p| p.mode.clone()).collect())
+                    .map(|c| c.params.iter().map(|p| p.mode).collect())
                     .unwrap_or_default();
 
                 self.classes.insert(
@@ -404,24 +404,17 @@ impl BorrowChecker {
         }
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn check_expr(&mut self, expr: &Expr, span: Span, need_mut: bool) {
         match expr {
             Expr::Ident(name) => {
                 // Using a variable - check if it's valid
                 let state = self.get_var(name).map(|v| v.state.clone());
-                if let Some(state) = state {
-                    match state {
-                        OwnershipState::Moved(move_span) => {
-                            self.errors.push(
-                                BorrowError::new(
-                                    format!("Use of moved value '{}'", name),
-                                    span.clone(),
-                                )
-                                .with_note("Value moved here", move_span),
-                            );
-                        }
-                        _ => {}
-                    }
+                if let Some(OwnershipState::Moved(move_span)) = state {
+                    self.errors.push(
+                        BorrowError::new(format!("Use of moved value '{}'", name), span.clone())
+                            .with_note("Value moved here", move_span),
+                    );
                 }
             }
 

@@ -1121,15 +1121,15 @@ impl<'src> Parser<'src> {
     }
 
     fn is_at_end_of_expr(&self) -> bool {
-        match self.current() {
+        matches!(
+            self.current(),
             Some(Token::RParen)
-            | Some(Token::RBrace)
-            | Some(Token::RBracket)
-            | Some(Token::Comma)
-            | Some(Token::Semi)
-            | None => true,
-            _ => false,
-        }
+                | Some(Token::RBrace)
+                | Some(Token::RBracket)
+                | Some(Token::Comma)
+                | Some(Token::Semi)
+                | None
+        )
     }
 
     fn parse_binary(&mut self, min_prec: u8) -> ParseResult<Spanned<Expr>> {
@@ -1627,7 +1627,7 @@ impl<'src> Parser<'src> {
 
                 let mut expr_str = String::new();
                 let mut depth = 1;
-                while let Some(c) = chars.next() {
+                for c in chars.by_ref() {
                     if c == '{' {
                         depth += 1;
                         expr_str.push(c);
