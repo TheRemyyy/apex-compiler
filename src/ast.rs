@@ -39,16 +39,16 @@ pub enum Visibility {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ParamMode {
     #[default]
-    Owned,      // Takes ownership (default)
-    Borrow,     // Immutable borrow
-    BorrowMut,  // Mutable borrow
+    Owned, // Takes ownership (default)
+    Borrow,    // Immutable borrow
+    BorrowMut, // Mutable borrow
 }
 
 /// Generic type parameter with optional bounds
 #[derive(Debug, Clone)]
 pub struct GenericParam {
     pub name: String,
-    pub bounds: Vec<String>,  // extends Interface1, Interface2
+    pub bounds: Vec<String>, // extends Interface1, Interface2
 }
 
 /// Complete program
@@ -85,7 +85,7 @@ pub struct ImportDecl {
 #[derive(Debug, Clone)]
 pub struct FunctionDecl {
     pub name: String,
-    pub generic_params: Vec<GenericParam>,  // <T extends Comparable>
+    pub generic_params: Vec<GenericParam>, // <T extends Comparable>
     pub params: Vec<Parameter>,
     pub return_type: Type,
     pub body: Block,
@@ -99,19 +99,19 @@ pub struct Parameter {
     pub name: String,
     pub ty: Type,
     pub mutable: bool,
-    pub mode: ParamMode,  // owned, borrow, borrow mut
+    pub mode: ParamMode, // owned, borrow, borrow mut
 }
 
 /// Class declaration
 #[derive(Debug, Clone)]
 pub struct ClassDecl {
     pub name: String,
-    pub generic_params: Vec<GenericParam>,  // class Box<T>
-    pub extends: Option<String>,             // extends BaseClass
-    pub implements: Vec<String>,             // implements Interface1, Interface2
+    pub generic_params: Vec<GenericParam>, // class Box<T>
+    pub extends: Option<String>,           // extends BaseClass
+    pub implements: Vec<String>,           // implements Interface1, Interface2
     pub fields: Vec<Field>,
     pub constructor: Option<Constructor>,
-    pub destructor: Option<Destructor>,      // destructor() { ... }
+    pub destructor: Option<Destructor>, // destructor() { ... }
     pub methods: Vec<FunctionDecl>,
     pub visibility: Visibility,
 }
@@ -142,7 +142,7 @@ pub struct Destructor {
 #[derive(Debug, Clone)]
 pub struct EnumDecl {
     pub name: String,
-    pub generic_params: Vec<GenericParam>,  // enum Result<T, E>
+    pub generic_params: Vec<GenericParam>, // enum Result<T, E>
     pub variants: Vec<EnumVariant>,
     pub visibility: Visibility,
 }
@@ -151,13 +151,13 @@ pub struct EnumDecl {
 #[derive(Debug, Clone)]
 pub struct EnumVariant {
     pub name: String,
-    pub fields: Vec<EnumField>,  // Named or anonymous fields
+    pub fields: Vec<EnumField>, // Named or anonymous fields
 }
 
 /// Enum field (can be named or just type)
 #[derive(Debug, Clone)]
 pub struct EnumField {
-    pub name: Option<String>,  // None for positional, Some for named
+    pub name: Option<String>, // None for positional, Some for named
     pub ty: Type,
 }
 
@@ -166,7 +166,7 @@ pub struct EnumField {
 pub struct InterfaceDecl {
     pub name: String,
     pub generic_params: Vec<GenericParam>,
-    pub extends: Vec<String>,  // extends other interfaces
+    pub extends: Vec<String>, // extends other interfaces
     pub methods: Vec<InterfaceMethod>,
     pub visibility: Visibility,
 }
@@ -177,7 +177,7 @@ pub struct InterfaceMethod {
     pub name: String,
     pub params: Vec<Parameter>,
     pub return_type: Type,
-    pub default_impl: Option<Block>,  // Default implementation
+    pub default_impl: Option<Block>, // Default implementation
 }
 
 /// Types
@@ -202,14 +202,14 @@ pub enum Type {
     Map(Box<Type>, Box<Type>),
     Set(Box<Type>),
     // Reference types (ownership system)
-    Ref(Box<Type>),      // &T - immutable borrow
-    MutRef(Box<Type>),   // &mut T - mutable borrow
+    Ref(Box<Type>),    // &T - immutable borrow
+    MutRef(Box<Type>), // &mut T - mutable borrow
     // Smart pointers
-    Box(Box<Type>),      // Box<T> - heap allocated
-    Rc(Box<Type>),       // Rc<T> - reference counted
-    Arc(Box<Type>),      // Arc<T> - atomic reference counted
+    Box(Box<Type>), // Box<T> - heap allocated
+    Rc(Box<Type>),  // Rc<T> - reference counted
+    Arc(Box<Type>), // Arc<T> - atomic reference counted
     // Async types
-    Task(Box<Type>),     // Task<T> - async task
+    Task(Box<Type>), // Task<T> - async task
 }
 
 impl Type {
@@ -218,7 +218,10 @@ impl Type {
     }
 
     pub fn is_copy(&self) -> bool {
-        matches!(self, Type::Integer | Type::Float | Type::Boolean | Type::Char | Type::None)
+        matches!(
+            self,
+            Type::Integer | Type::Float | Type::Boolean | Type::Char | Type::None
+        )
     }
 
     pub fn is_reference(&self) -> bool {
