@@ -1,0 +1,23 @@
+[package]
+name = "apex-compiler"
+version = "0.1.0"
+edition = "2021"
+authors = ["Remyyy"]
+description = "Apex Programming Language Compiler"
+
+[dependencies]
+# LLVM 21 bindings
+inkwell = { git = "https://github.com/TheDan64/inkwell.git", default-features = false, features = ["llvm21-1", "target-x86"] }
+
+# Lexer
+logos = "0.15"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Colored output
+colored = "2"
+
+[profile.release]
+opt-level = 3
+lto = true

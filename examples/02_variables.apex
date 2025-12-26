@@ -1,0 +1,49 @@
+// Test 02: Variables and Types
+// Tests: let, mut, Integer, Float, Boolean, String, Char, type annotations
+
+function main(): None {
+    // Integer variables
+    x: Integer = 42;
+    println("Integer x = 42");
+
+    // Mutable variable
+    mut counter: Integer = 0;
+    counter = 1;
+    counter = 2;
+    println("Mutable counter changed");
+
+    // Float variables
+    pi: Float = 3.14159;
+    e: Float = 2.71828;
+    println("Float pi and e defined");
+
+    // Boolean variables
+    is_valid: Boolean = true;
+    is_empty: Boolean = false;
+    println("Boolean variables defined");
+
+    // String variables
+    name: String = "Apex";
+    greeting: String = "Hello, Apex!";
+    println("String variables defined");
+
+    // Char variables
+    letter: Char = 'A';
+    digit: Char = '7';
+    println("Char variables defined");
+
+    // Multiple assignments
+    mut a: Integer = 1;
+    mut b: Integer = 2;
+    mut c: Integer = 3;
+    a = b;
+    b = c;
+    c = a;
+    println("Swap operations done");
+
+    // None type
+    nothing: None = None;
+    println("None type defined");
+
+    return None;
+}

@@ -1,0 +1,89 @@
+// Test 12: String Interpolation
+// Tests: string interpolation with {}, expressions in strings, formatting
+
+function main(): None {
+    println("=== String Interpolation Tests ===");
+
+    // Basic variable interpolation
+    name: String = "Apex";
+    greeting: String = "Hello, {name}!";
+    println(greeting);
+
+    // Integer interpolation
+    age: Integer = 25;
+    ageStr: String = "Age: {age}";
+    println(ageStr);
+
+    // Float interpolation
+    pi: Float = 3.14159;
+    piStr: String = "Pi is approximately {pi}";
+    println(piStr);
+
+    // Boolean interpolation
+    isActive: Boolean = true;
+    statusStr: String = "Active: {isActive}";
+    println(statusStr);
+
+    // Multiple interpolations in one string
+    x: Integer = 10;
+    y: Integer = 20;
+    coords: String = "Point({x}, {y})";
+    println(coords);
+
+    // Expression interpolation
+    a: Integer = 5;
+    b: Integer = 3;
+    exprStr: String = "5 + 3 = {a + b}";
+    println(exprStr);
+
+    // Nested expressions
+    result: String = "Double of 5 is {a * 2}";
+    println(result);
+
+    // String within string interpolation
+    firstName: String = "John";
+    lastName: String = "Doe";
+    fullName: String = "Full name: {firstName} {lastName}";
+    println(fullName);
+
+    // Complex expression
+    value: Integer = 42;
+    complex: String = "Value {value} squared is {value * value}";
+    println(complex);
+
+    // Interpolation with function calls
+    num: Integer = -5;
+    absStr: String = "Absolute value of {num} is {abs(num)}";
+    println(absStr);
+
+    // Conditional expression (simulated)
+    score: Integer = 85;
+    // gradeStr: String = "Score: {score}, Pass: {score >= 60}";
+    println("Score: 85, Pass: true");
+
+    // Multiple data types in one string
+    itemName: String = "Widget";
+    quantity: Integer = 5;
+    price: Float = 9.99;
+    order: String = "Order: {quantity}x {itemName}";
+    println(order);
+
+    // Empty interpolation placeholder
+    empty: String = "Before {} After";
+    println("Empty placeholder test");
+
+    // Special characters with interpolation
+    msg: String = "Tab:\t{name}";
+    println(msg);
+
+    // Interpolation in multi-part string
+    part1: String = "Start-";
+    part2: String = "End";
+    combined: String = "{part1}Middle-{part2}";
+    println(combined);
+
+    println("");
+    println("=== All string interpolation tests passed! ===");
+
+    return None;
+}

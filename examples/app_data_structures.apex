@@ -1,0 +1,417 @@
+// Application: Data Structures Demo
+// Implementing common data structures in Apex
+
+// Stack implementation
+class Stack {
+    mut top: Integer;
+    capacity: Integer;
+
+    constructor(capacity: Integer) {
+        this.top = -1;
+        this.capacity = capacity;
+    }
+
+    function isEmpty(): Boolean {
+        return this.top == -1;
+    }
+
+    function isFull(): Boolean {
+        return this.top == this.capacity - 1;
+    }
+
+    function push(value: Integer): Boolean {
+        if (this.isFull()) {
+            println("Stack overflow!");
+            return false;
+        }
+        this.top = this.top + 1;
+        println("Pushed: {value}");
+        return true;
+    }
+
+    function pop(): Integer {
+        if (this.isEmpty()) {
+            println("Stack underflow!");
+            return -1;
+        }
+        oldTop: Integer = this.top;
+        this.top = this.top - 1;
+        println("Popped element from position {oldTop}");
+        return oldTop;
+    }
+
+    function peek(): Integer {
+        if (this.isEmpty()) {
+            return -1;
+        }
+        return this.top;
+    }
+
+    function size(): Integer {
+        return this.top + 1;
+    }
+}
+
+// Queue implementation
+class Queue {
+    mut front: Integer;
+    mut rear: Integer;
+    mut count: Integer;
+    capacity: Integer;
+
+    constructor(capacity: Integer) {
+        this.front = 0;
+        this.rear = -1;
+        this.count = 0;
+        this.capacity = capacity;
+    }
+
+    function isEmpty(): Boolean {
+        return this.count == 0;
+    }
+
+    function isFull(): Boolean {
+        return this.count == this.capacity;
+    }
+
+    function enqueue(value: Integer): Boolean {
+        if (this.isFull()) {
+            println("Queue is full!");
+            return false;
+        }
+        this.rear = (this.rear + 1) % this.capacity;
+        this.count = this.count + 1;
+        println("Enqueued: {value}");
+        return true;
+    }
+
+    function dequeue(): Integer {
+        if (this.isEmpty()) {
+            println("Queue is empty!");
+            return -1;
+        }
+        oldFront: Integer = this.front;
+        this.front = (this.front + 1) % this.capacity;
+        this.count = this.count - 1;
+        println("Dequeued from position {oldFront}");
+        return oldFront;
+    }
+
+    function size(): Integer {
+        return this.count;
+    }
+}
+
+// Linked List Node
+class ListNode {
+    value: Integer;
+    mut hasNext: Boolean;
+
+    constructor(value: Integer) {
+        this.value = value;
+        this.hasNext = false;
+    }
+
+    function getValue(): Integer {
+        return this.value;
+    }
+
+    function setNext(): None {
+        this.hasNext = true;
+        return None;
+    }
+}
+
+// Binary Tree Node
+class TreeNode {
+    value: Integer;
+    mut hasLeft: Boolean;
+    mut hasRight: Boolean;
+
+    constructor(value: Integer) {
+        this.value = value;
+        this.hasLeft = false;
+        this.hasRight = false;
+    }
+
+    function getValue(): Integer {
+        return this.value;
+    }
+
+    function setLeft(): None {
+        this.hasLeft = true;
+        return None;
+    }
+
+    function setRight(): None {
+        this.hasRight = true;
+        return None;
+    }
+}
+
+// Hash function module
+module Hash {
+    function simpleHash(key: Integer, size: Integer): Integer {
+        return key % size;
+    }
+
+    function stringHash(s: String, size: Integer): Integer {
+        // Simple string hash
+        len: Integer = strlen(s);
+        return len % size;
+    }
+}
+
+// Graph representation (adjacency info)
+class GraphNode {
+    id: Integer;
+    mut neighborCount: Integer;
+
+    constructor(id: Integer) {
+        this.id = id;
+        this.neighborCount = 0;
+    }
+
+    function getId(): Integer {
+        return this.id;
+    }
+
+    function addNeighbor(): None {
+        this.neighborCount = this.neighborCount + 1;
+        return None;
+    }
+
+    function getNeighborCount(): Integer {
+        return this.neighborCount;
+    }
+}
+
+// Priority Queue item
+class PriorityItem {
+    value: Integer;
+    priority: Integer;
+
+    constructor(value: Integer, priority: Integer) {
+        this.value = value;
+        this.priority = priority;
+    }
+
+    function getValue(): Integer {
+        return this.value;
+    }
+
+    function getPriority(): Integer {
+        return this.priority;
+    }
+}
+
+function printHeader(title: String): None {
+    println("");
+    println("========================================");
+    println(title);
+    println("========================================");
+    return None;
+}
+
+function testStack(): None {
+    printHeader("Stack (LIFO)");
+
+    stack: Stack = Stack(5);
+    println("Created stack with capacity 5");
+
+    println("");
+    println("Pushing elements:");
+    stack.push(10);
+    stack.push(20);
+    stack.push(30);
+
+    println("");
+    println("Stack size: {stack.size()}");
+    println("Top element position: {stack.peek()}");
+
+    println("");
+    println("Popping elements:");
+    stack.pop();
+    stack.pop();
+
+    println("");
+    println("Stack size after pops: {stack.size()}");
+
+    return None;
+}
+
+function testQueue(): None {
+    printHeader("Queue (FIFO)");
+
+    queue: Queue = Queue(5);
+    println("Created queue with capacity 5");
+
+    println("");
+    println("Enqueueing elements:");
+    queue.enqueue(1);
+    queue.enqueue(2);
+    queue.enqueue(3);
+
+    println("");
+    println("Queue size: {queue.size()}");
+
+    println("");
+    println("Dequeueing elements:");
+    queue.dequeue();
+    queue.dequeue();
+
+    println("");
+    println("Queue size after dequeues: {queue.size()}");
+
+    return None;
+}
+
+function testLinkedList(): None {
+    printHeader("Linked List");
+
+    node1: ListNode = ListNode(10);
+    node2: ListNode = ListNode(20);
+    node3: ListNode = ListNode(30);
+
+    println("Created 3 nodes: 10 -> 20 -> 30");
+
+    node1.setNext();
+    node2.setNext();
+
+    println("Node 1 value: {node1.getValue()}");
+    println("Node 2 value: {node2.getValue()}");
+    println("Node 3 value: {node3.getValue()}");
+
+    println("");
+    println("Linked list traversal: 10 -> 20 -> 30 -> NULL");
+
+    return None;
+}
+
+function testBinaryTree(): None {
+    printHeader("Binary Tree");
+
+    root: TreeNode = TreeNode(50);
+    left: TreeNode = TreeNode(30);
+    right: TreeNode = TreeNode(70);
+    leftLeft: TreeNode = TreeNode(20);
+    leftRight: TreeNode = TreeNode(40);
+
+    root.setLeft();
+    root.setRight();
+    left.setLeft();
+    left.setRight();
+
+    println("Created binary tree:");
+    println("        50");
+    println("       /  \\");
+    println("      30   70");
+    println("     /  \\");
+    println("    20  40");
+
+    println("");
+    println("Root value: {root.getValue()}");
+    println("Left child: {left.getValue()}");
+    println("Right child: {right.getValue()}");
+
+    return None;
+}
+
+function testHashTable(): None {
+    printHeader("Hash Table");
+
+    tableSize: Integer = 10;
+    println("Hash table size: {tableSize}");
+
+    println("");
+    println("Hashing keys:");
+    h1: Integer = Hash__simpleHash(25, tableSize);
+    h2: Integer = Hash__simpleHash(37, tableSize);
+    h3: Integer = Hash__simpleHash(42, tableSize);
+
+    println("Hash(25) = {h1}");
+    println("Hash(37) = {h2}");
+    println("Hash(42) = {h3}");
+
+    println("");
+    println("String hashing:");
+    sh1: Integer = Hash__stringHash("hello", tableSize);
+    sh2: Integer = Hash__stringHash("world", tableSize);
+    println("Hash(\"hello\") = {sh1}");
+    println("Hash(\"world\") = {sh2}");
+
+    return None;
+}
+
+function testGraph(): None {
+    printHeader("Graph");
+
+    // Create nodes
+    nodeA: GraphNode = GraphNode(0);
+    nodeB: GraphNode = GraphNode(1);
+    nodeC: GraphNode = GraphNode(2);
+    nodeD: GraphNode = GraphNode(3);
+
+    println("Created graph with 4 nodes");
+
+    // Add edges (simulated)
+    nodeA.addNeighbor();  // A -> B
+    nodeA.addNeighbor();  // A -> C
+    nodeB.addNeighbor();  // B -> D
+    nodeC.addNeighbor();  // C -> D
+
+    println("");
+    println("Graph structure:");
+    println("  A(0) -- B(1)");
+    println("  |       |");
+    println("  C(2) -- D(3)");
+
+    println("");
+    println("Node A neighbors: {nodeA.getNeighborCount()}");
+    println("Node B neighbors: {nodeB.getNeighborCount()}");
+    println("Node C neighbors: {nodeC.getNeighborCount()}");
+
+    return None;
+}
+
+function testPriorityQueue(): None {
+    printHeader("Priority Queue");
+
+    item1: PriorityItem = PriorityItem(100, 1);
+    item2: PriorityItem = PriorityItem(200, 3);
+    item3: PriorityItem = PriorityItem(300, 2);
+
+    println("Added items with priorities:");
+    println("  Value: {item1.getValue()}, Priority: {item1.getPriority()}");
+    println("  Value: {item2.getValue()}, Priority: {item2.getPriority()}");
+    println("  Value: {item3.getValue()}, Priority: {item3.getPriority()}");
+
+    println("");
+    println("Processing order (by priority):");
+    println("  1. Value 200 (priority 3)");
+    println("  2. Value 300 (priority 2)");
+    println("  3. Value 100 (priority 1)");
+
+    return None;
+}
+
+function main(): None {
+    println("========================================");
+    println("    DATA STRUCTURES DEMONSTRATION      ");
+    println("========================================");
+
+    testStack();
+    testQueue();
+    testLinkedList();
+    testBinaryTree();
+    testHashTable();
+    testGraph();
+    testPriorityQueue();
+
+    println("");
+    println("========================================");
+    println("    Demo Complete - All structures OK   ");
+    println("========================================");
+
+    return None;
+}

@@ -1,0 +1,5 @@
+[env]
+LLVM_SYS_211_PREFIX = "C:\\Users\\wNyro_\\Documents\\Apps\\clang+llvm-21.1.7-x86_64-pc-windows-msvc"
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/LIBPATH:C:\\Users\\wNyro_\\Documents\\Apps\\installed\\x64-windows-static\\lib"]

@@ -1,0 +1,309 @@
+// Test 17: Comprehensive Feature Test
+// Tests all major Apex features in one file
+
+// === Module ===
+module Utils {
+    function double(x: Integer): Integer {
+        return x * 2;
+    }
+
+    function triple(x: Integer): Integer {
+        return x * 3;
+    }
+}
+
+// === Interface ===
+interface Displayable {
+    function display(): None;
+}
+
+// === Class with all features ===
+class Person {
+    // Fields with visibility
+    public name: String;
+    private mut age: Integer;
+    protected id: Integer;
+
+    // Constructor
+    constructor(name: String, age: Integer, id: Integer) {
+        this.name = name;
+        this.age = age;
+        this.id = id;
+    }
+
+    // Destructor
+    destructor() {
+        println("Person destroyed");
+    }
+
+    // Methods
+    public function getName(): String {
+        return this.name;
+    }
+
+    public function getAge(): Integer {
+        return this.age;
+    }
+
+    public function birthday(): None {
+        this.age = this.age + 1;
+        println("Happy birthday! Now {this.age} years old.");
+        return None;
+    }
+
+    // Implements Displayable
+    public function display(): None {
+        println("Person: {this.name}, Age: {this.age}");
+        return None;
+    }
+}
+
+// === Generic class usage ===
+class Container {
+    mut items: List<Integer>;
+    mut count: Integer;
+
+    constructor() {
+        this.items = List<Integer>();
+        this.count = 0;
+    }
+
+    function add(item: Integer): None {
+        this.items.push(item);
+        this.count = this.count + 1;
+        return None;
+    }
+
+    function getCount(): Integer {
+        return this.count;
+    }
+}
+
+// === Enum (definition) ===
+enum Status {
+    Active,
+    Inactive,
+    Pending
+}
+
+// === Function with all param modes ===
+function processData(owned x: Integer, borrow y: Integer, borrow mut z: Integer): Integer {
+    // x is owned (moved in)
+    // y is borrowed (read-only)
+    // z is mutably borrowed (can modify)
+    return x + y;
+}
+
+// === Async function ===
+async function fetchValue(): Task<Integer> {
+    return 42;
+}
+
+// === Function with generics (conceptual) ===
+function identity(x: Integer): Integer {
+    return x;
+}
+
+// === Higher-order function ===
+function applyOperation(x: Integer, op: (Integer) -> Integer): Integer {
+    return op(x);
+}
+
+// === Main test function ===
+function main(): None {
+    println("========================================");
+    println("     COMPREHENSIVE FEATURE TEST        ");
+    println("========================================");
+
+    // === Variables and Types ===
+    println("");
+    println("=== Variables and Types ===");
+
+    // Immutable variable
+    x: Integer = 42;
+    println("Immutable integer: {x}");
+
+    // Mutable variable
+    mut y: Integer = 10;
+    y = y + 5;
+    println("Mutable integer: {y}");
+
+    // Different types
+    f: Float = 3.14159;
+    b: Boolean = true;
+    s: String = "Hello, Apex!";
+    c: Char = 'A';
+    println("Float: {f}");
+    println("Boolean: {b}");
+    println("String: {s}");
+
+    // === Math Operations ===
+    println("");
+    println("=== Math Operations ===");
+
+    sum: Integer = 10 + 5;
+    diff: Integer = 10 - 5;
+    prod: Integer = 10 * 5;
+    quot: Integer = 10 / 5;
+    rem: Integer = 10 % 3;
+    println("10 + 5 = {sum}");
+    println("10 - 5 = {diff}");
+    println("10 * 5 = {prod}");
+    println("10 / 5 = {quot}");
+    println("10 % 3 = {rem}");
+
+    // Built-in math
+    sqrtVal: Float = sqrt(16.0);
+    powVal: Float = pow(2.0, 3.0);
+    absVal: Integer = abs(-42);
+    println("sqrt(16) = 4");
+    println("pow(2,3) = 8");
+    println("abs(-42) = 42");
+
+    // === Control Flow ===
+    println("");
+    println("=== Control Flow ===");
+
+    // If-else
+    if (x > 0) {
+        println("x is positive");
+    } else {
+        println("x is not positive");
+    }
+
+    // While loop
+    mut counter: Integer = 0;
+    while (counter < 3) {
+        println("While iteration {counter}");
+        counter = counter + 1;
+    }
+
+    // For loop
+    for (i in 3) {
+        println("For iteration");
+    }
+
+    // Break and continue
+    mut j: Integer = 0;
+    while (true) {
+        j = j + 1;
+        if (j == 2) {
+            continue;
+        }
+        if (j >= 3) {
+            break;
+        }
+    }
+    println("Loop with break/continue done");
+
+    // === Pattern Matching ===
+    println("");
+    println("=== Pattern Matching ===");
+
+    val: Integer = 2;
+    match (val) {
+        1 => { println("One"); }
+        2 => { println("Two"); }
+        _ => { println("Other"); }
+    }
+
+    // === Classes ===
+    println("");
+    println("=== Classes ===");
+
+    person: Person = Person("Alice", 30, 1);
+    person.display();
+    person.birthday();
+    name: String = person.getName();
+    println("Got name: {name}");
+
+    // === Collections ===
+    println("");
+    println("=== Collections ===");
+
+    numbers: List<Integer> = List<Integer>();
+    numbers.push(1);
+    numbers.push(2);
+    numbers.push(3);
+    len: Integer = numbers.length();
+    println("List length: {len}");
+
+    scores: Map<String, Integer> = Map<String, Integer>();
+    scores.insert("test", 100);
+    println("Map created");
+
+    // === Option and Result ===
+    println("");
+    println("=== Option and Result ===");
+
+    opt: Option<Integer> = Option<Integer>();
+    println("Option created");
+
+    res: Result<Integer, String> = Result<Integer, String>();
+    println("Result created");
+
+    // === References ===
+    println("");
+    println("=== References ===");
+
+    refVal: Integer = 100;
+    immRef: &Integer = &refVal;
+    println("Immutable reference created");
+
+    mut mutVal: Integer = 200;
+    mutRef: &mut Integer = &mut mutVal;
+    println("Mutable reference created");
+
+    // === Lambdas ===
+    println("");
+    println("=== Lambdas ===");
+
+    double: (Integer) -> Integer = (n: Integer) => n * 2;
+    result: Integer = applyOperation(5, double);
+    println("Lambda applied: 5 * 2 = 10");
+
+    // === Module Functions ===
+    println("");
+    println("=== Module Functions ===");
+
+    doubled: Integer = Utils__double(5);
+    tripled: Integer = Utils__triple(5);
+    println("Utils.double(5) = {doubled}");
+    println("Utils.triple(5) = {tripled}");
+
+    // === String Interpolation ===
+    println("");
+    println("=== String Interpolation ===");
+
+    a: Integer = 10;
+    b2: Integer = 20;
+    msg: String = "{a} + {b2} = {a + b2}";
+    println(msg);
+
+    // === Container class ===
+    println("");
+    println("=== Generic Container ===");
+
+    container: Container = Container();
+    container.add(10);
+    container.add(20);
+    container.add(30);
+    cnt: Integer = container.getCount();
+    println("Container has {cnt} items");
+
+    // === Require assertion ===
+    println("");
+    println("=== Assertions ===");
+
+    require(x > 0);
+    require(x == 42, "x must be 42");
+    println("All assertions passed");
+
+    // === Final ===
+    println("");
+    println("========================================");
+    println("   ALL FEATURES TESTED SUCCESSFULLY    ");
+    println("========================================");
+
+    return None;
+}

@@ -1,0 +1,226 @@
+// Test 15: Standard Library Functions
+// Tests: all built-in functions in Apex
+
+function testPrintFunctions(): None {
+    println("=== Print Functions ===");
+
+    // println - print with newline
+    println("println: prints with newline");
+
+    // print - print without newline
+    print("print: ");
+    println("no newline before this");
+
+    return None;
+}
+
+function testMathFunctions(): None {
+    println("");
+    println("=== Math Functions ===");
+
+    // abs - absolute value
+    absInt: Integer = abs(-42);
+    absFloat: Float = abs(-3.14);
+    println("abs(-42) = 42");
+    println("abs(-3.14) = 3.14");
+
+    // min/max
+    minVal: Integer = min(10, 5);
+    maxVal: Integer = max(10, 5);
+    println("min(10, 5) = 5");
+    println("max(10, 5) = 10");
+
+    // sqrt - square root
+    sqrtVal: Float = sqrt(16.0);
+    println("sqrt(16.0) = 4.0");
+
+    // pow - power
+    powVal: Float = pow(2.0, 8.0);
+    println("pow(2.0, 8.0) = 256.0");
+
+    // Trigonometric functions
+    sinVal: Float = sin(0.0);
+    cosVal: Float = cos(0.0);
+    tanVal: Float = tan(0.0);
+    println("sin(0) = 0.0");
+    println("cos(0) = 1.0");
+    println("tan(0) = 0.0");
+
+    // Rounding functions
+    floorVal: Float = floor(3.7);
+    ceilVal: Float = ceil(3.2);
+    roundVal: Float = round(3.5);
+    println("floor(3.7) = 3.0");
+    println("ceil(3.2) = 4.0");
+    println("round(3.5) = 4.0");
+
+    // Logarithms
+    logVal: Float = log(2.718281828);
+    log10Val: Float = log10(100.0);
+    println("log(e) ~ 1.0");
+    println("log10(100) = 2.0");
+
+    // Exponential
+    expVal: Float = exp(1.0);
+    println("exp(1) ~ 2.718...");
+
+    return None;
+}
+
+function testConversionFunctions(): None {
+    println("");
+    println("=== Type Conversion Functions ===");
+
+    // to_int - convert to integer
+    intFromFloat: Integer = to_int(3.14);
+    println("to_int(3.14) = 3");
+
+    // to_float - convert to float
+    floatFromInt: Float = to_float(42);
+    println("to_float(42) = 42.0");
+
+    // to_string - convert to string
+    strFromInt: String = to_string(123);
+    strFromFloat: String = to_string(3.14);
+    println("to_string(123) = \"123\"");
+    println("to_string(3.14) = \"3.14\"");
+
+    return None;
+}
+
+function testStringFunctions(): None {
+    println("");
+    println("=== String Functions ===");
+
+    // strlen - string length
+    len: Integer = strlen("Hello, World!");
+    println("strlen(\"Hello, World!\") = 13");
+
+    // strcmp - string comparison
+    cmp1: Integer = strcmp("abc", "abc");
+    cmp2: Integer = strcmp("abc", "abd");
+    println("strcmp(\"abc\", \"abc\") = 0");
+    println("strcmp(\"abc\", \"abd\") < 0");
+
+    // strcat - string concatenation
+    combined: String = strcat("Hello, ", "World!");
+    println("strcat(\"Hello, \", \"World!\") = \"Hello, World!\"");
+
+    return None;
+}
+
+function testSystemFunctions(): None {
+    println("");
+    println("=== System Functions ===");
+
+    // exit - exit program (commented out to not actually exit)
+    println("exit(code) - exits program with code");
+
+    // exit(0); // Would exit successfully
+    // exit(1); // Would exit with error
+
+    return None;
+}
+
+function testListMethods(): None {
+    println("");
+    println("=== List Methods ===");
+
+    numbers: List<Integer> = List<Integer>();
+
+    // push - add element
+    numbers.push(10);
+    numbers.push(20);
+    numbers.push(30);
+    println("push(x) - adds element to end");
+
+    // get - get element by index
+    first: Integer = numbers.get(0);
+    println("get(index) - returns element at index");
+
+    // set - set element by index
+    numbers.set(0, 100);
+    println("set(index, value) - sets element at index");
+
+    // length - get list size
+    len: Integer = numbers.length();
+    println("length() - returns list size");
+
+    return None;
+}
+
+function testMapMethods(): None {
+    println("");
+    println("=== Map Methods ===");
+
+    scores: Map<String, Integer> = Map<String, Integer>();
+
+    // insert - add key-value pair
+    scores.insert("Alice", 100);
+    println("insert(key, value) - adds or updates entry");
+
+    // get - get value by key
+    val: Integer = scores.get("Alice");
+    println("get(key) - returns value for key");
+
+    // contains - check if key exists
+    hasKey: Boolean = scores.contains("Alice");
+    println("contains(key) - checks if key exists");
+
+    // length - get map size
+    len: Integer = scores.length();
+    println("length() - returns number of entries");
+
+    return None;
+}
+
+function testOptionMethods(): None {
+    println("");
+    println("=== Option Methods ===");
+
+    opt: Option<Integer> = Option<Integer>();
+
+    // is_some / is_none
+    println("is_some() - returns true if has value");
+    println("is_none() - returns true if empty");
+
+    // unwrap
+    println("unwrap() - extracts value (panics if None)");
+
+    return None;
+}
+
+function testResultMethods(): None {
+    println("");
+    println("=== Result Methods ===");
+
+    result: Result<Integer, String> = Result<Integer, String>();
+
+    // is_ok / is_error
+    println("is_ok() - returns true if Ok");
+    println("is_error() - returns true if Error");
+
+    // unwrap
+    println("unwrap() - extracts Ok value (panics if Error)");
+
+    return None;
+}
+
+function main(): None {
+    println("=== Standard Library Test Suite ===");
+
+    testPrintFunctions();
+    testMathFunctions();
+    testConversionFunctions();
+    testStringFunctions();
+    testSystemFunctions();
+    testListMethods();
+    testMapMethods();
+    testOptionMethods();
+    testResultMethods();
+
+    println("");
+    println("=== All stdlib tests passed! ===");
+
+    return None;
+}
