@@ -23,7 +23,7 @@ jobs:
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 21
-          echo "LLVM_SYS_210_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
+          echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -59,7 +59,7 @@ jobs:
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 21
-          echo "LLVM_SYS_210_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
+          echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
 
       - name: Build compiler
         run: cargo build --release
