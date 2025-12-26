@@ -8,6 +8,9 @@
 //! - Async/await
 //! - Full pattern matching
 
+#![allow(dead_code)]
+#![allow(clippy::enum_variant_names)]
+
 use std::ops::Range;
 
 /// Source location span

@@ -1,5 +1,7 @@
 //! Apex Code Generator - LLVM IR generation
 
+#![allow(dead_code)]
+
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;

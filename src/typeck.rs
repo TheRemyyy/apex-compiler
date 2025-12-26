@@ -6,6 +6,8 @@
 //! - Scope tracking
 //! - Type error reporting with source locations
 
+#![allow(dead_code)]
+
 use crate::ast::*;
 use std::collections::HashMap;
 

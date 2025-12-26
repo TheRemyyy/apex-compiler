@@ -6,6 +6,8 @@
 //! - Mutable borrow exclusivity
 //! - Use-after-move detection
 
+#![allow(dead_code)]
+
 use crate::ast::*;
 use std::collections::HashMap;
 
