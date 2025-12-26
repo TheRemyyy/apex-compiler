@@ -22,9 +22,9 @@ Apex is a modern systems programming language that combines the safety of Rust w
 
 ### Key Features
 
-- **🔒 Memory Safety** — Ownership system prevents data races, null pointers, and use-after-free bugs at compile time
-- **⚡ Zero-Cost Abstractions** — High-level features compile down to efficient machine code with no runtime penalty
-- **🎯 Strong Static Typing** — Comprehensive type system with generics, traits (interfaces), and algebraic data types
+- **🔒 Memory Safety** — Ownership system prevents races, null pointers, and use-after-free bugs at compile time
+- **⚡ Zero-Cost Abstractions** — High-level features compile down to machine code with no runtime penalty
+- **🎯 Strong Static Typing** — Comprehensive type system with generics, traits, and algebraic data types
 - **🔄 Async/Await** — First-class support for asynchronous programming with Task types
 - **📦 Pattern Matching** — Exhaustive pattern matching for control flow and destructuring
 - **🧩 Generics** — Full generic programming support with type parameters and constraints
