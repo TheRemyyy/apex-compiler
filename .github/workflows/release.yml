@@ -41,19 +41,19 @@ jobs:
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 21
-          echo "LLVM_SYS_210_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
+          echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
 
       - name: Install LLVM (macOS)
         if: matrix.os == 'macos-latest'
         run: |
           brew install llvm@21
-          echo "LLVM_SYS_210_PREFIX=$(brew --prefix llvm@21)" >> $GITHUB_ENV
+          echo "LLVM_SYS_211_PREFIX=$(brew --prefix llvm@21)" >> $GITHUB_ENV
 
       - name: Install LLVM (Windows)
         if: matrix.os == 'windows-latest'
         run: |
           choco install llvm --version=21.1.7
-          echo "LLVM_SYS_210_PREFIX=C:\Program Files\LLVM" >> $env:GITHUB_ENV
+          echo "LLVM_SYS_211_PREFIX=C:\Program Files\LLVM" >> $env:GITHUB_ENV
 
       - name: Cache cargo registry
         uses: actions/cache@v4
