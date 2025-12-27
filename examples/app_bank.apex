@@ -63,7 +63,7 @@ class BankAccount {
         return true;
     }
 
-    function transfer(amount: Float, toAccount: BankAccount): Boolean {
+    function transfer(amount: Float, &toAccount: BankAccount): Boolean {
         if (!this.isActive) {
             println("Error: Source account is inactive");
             return false;
@@ -257,7 +257,7 @@ function main(): None {
     printSeparator();
     println("=== Transfer Operations ===");
 
-    checking.transfer(300.0, checking2);
+    checking.transfer(300.0, &checking2);
 
     // Apply interest to savings
     println("");
