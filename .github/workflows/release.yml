@@ -83,7 +83,11 @@ jobs:
         shell: pwsh
         run: |
           vcpkg install libxml2:x64-windows-static
-          echo "LIBXML2_LIB_PATH=C:/vcpkg/packages/libxml2_x64-windows-static/lib" >> $env:GITHUB_ENV
+          # The unified installed path for all vcpkg dependencies
+          $LibPath = "C:\vcpkg\installed\x64-windows-static\lib"
+          echo "Listing libraries in $LibPath :"
+          dir $LibPath
+          echo "LIBXML2_LIB_PATH=$LibPath" >> $env:GITHUB_ENV
 
       - name: Build (Windows)
         if: matrix.os == 'windows-latest'
