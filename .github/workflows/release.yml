@@ -74,10 +74,15 @@ jobs:
           path: target
           key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Build
+      - name: Build (Windows)
+        if: matrix.os == 'windows-latest'
         run: cargo build --release --target ${{ matrix.target }}
         env:
-          LLVM_SYS_211_PREFIX: ${{ matrix.os == 'windows-latest' && 'C:/Program Files/LLVM' || '' }}
+          LLVM_SYS_211_PREFIX: C:/Program Files/LLVM
+
+      - name: Build (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Strip binary (Linux/macOS)
         if: matrix.os != 'windows-latest'
