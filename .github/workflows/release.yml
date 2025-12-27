@@ -54,35 +54,36 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          # Download
           $Url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.7/clang+llvm-21.1.7-x86_64-pc-windows-msvc.tar.xz"
           Invoke-WebRequest -Uri $Url -OutFile "llvm.tar.xz"
           
-          # Extract
           7z x llvm.tar.xz -y
           7z x llvm.tar -y
           
-          # Prepare Destination
-          New-Item -ItemType Directory -Path "C:\LLVM" -Force
+          # Install to workspace directory
+          $InstallDir = "$($env:GITHUB_WORKSPACE)/llvm"
+          New-Item -ItemType Directory -Path $InstallDir -Force
           
-          # Move Contents (avoiding nesting)
           $ExtractedFolder = Get-ChildItem -Directory | Where-Object { $_.Name -like "clang+llvm*" }
-          Move-Item -Path "$($ExtractedFolder.FullName)\*" -Destination "C:\LLVM" -Force
+          Move-Item -Path "$($ExtractedFolder.FullName)\*" -Destination $InstallDir -Force
           
-          echo "LLVM_SYS_211_PREFIX=C:/LLVM" >> $env:GITHUB_ENV
+          # Convert to forward slashes for Rust/Env compatibility
+          $InstallDir = $InstallDir -replace '\\', '/'
+          echo "LLVM_SYS_211_PREFIX=$InstallDir" >> $env:GITHUB_ENV
           
       - name: Verify LLVM Installation (Windows)
         if: matrix.os == 'windows-latest'
+        shell: pwsh
         run: |
-          if (Test-Path "C:\LLVM\bin\llvm-config.exe") {
-            echo "✓ LLVM installed successfully"
-            echo "LLVM_SYS_211_PREFIX=C:\LLVM"
-            & "C:\LLVM\bin\llvm-config.exe" --version
-            & "C:\LLVM\bin\llvm-config.exe" --cflags
-            & "C:\LLVM\bin\llvm-config.exe" --libs
+          $LLVMDir = "$($env:GITHUB_WORKSPACE)/llvm"
+          $ConfigPath = "$LLVMDir/bin/llvm-config.exe"
+          if (Test-Path $ConfigPath) {
+            echo "✓ LLVM installed successfully at $LLVMDir"
+            & $ConfigPath --version
+            & $ConfigPath --cflags
           } else {
-            echo "✗ LLVM not found at expected location"
-            dir "C:\LLVM"
+            echo "✗ LLVM not found at $LLVMDir"
+            if (Test-Path $LLVMDir) { dir $LLVMDir }
             exit 1
           }
 
