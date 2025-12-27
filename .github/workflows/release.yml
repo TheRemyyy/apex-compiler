@@ -94,6 +94,12 @@ jobs:
           path: target
           key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install Dependencies (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          vcpkg install libxml2:x64-windows-static
+          echo "RUSTFLAGS=-C link-arg=/LIBPATH:C:/vcpkg/packages/libxml2_x64-windows-static/lib" >> $env:GITHUB_ENV
+
       - name: Build (Windows)
         if: matrix.os == 'windows-latest'
         run: cargo build --release --target ${{ matrix.target }}
