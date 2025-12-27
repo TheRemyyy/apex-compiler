@@ -54,17 +54,20 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          # Download the archive (not the installer)
+          # Download
           $Url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.7/clang+llvm-21.1.7-x86_64-pc-windows-msvc.tar.xz"
           Invoke-WebRequest -Uri $Url -OutFile "llvm.tar.xz"
           
-          # Extract using 7-Zip (available on runner)
+          # Extract
           7z x llvm.tar.xz -y
           7z x llvm.tar -y
           
-          # Move to Program Files (handling the nested directory name)
+          # Prepare Destination
+          New-Item -ItemType Directory -Path "C:\Program Files\LLVM" -Force
+          
+          # Move Contents (avoiding nesting)
           $ExtractedFolder = Get-ChildItem -Directory | Where-Object { $_.Name -like "clang+llvm*" }
-          Move-Item -Path $ExtractedFolder.FullName -Destination "C:\Program Files\LLVM" -Force
+          Move-Item -Path "$($ExtractedFolder.FullName)\*" -Destination "C:\Program Files\LLVM" -Force
           
           echo "LLVM_SYS_211_PREFIX=C:/Program Files/LLVM" >> $env:GITHUB_ENV
           
@@ -77,7 +80,12 @@ jobs:
             dir "C:/Program Files/LLVM/bin" | Select-Object -First 10
           } else {
             echo "✗ LLVM not found at expected location"
-            dir "C:/Program Files" | Select-Object -First 20
+            echo "Listing C:\Program Files\LLVM:"
+            if (Test-Path "C:\Program Files\LLVM") {
+              dir "C:\Program Files\LLVM"
+            } else {
+              echo "Directory does not exist"
+            }
             exit 1
           }
 
