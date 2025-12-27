@@ -257,7 +257,7 @@ function main(): None {
     printSeparator();
     println("=== Transfer Operations ===");
 
-    checking.transfer(300.0, checking2);
+    checking.transfer(300.0, &checking2);
 
     // Apply interest to savings
     println("");
