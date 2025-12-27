@@ -60,17 +60,27 @@ jobs:
           7z x llvm.tar.xz -y
           7z x llvm.tar -y
           
+          7z x llvm.tar.xz -y
+          7z x llvm.tar -y
+          
           # Find the extracted folder
           $ExtractedFolder = Get-ChildItem -Directory | Where-Object { $_.Name -like "clang+llvm*" }
-          $LLVMDir = $ExtractedFolder.FullName
           
-          # Use the extracted path directly (convert key chars for safety)
-          $LLVMDir = $LLVMDir -replace '\\', '/'
+          # Move directory to C:\LLVM (Short path, no spaces)
+          # We rename the extracted folder to C:\LLVM directly
+          Move-Item -Path $ExtractedFolder.FullName -Destination "C:\LLVM" -Force
           
-          echo "LLVM_SYS_211_PREFIX=$LLVMDir" >> $env:GITHUB_ENV
-          echo "$LLVMDir/bin" >> $env:GITHUB_PATH
+          # Set LLVM_SYS prefix variable using FORWARD SLASHES (Critical for llvm-config/rust interaction)
+          echo "LLVM_SYS_211_PREFIX=C:/LLVM" >> $env:GITHUB_ENV
           
-      - name: Cache cargo registry
+          # Add bin directory to PATH
+          echo "C:\LLVM\bin" >> $env:GITHUB_PATH
+          
+      - name: Build (Windows)
+        if: matrix.os == 'windows-latest'
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
