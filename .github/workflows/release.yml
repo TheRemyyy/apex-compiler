@@ -131,7 +131,7 @@ jobs:
             artifacts/apex-compiler-linux-x64/apex-compiler
             artifacts/apex-compiler-macos-arm64/apex-compiler
           body: |
-            ## Apex Programming Language Compiler v1.1.0
+            ## Apex Programming Language Compiler
             
             **Modern Systems Programming with Safety and Performance**
             
