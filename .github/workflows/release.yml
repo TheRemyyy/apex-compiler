@@ -69,13 +69,22 @@ jobs:
           
           # Convert to forward slashes for Rust/Env compatibility
           $InstallDir = $InstallDir -replace '\\', '/'
+          
+          # Set LLVM_SYS prefix variable
           echo "LLVM_SYS_211_PREFIX=$InstallDir" >> $env:GITHUB_ENV
+          
+          # Add bin directory to PATH (Important for DLLs and llvm-config)
+          echo "$InstallDir/bin" >> $env:GITHUB_PATH
           
       - name: Verify LLVM Installation (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           $LLVMDir = "$($env:GITHUB_WORKSPACE)/llvm"
+          echo "Verifying environment..."
+          echo "LLVM_SYS_211_PREFIX: $env:LLVM_SYS_211_PREFIX"
+          echo "PATH: $env:PATH"
+          
           $ConfigPath = "$LLVMDir/bin/llvm-config.exe"
           if (Test-Path $ConfigPath) {
             echo "✓ LLVM installed successfully at $LLVMDir"
