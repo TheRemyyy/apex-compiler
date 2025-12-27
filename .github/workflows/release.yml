@@ -63,26 +63,26 @@ jobs:
           7z x llvm.tar -y
           
           # Prepare Destination
-          New-Item -ItemType Directory -Path "C:\Program Files\LLVM" -Force
+          New-Item -ItemType Directory -Path "C:\LLVM" -Force
           
           # Move Contents (avoiding nesting)
           $ExtractedFolder = Get-ChildItem -Directory | Where-Object { $_.Name -like "clang+llvm*" }
-          Move-Item -Path "$($ExtractedFolder.FullName)\*" -Destination "C:\Program Files\LLVM" -Force
+          Move-Item -Path "$($ExtractedFolder.FullName)\*" -Destination "C:\LLVM" -Force
           
-          echo "LLVM_SYS_211_PREFIX=C:/Program Files/LLVM" >> $env:GITHUB_ENV
+          echo "LLVM_SYS_211_PREFIX=C:/LLVM" >> $env:GITHUB_ENV
           
       - name: Verify LLVM Installation (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          if (Test-Path "C:/Program Files/LLVM/bin/llvm-config.exe") {
+          if (Test-Path "C:/LLVM/bin/llvm-config.exe") {
             echo "✓ LLVM installed successfully"
-            echo "LLVM_SYS_211_PREFIX=C:/Program Files/LLVM"
-            dir "C:/Program Files/LLVM/bin" | Select-Object -First 10
+            echo "LLVM_SYS_211_PREFIX=C:/LLVM"
+            dir "C:/LLVM/bin" | Select-Object -First 10
           } else {
             echo "✗ LLVM not found at expected location"
-            echo "Listing C:\Program Files\LLVM:"
-            if (Test-Path "C:\Program Files\LLVM") {
-              dir "C:\Program Files\LLVM"
+            echo "Listing C:\LLVM:"
+            if (Test-Path "C:\LLVM") {
+              dir "C:\LLVM"
             } else {
               echo "Directory does not exist"
             }
