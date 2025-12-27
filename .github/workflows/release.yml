@@ -121,37 +121,20 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: all-artifacts
+          merge-multiple: true 
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/apex-compiler-windows-x64.exe/apex-compiler.exe
-            artifacts/apex-compiler-linux-x64/apex-compiler
-            artifacts/apex-compiler-macos-arm64/apex-compiler
+            all-artifacts/apex-compiler-windows-x64.exe
+            all-artifacts/apex-compiler-linux-x64
+            all-artifacts/apex-compiler-macos-arm64
           body: |
             ## Apex Programming Language Compiler
-            
-            **Modern Systems Programming with Safety and Performance**
-            
-            ### Downloads
-            
-            - **Windows**: `apex-compiler-windows-x64.exe`
-            - **Linux**: `apex-compiler-linux-x64`
-            - **macOS (Apple Silicon)**: `apex-compiler-macos-arm64`
-            
-            ### Requirements
-            
-            - LLVM 21.0+ (21.1.7 recommended)
-            - Clang (for linking)
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
