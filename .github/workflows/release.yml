@@ -75,25 +75,6 @@ jobs:
           echo "LLVM_SYS_211_PREFIX=$InstallDir" >> $env:GITHUB_ENV
           echo "$InstallDir/bin" >> $env:GITHUB_PATH
           
-      - name: Verify LLVM Installation (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          $LLVMDir = "$($env:GITHUB_WORKSPACE)/llvm"
-          echo "Verifying installation at: $LLVMDir"
-          
-          if (Test-Path "$LLVMDir/bin/llvm-config.exe") {
-            echo "✓ llvm-config found"
-            & "$LLVMDir/bin/llvm-config.exe" --version
-          } else {
-            echo "✗ llvm-config NOT found"
-            echo "Directory listing of $LLVMDir:"
-            Get-ChildItem $LLVMDir
-            echo "Directory listing of $LLVMDir/bin (if exists):"
-            if (Test-Path "$LLVMDir/bin") { Get-ChildItem "$LLVMDir/bin" | Select-Object -First 10 }
-            exit 1
-          }
-
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
