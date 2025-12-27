@@ -76,6 +76,8 @@ jobs:
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
+        env:
+          LLVM_SYS_211_PREFIX: ${{ matrix.os == 'windows-latest' && 'C:\Program Files\LLVM' || env.LLVM_SYS_211_PREFIX }}
 
       - name: Strip binary (Linux/macOS)
         if: matrix.os != 'windows-latest'
