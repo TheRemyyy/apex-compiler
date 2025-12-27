@@ -60,20 +60,19 @@ jobs:
           7z x llvm.tar.xz -y
           7z x llvm.tar -y
           
-          # Install to workspace directory
-          $InstallDir = "$($env:GITHUB_WORKSPACE)/llvm"
-          New-Item -ItemType Directory -Path $InstallDir -Force
-          
+          # Find the extracted folder (it's the only directory that matches)
           $ExtractedFolder = Get-ChildItem -Directory | Where-Object { $_.Name -like "clang+llvm*" }
-          Move-Item -Path "$($ExtractedFolder.FullName)\*" -Destination $InstallDir -Force
           
-          # Convert to forward slashes for Rust/Env compatibility
+          # Define target path
+          $InstallDir = "$($env:GITHUB_WORKSPACE)/llvm"
+          
+          # Move/Rename the entire directory to workspace/llvm
+          Move-Item -Path $ExtractedFolder.FullName -Destination $InstallDir -Force
+          
+          # Convert to forward slashes
           $InstallDir = $InstallDir -replace '\\', '/'
           
-          # Set LLVM_SYS prefix variable
           echo "LLVM_SYS_211_PREFIX=$InstallDir" >> $env:GITHUB_ENV
-          
-          # Add bin directory to PATH (Important for DLLs and llvm-config)
           echo "$InstallDir/bin" >> $env:GITHUB_PATH
           
       - name: Verify LLVM Installation (Windows)
@@ -81,18 +80,17 @@ jobs:
         shell: pwsh
         run: |
           $LLVMDir = "$($env:GITHUB_WORKSPACE)/llvm"
-          echo "Verifying environment..."
-          echo "LLVM_SYS_211_PREFIX: $env:LLVM_SYS_211_PREFIX"
-          echo "PATH: $env:PATH"
+          echo "Verifying installation at: $LLVMDir"
           
-          $ConfigPath = "$LLVMDir/bin/llvm-config.exe"
-          if (Test-Path $ConfigPath) {
-            echo "✓ LLVM installed successfully at $LLVMDir"
-            & $ConfigPath --version
-            & $ConfigPath --cflags
+          if (Test-Path "$LLVMDir/bin/llvm-config.exe") {
+            echo "✓ llvm-config found"
+            & "$LLVMDir/bin/llvm-config.exe" --version
           } else {
-            echo "✗ LLVM not found at $LLVMDir"
-            if (Test-Path $LLVMDir) { dir $LLVMDir }
+            echo "✗ llvm-config NOT found"
+            echo "Directory listing of $LLVMDir:"
+            Get-ChildItem $LLVMDir
+            echo "Directory listing of $LLVMDir/bin (if exists):"
+            if (Test-Path "$LLVMDir/bin") { Get-ChildItem "$LLVMDir/bin" | Select-Object -First 10 }
             exit 1
           }
 
