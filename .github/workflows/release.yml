@@ -76,11 +76,7 @@ jobs:
           # Add bin directory to PATH
           echo "C:\LLVM\bin" >> $env:GITHUB_PATH
           
-      - name: Build (Windows)
-        if: matrix.os == 'windows-latest'
-        run: cargo build --release --target ${{ matrix.target }}
-        env:
-          LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
+      - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
@@ -102,7 +98,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: cargo build --release --target ${{ matrix.target }}
         env:
-          LLVM_SYS_211_PREFIX: C:/Program Files/LLVM
+          LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
 
       - name: Build (Linux/macOS)
         if: matrix.os != 'windows-latest'
