@@ -66,53 +66,36 @@ jobs:
           echo "LLVM_SYS_211_PREFIX=C:/LLVM" >> $env:GITHUB_ENV
           echo "C:\LLVM\bin" >> $env:GITHUB_PATH
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-
       - name: Install Dependencies (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           vcpkg install libxml2:x64-windows-static
-          # The unified installed path for all vcpkg dependencies
           $LibPath = "C:\vcpkg\installed\x64-windows-static\lib"
-          echo "Aliasing libxml2.lib to libxml2s.lib for linker compatibility..."
           Copy-Item "$LibPath\libxml2.lib" "$LibPath\libxml2s.lib" -Force
-          echo "Listing libraries in $LibPath :"
-          dir $LibPath
           echo "LIBXML2_LIB_PATH=$LibPath" >> $env:GITHUB_ENV
 
-      - name: Build (Windows)
-        if: matrix.os == 'windows-latest'
+      - name: Build
         run: cargo build --release --target ${{ matrix.target }}
         env:
           LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
-          RUSTFLAGS: "-C link-arg=/LIBPATH:${{ env.LIBXML2_LIB_PATH }}"
-
-      - name: Build (Linux/macOS)
-        if: matrix.os != 'windows-latest'
-        run: cargo build --release --target ${{ matrix.target }}
-        env:
-          LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
+          RUSTFLAGS: ${{ matrix.os == 'windows-latest' && format('-C link-arg=/LIBPATH:{0}', env.LIBXML2_LIB_PATH) || '' }}
 
       - name: Strip binary (Linux/macOS)
         if: matrix.os != 'windows-latest'
         run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
 
+      - name: Prepare Artifact
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} dist/${{ matrix.asset_name }}
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset_name }}
-          path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          path: dist/${{ matrix.asset_name }}
 
   release:
     name: Create Release
@@ -140,5 +123,13 @@ jobs:
             all-artifacts/apex-compiler-macos-arm64
           body: |
             ## Apex Programming Language Compiler
+            
+            ### Available Downloads
+            - **Windows**: `apex-compiler-windows-x64.exe` (x64 MSVC)
+            - **Linux**: `apex-compiler-linux-x64` (x64 GNU)
+            - **macOS**: `apex-compiler-macos-arm64` (Apple Silicon)
+            
+            ### Installation
+            Download the binary for your platform and ensure you have **LLVM 21** installed on your system for linking.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
