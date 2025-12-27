@@ -22,9 +22,9 @@ jobs:
             artifact_name: apex-compiler
             asset_name: apex-compiler-linux-x64
           - os: macos-latest
-            target: x86_64-apple-darwin
+            target: aarch64-apple-darwin
             artifact_name: apex-compiler
-            asset_name: apex-compiler-macos-x64
+            asset_name: apex-compiler-macos-arm64
 
     steps:
       - name: Checkout code
@@ -108,7 +108,7 @@ jobs:
           files: |
             artifacts/apex-compiler-windows-x64/apex-compiler.exe
             artifacts/apex-compiler-linux-x64/apex-compiler
-            artifacts/apex-compiler-macos-x64/apex-compiler
+            artifacts/apex-compiler-macos-arm64/apex-compiler
           body: |
             ## Apex Programming Language Compiler
             
@@ -118,7 +118,7 @@ jobs:
             
             - **Windows**: `apex-compiler-windows-x64.exe`
             - **Linux**: `apex-compiler-linux-x64`
-            - **macOS**: `apex-compiler-macos-x64`
+            - **macOS (Apple Silicon)**: `apex-compiler-macos-arm64`
             
             ### Requirements
             
