@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build ${{ matrix.os }}
@@ -56,26 +59,13 @@ jobs:
         run: |
           $Url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.7/clang+llvm-21.1.7-x86_64-pc-windows-msvc.tar.xz"
           Invoke-WebRequest -Uri $Url -OutFile "llvm.tar.xz"
-          
           7z x llvm.tar.xz -y
           7z x llvm.tar -y
-          
-          7z x llvm.tar.xz -y
-          7z x llvm.tar -y
-          
-          # Find the extracted folder
           $ExtractedFolder = Get-ChildItem -Directory | Where-Object { $_.Name -like "clang+llvm*" }
-          
-          # Move directory to C:\LLVM (Short path, no spaces)
-          # We rename the extracted folder to C:\LLVM directly
           Move-Item -Path $ExtractedFolder.FullName -Destination "C:\LLVM" -Force
-          
-          # Set LLVM_SYS prefix variable using FORWARD SLASHES (Critical for llvm-config/rust interaction)
           echo "LLVM_SYS_211_PREFIX=C:/LLVM" >> $env:GITHUB_ENV
-          
-          # Add bin directory to PATH
           echo "C:\LLVM\bin" >> $env:GITHUB_PATH
-          
+
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -86,35 +76,27 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache target directory
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install Dependencies (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           vcpkg install libxml2:x64-windows-static
-          $LibPath = "C:\vcpkg\packages\libxml2_x64-windows-static\lib"
-          echo "Checking libxml2 installation at $LibPath"
-          dir $LibPath
-          echo "LIBXML2_LIB_PATH=$LibPath" >> $env:GITHUB_ENV
+          echo "LIBXML2_LIB_PATH=C:/vcpkg/packages/libxml2_x64-windows-static/lib" >> $env:GITHUB_ENV
 
       - name: Build (Windows)
         if: matrix.os == 'windows-latest'
         run: cargo build --release --target ${{ matrix.target }}
         env:
           LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
-          # Explicitly set RUSTFLAGS here using the path found/set above
           RUSTFLAGS: "-C link-arg=/LIBPATH:${{ env.LIBXML2_LIB_PATH }}"
 
       - name: Build (Linux/macOS)
         if: matrix.os != 'windows-latest'
         run: cargo build --release --target ${{ matrix.target }}
+        env:
+          LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
 
       - name: Strip binary (Linux/macOS)
         if: matrix.os != 'windows-latest'
@@ -145,11 +127,11 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/apex-compiler-windows-x64/apex-compiler.exe
+            artifacts/apex-compiler-windows-x64.exe/apex-compiler.exe
             artifacts/apex-compiler-linux-x64/apex-compiler
             artifacts/apex-compiler-macos-arm64/apex-compiler
           body: |
-            ## Apex Programming Language Compiler
+            ## Apex Programming Language Compiler v1.1.0
             
             **Modern Systems Programming with Safety and Performance**
             
@@ -163,29 +145,6 @@ jobs:
             
             - LLVM 21.0+ (21.1.7 recommended)
             - Clang (for linking)
-            
-            ### Installation
-            
-            1. Download the binary for your platform
-            2. Make it executable (Linux/macOS): `chmod +x apex-compiler-*`
-            3. Move to PATH or run directly
-            
-            ### Quick Start
-            
-            ```bash
-            # Check version
-            ./apex-compiler --version
-            
-            # Compile a program
-            ./apex-compiler compile hello.apex
-            
-            # Run a program
-            ./apex-compiler run hello.apex
-            ```
-            
-            ### Documentation
-            
-            See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for full documentation.
           draft: false
           prerelease: false
         env:
