@@ -1146,7 +1146,7 @@ impl TypeChecker {
                         let t = self.check_expr(&arg.node, arg.span.clone());
                         if !matches!(t, ResolvedType::String) {
                             self.error(
-                                format!("strcmp() requires String arguments"),
+                                "strcmp() requires String arguments".to_string(),
                                 arg.span.clone(),
                             );
                         }
@@ -1161,7 +1161,7 @@ impl TypeChecker {
                         let t = self.check_expr(&arg.node, arg.span.clone());
                         if !matches!(t, ResolvedType::String) {
                             self.error(
-                                format!("strcat() requires String arguments"),
+                                "strcat() requires String arguments".to_string(),
                                 arg.span.clone(),
                             );
                         }
