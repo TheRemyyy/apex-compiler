@@ -85,6 +85,8 @@ jobs:
           vcpkg install libxml2:x64-windows-static
           # The unified installed path for all vcpkg dependencies
           $LibPath = "C:\vcpkg\installed\x64-windows-static\lib"
+          echo "Aliasing libxml2.lib to libxml2s.lib for linker compatibility..."
+          Copy-Item "$LibPath\libxml2.lib" "$LibPath\libxml2s.lib" -Force
           echo "Listing libraries in $LibPath :"
           dir $LibPath
           echo "LIBXML2_LIB_PATH=$LibPath" >> $env:GITHUB_ENV
