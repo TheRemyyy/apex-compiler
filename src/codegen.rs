@@ -895,21 +895,40 @@ impl<'ctx> Codegen<'ctx> {
     fn compile_match_stmt(&mut self, expr: &Spanned<Expr>, arms: &[MatchArm]) -> Result<()> {
         let val = self.compile_expr(&expr.node)?;
         let func = self.current_function.unwrap();
-        let merge_bb = self.context.append_basic_block(func, "match.merge");
+
+        // IMPORTANT: Do NOT create merge_bb here - we create it AFTER all arm blocks
+        // This ensures merge_bb is last in LLVM's block list
+
+        // Track blocks that need to branch to merge (we'll patch them later)
+        let mut blocks_needing_merge: Vec<inkwell::basic_block::BasicBlock> = Vec::new();
 
         for arm in arms {
             let arm_bb = self.context.append_basic_block(func, "match.arm");
-            let next_bb = self.context.append_basic_block(func, "match.next");
 
             match &arm.pattern {
                 Pattern::Wildcard => {
                     self.builder.build_unconditional_branch(arm_bb).unwrap();
+                    self.builder.position_at_end(arm_bb);
+                    for stmt in &arm.body {
+                        self.compile_stmt(&stmt.node)?;
+                    }
+                    if self.needs_terminator() {
+                        blocks_needing_merge.push(self.builder.get_insert_block().unwrap());
+                    }
+                    let merge_bb = self.context.append_basic_block(func, "match.merge");
+                    for bb in blocks_needing_merge {
+                        self.builder.position_at_end(bb);
+                        if self.needs_terminator() {
+                            self.builder.build_unconditional_branch(merge_bb).unwrap();
+                        }
+                    }
+                    self.builder.position_at_end(merge_bb);
+                    return Ok(());
                 }
+
                 Pattern::Ident(binding) => {
-                    // Bind the whole value to the identifier
                     self.builder.build_unconditional_branch(arm_bb).unwrap();
                     self.builder.position_at_end(arm_bb);
-                    // Create binding
                     let alloca = self.builder.build_alloca(val.get_type(), binding).unwrap();
                     self.builder.build_store(alloca, val).unwrap();
                     self.variables.insert(
@@ -919,17 +938,25 @@ impl<'ctx> Codegen<'ctx> {
                             ty: Type::Integer,
                         },
                     );
-
                     for stmt in &arm.body {
                         self.compile_stmt(&stmt.node)?;
                     }
                     if self.needs_terminator() {
-                        self.builder.build_unconditional_branch(merge_bb).unwrap();
+                        blocks_needing_merge.push(self.builder.get_insert_block().unwrap());
                     }
-                    self.builder.position_at_end(next_bb);
-                    continue;
+                    let merge_bb = self.context.append_basic_block(func, "match.merge");
+                    for bb in blocks_needing_merge {
+                        self.builder.position_at_end(bb);
+                        if self.needs_terminator() {
+                            self.builder.build_unconditional_branch(merge_bb).unwrap();
+                        }
+                    }
+                    self.builder.position_at_end(merge_bb);
+                    return Ok(());
                 }
+
                 Pattern::Literal(lit) => {
+                    let next_bb = self.context.append_basic_block(func, "match.next");
                     let pattern_val = self.compile_literal(lit)?;
                     let cond = self
                         .builder
@@ -943,13 +970,20 @@ impl<'ctx> Codegen<'ctx> {
                     self.builder
                         .build_conditional_branch(cond, arm_bb, next_bb)
                         .unwrap();
+                    self.builder.position_at_end(arm_bb);
+                    for stmt in &arm.body {
+                        self.compile_stmt(&stmt.node)?;
+                    }
+                    if self.needs_terminator() {
+                        blocks_needing_merge.push(self.builder.get_insert_block().unwrap());
+                    }
+                    self.builder.position_at_end(next_bb);
                 }
+
                 Pattern::Variant(variant_name, bindings) => {
-                    // Handle Some(x), None, Ok(x), Error(e)
+                    let next_bb = self.context.append_basic_block(func, "match.next");
                     match variant_name.as_str() {
                         "Some" => {
-                            // Option struct: { is_some: i8, value: T }
-                            // Check tag == 1
                             let tag = self
                                 .builder
                                 .build_extract_value(val.into_struct_value(), 0, "tag")
@@ -966,9 +1000,7 @@ impl<'ctx> Codegen<'ctx> {
                             self.builder
                                 .build_conditional_branch(cond, arm_bb, next_bb)
                                 .unwrap();
-
                             self.builder.position_at_end(arm_bb);
-                            // Extract value and bind
                             if !bindings.is_empty() {
                                 let inner_val = self
                                     .builder
@@ -987,18 +1019,15 @@ impl<'ctx> Codegen<'ctx> {
                                     },
                                 );
                             }
-
                             for stmt in &arm.body {
                                 self.compile_stmt(&stmt.node)?;
                             }
                             if self.needs_terminator() {
-                                self.builder.build_unconditional_branch(merge_bb).unwrap();
+                                blocks_needing_merge.push(self.builder.get_insert_block().unwrap());
                             }
                             self.builder.position_at_end(next_bb);
-                            continue;
                         }
                         "None" => {
-                            // Check tag == 0
                             let tag = self
                                 .builder
                                 .build_extract_value(val.into_struct_value(), 0, "tag")
@@ -1015,10 +1044,16 @@ impl<'ctx> Codegen<'ctx> {
                             self.builder
                                 .build_conditional_branch(cond, arm_bb, next_bb)
                                 .unwrap();
+                            self.builder.position_at_end(arm_bb);
+                            for stmt in &arm.body {
+                                self.compile_stmt(&stmt.node)?;
+                            }
+                            if self.needs_terminator() {
+                                blocks_needing_merge.push(self.builder.get_insert_block().unwrap());
+                            }
+                            self.builder.position_at_end(next_bb);
                         }
                         "Ok" => {
-                            // Result struct: { is_ok: i8, ok_value: T, err_value: E }
-                            // Check tag == 1
                             let tag = self
                                 .builder
                                 .build_extract_value(val.into_struct_value(), 0, "tag")
@@ -1035,9 +1070,7 @@ impl<'ctx> Codegen<'ctx> {
                             self.builder
                                 .build_conditional_branch(cond, arm_bb, next_bb)
                                 .unwrap();
-
                             self.builder.position_at_end(arm_bb);
-                            // Extract ok value and bind
                             if !bindings.is_empty() {
                                 let ok_val = self
                                     .builder
@@ -1056,18 +1089,15 @@ impl<'ctx> Codegen<'ctx> {
                                     },
                                 );
                             }
-
                             for stmt in &arm.body {
                                 self.compile_stmt(&stmt.node)?;
                             }
                             if self.needs_terminator() {
-                                self.builder.build_unconditional_branch(merge_bb).unwrap();
+                                blocks_needing_merge.push(self.builder.get_insert_block().unwrap());
                             }
                             self.builder.position_at_end(next_bb);
-                            continue;
                         }
                         "Error" => {
-                            // Check tag == 0
                             let tag = self
                                 .builder
                                 .build_extract_value(val.into_struct_value(), 0, "tag")
@@ -1084,9 +1114,7 @@ impl<'ctx> Codegen<'ctx> {
                             self.builder
                                 .build_conditional_branch(cond, arm_bb, next_bb)
                                 .unwrap();
-
                             self.builder.position_at_end(arm_bb);
-                            // Extract error value and bind
                             if !bindings.is_empty() {
                                 let err_val = self
                                     .builder
@@ -1105,35 +1133,49 @@ impl<'ctx> Codegen<'ctx> {
                                     },
                                 );
                             }
-
                             for stmt in &arm.body {
                                 self.compile_stmt(&stmt.node)?;
                             }
                             if self.needs_terminator() {
-                                self.builder.build_unconditional_branch(merge_bb).unwrap();
+                                blocks_needing_merge.push(self.builder.get_insert_block().unwrap());
                             }
                             self.builder.position_at_end(next_bb);
-                            continue;
                         }
                         _ => {
                             self.builder.build_unconditional_branch(arm_bb).unwrap();
+                            self.builder.position_at_end(arm_bb);
+                            for stmt in &arm.body {
+                                self.compile_stmt(&stmt.node)?;
+                            }
+                            if self.needs_terminator() {
+                                blocks_needing_merge.push(self.builder.get_insert_block().unwrap());
+                            }
+                            let merge_bb = self.context.append_basic_block(func, "match.merge");
+                            for bb in blocks_needing_merge {
+                                self.builder.position_at_end(bb);
+                                if self.needs_terminator() {
+                                    self.builder.build_unconditional_branch(merge_bb).unwrap();
+                                }
+                            }
+                            self.builder.position_at_end(merge_bb);
+                            return Ok(());
                         }
                     }
                 }
             }
+        }
 
-            self.builder.position_at_end(arm_bb);
-            for stmt in &arm.body {
-                self.compile_stmt(&stmt.node)?;
-            }
+        // Create merge_bb AFTER all arm blocks
+        let merge_bb = self.context.append_basic_block(func, "match.merge");
+        if self.needs_terminator() {
+            self.builder.build_unconditional_branch(merge_bb).unwrap();
+        }
+        for bb in blocks_needing_merge {
+            self.builder.position_at_end(bb);
             if self.needs_terminator() {
                 self.builder.build_unconditional_branch(merge_bb).unwrap();
             }
-
-            self.builder.position_at_end(next_bb);
         }
-
-        self.builder.build_unconditional_branch(merge_bb).unwrap();
         self.builder.position_at_end(merge_bb);
         Ok(())
     }
