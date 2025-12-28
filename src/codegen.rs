@@ -256,8 +256,8 @@ impl<'ctx> Codegen<'ctx> {
             Type::Box(_) | Type::Rc(_) | Type::Arc(_) => {
                 self.context.ptr_type(AddressSpace::default()).into()
             }
-            // Task<T> - opaque pointer to async task
-            Type::Task(_) => self.context.ptr_type(AddressSpace::default()).into(),
+            // Task<T> - currently represented as T in the stub implementation
+            Type::Task(inner) => self.llvm_type(inner),
         }
     }
 
@@ -651,13 +651,25 @@ impl<'ctx> Codegen<'ctx> {
 
                 match value {
                     Some(expr) => {
-                        // Check if returning None literal (for void functions)
+                        // Check if returning None literal
                         if matches!(&expr.node, Expr::Literal(Literal::None)) {
                             if is_main {
                                 let zero = self.context.i32_type().const_int(0, false);
                                 self.builder.build_return(Some(&zero)).unwrap();
                             } else {
-                                self.builder.build_return(None).unwrap();
+                                // Check if function returns void or a value
+                                let return_type = self.current_return_type.as_ref();
+                                let is_void = return_type
+                                    .map(|t| matches!(t, Type::None))
+                                    .unwrap_or(false);
+
+                                if is_void {
+                                    self.builder.build_return(None).unwrap();
+                                } else {
+                                    // Return i8 zero for None type
+                                    let none_val = self.context.i8_type().const_int(0, false);
+                                    self.builder.build_return(Some(&none_val)).unwrap();
+                                }
                             }
                         } else {
                             let val = self.compile_expr(&expr.node)?;
@@ -1216,9 +1228,21 @@ impl<'ctx> Codegen<'ctx> {
                 // Full implementation would wrap in a Task
                 let mut result = self.context.i8_type().const_int(0, false).into();
                 for stmt in body {
-                    self.compile_stmt(&stmt.node)?;
-                    if let Stmt::Return(Some(expr)) = &stmt.node {
-                        result = self.compile_expr(&expr.node)?;
+                    match &stmt.node {
+                        Stmt::Return(Some(expr)) => {
+                            // Just evaluate the expression, don't emit ret
+                            result = self.compile_expr(&expr.node)?;
+                        }
+                        Stmt::Return(None) => {
+                            // Return None value
+                            result = self.context.i8_type().const_int(0, false).into();
+                        }
+                        _ => {
+                            self.compile_stmt(&stmt.node)?;
+                            if let Stmt::Expr(expr) = &stmt.node {
+                                result = self.compile_expr(&expr.node)?;
+                            }
+                        }
                     }
                 }
                 Ok(result)
