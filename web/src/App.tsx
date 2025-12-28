@@ -130,7 +130,7 @@ export default function App() {
 
             {/* Sidebar */}
             <nav className="w-64 border-r border-[#1f1f23] p-6 flex flex-col fixed h-full overflow-y-auto custom-scrollbar">
-                <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-pink-500 bg-clip-text text-transparent mb-8">
+                <h1 className="text-2xl font-bold text-purple-500 mb-8">
                     Apex Docs
                 </h1>
 
@@ -150,8 +150,8 @@ export default function App() {
                                                     <button
                                                         onClick={() => setCurrentPath(item.path)}
                                                         className={(() => `w-full text-left px-3 py-2 rounded-lg text-sm transition-all duration-200 ${currentPath() === item.path
-                                                                ? 'bg-purple-500/10 text-purple-400 font-medium'
-                                                                : 'text-gray-400 hover:text-gray-100 hover:bg-[#18181b]'
+                                                            ? 'bg-purple-500/10 text-purple-400 font-medium'
+                                                            : 'text-gray-400 hover:text-gray-100 hover:bg-[#18181b]'
                                                             }`) as any}
                                                     >
                                                         {item.title}
