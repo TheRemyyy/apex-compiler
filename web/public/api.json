@@ -1,0 +1,7 @@
+{
+  "name": "apex-docs",
+  "version": "0.0.0",
+  "description": "API documentation for the Apex compiler",
+  "endpoints": [],
+  "license": "MIT"
+}
