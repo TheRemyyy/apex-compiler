@@ -9,6 +9,8 @@
 - **Match Statements**: Fixed invalid LLVM IR generation (orphan blocks) for `match` statements.
 - **Clippy Warnings**: Resolved `collapsible_match` and other lints in `codegen.rs`.
 
+## [1.1.1] - 2025-12-27
+
 ### 🚀 Major Changes
 
 - **Complete Documentation Refactor**: The documentation has been completely overhauled and moved to a dedicated `docs/` directory.
