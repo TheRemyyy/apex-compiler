@@ -55,6 +55,42 @@ const NAV_ITEMS = [
     }
 ];
 
+// Helper for conditional rendering that reacts to signal changes
+function Show(props: { when: () => boolean, fallback?: any, children: any }) {
+    const container = document.createElement('div');
+    container.style.display = 'contents';
+
+    createEffect(() => {
+        container.innerHTML = '';
+        const condition = props.when();
+
+        if (condition) {
+            if (typeof props.children === 'function') {
+                const child = props.children();
+                if (child instanceof Node) {
+                    container.appendChild(child);
+                } else if (child && child.exec) {
+                    container.appendChild(child.exec());
+                }
+            } else {
+                if (props.children instanceof Node) {
+                    container.appendChild(props.children);
+                } else if (props.children && props.children.exec) {
+                    container.appendChild(props.children.exec());
+                }
+            }
+        } else if (props.fallback) {
+            if (props.fallback instanceof Node) {
+                container.appendChild(props.fallback);
+            } else if (props.fallback && props.fallback.exec) {
+                container.appendChild(props.fallback.exec());
+            }
+        }
+    });
+
+    return { exec: () => container };
+}
+
 export default function App() {
     const [currentPath, setCurrentPath] = createSignal('/docs/stdlib/overview.md');
     const [content, setContent] = createSignal('');
@@ -126,29 +162,26 @@ export default function App() {
 
             {/* Main Content */}
             <main className="flex-1 ml-64 p-12 max-w-5xl mx-auto">
-                {(() => {
-                    if (loading()) {
-                        return (
-                            <div className="animate-pulse flex flex-col space-y-4">
-                                <div className="h-8 bg-[#1f1f23] rounded w-3/4"></div>
-                                <div className="h-4 bg-[#1f1f23] rounded w-full"></div>
-                                <div className="h-4 bg-[#1f1f23] rounded w-5/6"></div>
-                            </div>
-                        );
-                    }
-                    return (
-                        <article
-                            className="prose prose-invert prose-purple max-w-none 
+                <Show when={loading} fallback={
+                    // Fallback is shown when NOT loading (i.e. content ready)
+                    <article
+                        className="prose prose-invert prose-purple max-w-none 
               prose-headings:font-bold prose-h1:text-4xl prose-h1:tracking-tight prose-h1:mb-8
               prose-p:text-gray-300 prose-p:leading-7
               prose-code:text-purple-300 prose-code:bg-[#18181b] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none
               prose-pre:bg-[#18181b] prose-pre:border prose-pre:border-[#27272a]
               prose-strong:text-white
               "
-                            innerHTML={content()}
-                        />
-                    );
-                })()}
+                        innerHTML={content} // Pass signal directly
+                    />
+                }>
+                    {/* Children are shown when loading is TRUE */}
+                    <div className="animate-pulse flex flex-col space-y-4">
+                        <div className="h-8 bg-[#1f1f23] rounded w-3/4"></div>
+                        <div className="h-4 bg-[#1f1f23] rounded w-full"></div>
+                        <div className="h-4 bg-[#1f1f23] rounded w-5/6"></div>
+                    </div>
+                </Show>
             </main>
         </div>
     );
