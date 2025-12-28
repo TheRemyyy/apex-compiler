@@ -4,7 +4,7 @@ import './index.css';
 
 // Navigation structure matches file system
 const NAV_ITEMS = [
-    { title: 'Overview', path: '/docs/stdlib/overview.md' },
+    { title: 'Overview', path: '/docs/overview.md' },
     {
         title: 'Getting Started', items: [
             { title: 'Installation', path: '/docs/getting_started/installation.md' },
@@ -104,7 +104,7 @@ function InnerHTML(props: { html: () => string, className?: string }) {
 }
 
 export default function App() {
-    const [currentPath, setCurrentPath] = createSignal('/docs/stdlib/overview.md');
+    const [currentPath, setCurrentPath] = createSignal('/docs/overview.md');
     const [content, setContent] = createSignal('');
     const [loading, setLoading] = createSignal(true);
 
