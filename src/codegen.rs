@@ -1615,10 +1615,20 @@ impl<'ctx> Codegen<'ctx> {
             .get(field)
             .ok_or_else(|| CodegenError::new(format!("Unknown field: {}", field)))?;
 
-        let field_ptr = self
-            .builder
-            .build_struct_gep(class_info.struct_type, obj_ptr, field_idx, field)
-            .unwrap();
+        let i32_type = self.context.i32_type();
+        let zero = i32_type.const_int(0, false);
+        let idx = i32_type.const_int(field_idx as u64, false);
+
+        let field_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    class_info.struct_type.as_basic_type_enum(),
+                    obj_ptr,
+                    &[zero, idx],
+                    field,
+                )
+                .unwrap()
+        };
 
         let field_type = class_info
             .struct_type
