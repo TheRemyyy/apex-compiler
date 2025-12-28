@@ -6,7 +6,5 @@ The Apex Standard Library (`std`) provides core functionality for building appli
 
 - [Math](math.md): Mathematical functions and constants.
 - [String](string.md): String manipulation utilities.
-- [IO](io.md): Input and Output operations.
-- [Collections](collections.md): Data structures (List, Map, Set).
 
-(Note: IO and Collections documentation will be added as the library expands)
+> **Note**: The entire Standard Library is currently implemented as **compiler intrinsics**. This means functions like `Math.sqrt` or `String.length` are compiled directly to efficient LLVM instructions or C runtime calls with zero overhead. There are no external `.apex` module files for the standard library yet.
