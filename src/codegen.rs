@@ -3345,6 +3345,44 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
                 Ok(val)
             }
+            "set" => {
+                let data_ptr_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(2, false)],
+                            "data_ptr_ptr",
+                        )
+                        .unwrap()
+                };
+                let data_ptr = self
+                    .builder
+                    .build_load(
+                        self.context.ptr_type(AddressSpace::default()),
+                        data_ptr_ptr,
+                        "data",
+                    )
+                    .unwrap()
+                    .into_pointer_value();
+
+                let index = self.compile_expr(&args[0].node)?.into_int_value();
+                let offset = self
+                    .builder
+                    .build_int_mul(index, self.context.i64_type().const_int(8, false), "offset")
+                    .unwrap();
+                let elem_ptr = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), data_ptr, &[offset], "elem_ptr")
+                        .unwrap()
+                };
+
+                // Store the value
+                let value = self.compile_expr(&args[1].node)?;
+                self.builder.build_store(elem_ptr, value).unwrap();
+
+                Ok(self.context.i8_type().const_int(0, false).into())
+            }
             _ => Err(CodegenError::new(format!(
                 "Unknown List method: {}",
                 method
