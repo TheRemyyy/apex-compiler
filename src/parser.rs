@@ -78,6 +78,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Format a Type as a string for use in generic type names
+    #[allow(clippy::only_used_in_recursion)]
     fn format_type(&self, ty: &Type) -> String {
         match ty {
             Type::Integer => "Integer".to_string(),

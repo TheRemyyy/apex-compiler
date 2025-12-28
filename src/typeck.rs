@@ -1486,6 +1486,7 @@ impl TypeChecker {
     }
 
     /// Resolve AST type to checked type
+    #[allow(clippy::only_used_in_recursion)]
     fn resolve_type(&self, ty: &Type) -> ResolvedType {
         match ty {
             Type::Integer => ResolvedType::Integer,
@@ -1567,6 +1568,7 @@ impl TypeChecker {
     }
 
     /// Check if two types are compatible
+    #[allow(clippy::only_used_in_recursion)]
     fn types_compatible(&self, expected: &ResolvedType, actual: &ResolvedType) -> bool {
         if expected == actual {
             return true;
