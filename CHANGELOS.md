@@ -1,6 +1,13 @@
 # Changelog
 
-## [1.1.1] - 2025-12-28
+## [1.1.2] - 2025-12-28
+
+### 🐛 Fixed
+
+- **Critical Runtime Crash**: Fixed a bug where classes starting with "List" (e.g., `ListNode`) were incorrectly compiled as generic lists, causing stack corruption and runtime crashes.
+- **List.set()**: Implemented missing `set(index, value)` method for `List<T>` in codegen.
+- **Match Statements**: Fixed invalid LLVM IR generation (orphan blocks) for `match` statements.
+- **Clippy Warnings**: Resolved `collapsible_match` and other lints in `codegen.rs`.
 
 ### 🚀 Major Changes
 
