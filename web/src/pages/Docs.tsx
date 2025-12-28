@@ -110,18 +110,21 @@ export function Docs() {
     const [loading, setLoading] = useState(true);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-    // Calculate Next/Prev
-    const currentIndex = FLATTENED_DOCS.findIndex(item => item.path === location.pathname);
+    // Normalize path just like inside useEffect
+    const normalizedPath = location.pathname === '/docs' || location.pathname === '/docs/' ? '/docs/overview.md' : location.pathname;
+
+    // Calculate Next/Prev using normalized path
+    const currentIndex = FLATTENED_DOCS.findIndex(item => item.path === normalizedPath);
     const prevDoc = currentIndex > 0 ? FLATTENED_DOCS[currentIndex - 1] : null;
     const nextDoc = currentIndex !== -1 && currentIndex < FLATTENED_DOCS.length - 1 ? FLATTENED_DOCS[currentIndex + 1] : null;
 
     useEffect(() => {
-        // Determine path from route. If route is just /docs, default to overview
-        const path = location.pathname === '/docs' || location.pathname === '/docs/' ? '/docs/overview.md' : location.pathname;
-
-        setLoading(true);
         setIsSidebarOpen(false); // Close sidebar on nav
-        fetch(path)
+
+        // Only show full skeleton on initial load, otherwise just dim or keep content
+        if (!content) setLoading(true);
+
+        fetch(normalizedPath)
             .then(res => {
                 if (!res.ok) throw new Error('Not found');
                 return res.text();
@@ -137,7 +140,7 @@ export function Docs() {
                 setContent('<h1>Document not found</h1><p>The requested page could not be found.</p>');
                 setLoading(false);
             });
-    }, [location.pathname]);
+    }, [normalizedPath]); // Depend on normalizedPath
 
     return (
         <div className="flex flex-col lg:flex-row bg-[#09090b] text-gray-100 font-sans selection:bg-gray-700 selection:text-white pt-14 lg:pt-16 min-h-screen">
@@ -152,7 +155,7 @@ export function Docs() {
                     Menu
                 </button>
                 <span className="ml-auto text-xs text-gray-500 font-mono">
-                    {NAV_ITEMS.find(s => s.items?.some(i => i.path === location.pathname))?.title || 'Documentation'}
+                    {NAV_ITEMS.find(s => s.items?.some(i => i.path === normalizedPath))?.title || 'Documentation'}
                 </span>
             </div>
 
@@ -173,7 +176,7 @@ export function Docs() {
                                     </h3>
                                     <ul className="space-y-0.5">
                                         {section.items.map((item, itemIdx) => {
-                                            const isActive = location.pathname === item.path;
+                                            const isActive = normalizedPath === item.path;
                                             return (
                                                 <li key={itemIdx}>
                                                     <button
@@ -193,7 +196,7 @@ export function Docs() {
                             ) : (
                                 <button
                                     onClick={() => navigate(section.path)}
-                                    className={`w-full text-left px-3 py-1.5 rounded-md text-[14px] font-bold uppercase tracking-wider mb-2 transition-colors ${location.pathname === section.path ? 'bg-[#18181b] text-white shadow-sm border border-[#27272a]' : 'text-gray-500 hover:text-gray-300 hover:bg-[#18181b]/50'
+                                    className={`w-full text-left px-3 py-1.5 rounded-md text-[14px] font-bold uppercase tracking-wider mb-2 transition-colors ${normalizedPath === section.path ? 'bg-[#18181b] text-white shadow-sm border border-[#27272a]' : 'text-gray-500 hover:text-gray-300 hover:bg-[#18181b]/50'
                                         }`}
                                 >
                                     {section.title}
