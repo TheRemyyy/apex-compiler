@@ -1836,19 +1836,33 @@ impl<'ctx> Codegen<'ctx> {
         let alloca = self.builder.build_alloca(option_type, "option").unwrap();
 
         // Set is_some = 1
-        let tag_ptr = self
-            .builder
-            .build_struct_gep(option_type, alloca, 0, "tag")
-            .unwrap();
+        let i32_type = self.context.i32_type();
+        let zero = i32_type.const_int(0, false);
+        let tag_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    option_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(0, false)],
+                    "tag",
+                )
+                .unwrap()
+        };
         self.builder
             .build_store(tag_ptr, self.context.i8_type().const_int(1, false))
             .unwrap();
 
         // Set value
-        let value_ptr = self
-            .builder
-            .build_struct_gep(option_type, alloca, 1, "value")
-            .unwrap();
+        let value_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    option_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(1, false)],
+                    "value",
+                )
+                .unwrap()
+        };
         self.builder.build_store(value_ptr, value).unwrap();
 
         Ok(self
@@ -1870,19 +1884,33 @@ impl<'ctx> Codegen<'ctx> {
         let alloca = self.builder.build_alloca(option_type, "option").unwrap();
 
         // Set is_some = 0
-        let tag_ptr = self
-            .builder
-            .build_struct_gep(option_type, alloca, 0, "tag")
-            .unwrap();
+        let i32_type = self.context.i32_type();
+        let zero = i32_type.const_int(0, false);
+        let tag_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    option_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(0, false)],
+                    "tag",
+                )
+                .unwrap()
+        };
         self.builder
             .build_store(tag_ptr, self.context.i8_type().const_int(0, false))
             .unwrap();
 
         // Set value to 0 (unused)
-        let value_ptr = self
-            .builder
-            .build_struct_gep(option_type, alloca, 1, "value")
-            .unwrap();
+        let value_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    option_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(1, false)],
+                    "value",
+                )
+                .unwrap()
+        };
         self.builder
             .build_store(value_ptr, self.context.i64_type().const_int(0, false))
             .unwrap();
@@ -1909,26 +1937,46 @@ impl<'ctx> Codegen<'ctx> {
         let alloca = self.builder.build_alloca(result_type, "result").unwrap();
 
         // Set is_ok = 1
-        let tag_ptr = self
-            .builder
-            .build_struct_gep(result_type, alloca, 0, "tag")
-            .unwrap();
+        let i32_type = self.context.i32_type();
+        let zero = i32_type.const_int(0, false);
+        let tag_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    result_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(0, false)],
+                    "tag",
+                )
+                .unwrap()
+        };
         self.builder
             .build_store(tag_ptr, self.context.i8_type().const_int(1, false))
             .unwrap();
 
         // Set ok_value
-        let ok_ptr = self
-            .builder
-            .build_struct_gep(result_type, alloca, 1, "ok")
-            .unwrap();
+        let ok_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    result_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(1, false)],
+                    "ok",
+                )
+                .unwrap()
+        };
         self.builder.build_store(ok_ptr, value).unwrap();
 
         // Set err_value to null
-        let err_ptr = self
-            .builder
-            .build_struct_gep(result_type, alloca, 2, "err")
-            .unwrap();
+        let err_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    result_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(2, false)],
+                    "err",
+                )
+                .unwrap()
+        };
         let null = self.context.ptr_type(AddressSpace::default()).const_null();
         self.builder.build_store(err_ptr, null).unwrap();
 
@@ -1952,28 +2000,48 @@ impl<'ctx> Codegen<'ctx> {
         let alloca = self.builder.build_alloca(result_type, "result").unwrap();
 
         // Set is_ok = 0
-        let tag_ptr = self
-            .builder
-            .build_struct_gep(result_type, alloca, 0, "tag")
-            .unwrap();
+        let i32_type = self.context.i32_type();
+        let zero = i32_type.const_int(0, false);
+        let tag_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    result_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(0, false)],
+                    "tag",
+                )
+                .unwrap()
+        };
         self.builder
             .build_store(tag_ptr, self.context.i8_type().const_int(0, false))
             .unwrap();
 
         // Set ok_value to 0
-        let ok_ptr = self
-            .builder
-            .build_struct_gep(result_type, alloca, 1, "ok")
-            .unwrap();
+        let ok_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    result_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(1, false)],
+                    "ok",
+                )
+                .unwrap()
+        };
         self.builder
             .build_store(ok_ptr, self.context.i64_type().const_int(0, false))
             .unwrap();
 
         // Set err_value
-        let err_ptr = self
-            .builder
-            .build_struct_gep(result_type, alloca, 2, "err")
-            .unwrap();
+        let err_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    result_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(2, false)],
+                    "err",
+                )
+                .unwrap()
+        };
         self.builder.build_store(err_ptr, error).unwrap();
 
         Ok(self
@@ -2000,28 +2068,48 @@ impl<'ctx> Codegen<'ctx> {
             .unwrap();
 
         // Set is_ok = 0
-        let tag_ptr = self
-            .builder
-            .build_struct_gep(result_type, alloca, 0, "tag")
-            .unwrap();
+        let i32_type = self.context.i32_type();
+        let zero = i32_type.const_int(0, false);
+        let tag_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    result_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(0, false)],
+                    "tag",
+                )
+                .unwrap()
+        };
         self.builder
             .build_store(tag_ptr, self.context.i8_type().const_int(0, false))
             .unwrap();
 
         // Set ok_value to 0
-        let ok_ptr = self
-            .builder
-            .build_struct_gep(result_type, alloca, 1, "ok")
-            .unwrap();
+        let ok_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    result_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(1, false)],
+                    "ok",
+                )
+                .unwrap()
+        };
         self.builder
             .build_store(ok_ptr, self.context.i64_type().const_int(0, false))
             .unwrap();
 
         // Set err_value to null
-        let err_ptr = self
-            .builder
-            .build_struct_gep(result_type, alloca, 2, "err")
-            .unwrap();
+        let err_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    result_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(2, false)],
+                    "err",
+                )
+                .unwrap()
+        };
         let null = self.context.ptr_type(AddressSpace::default()).const_null();
         self.builder.build_store(err_ptr, null).unwrap();
 
@@ -2048,10 +2136,18 @@ impl<'ctx> Codegen<'ctx> {
 
         // Initial capacity = 8
         let initial_capacity: u64 = 8;
-        let capacity_ptr = self
-            .builder
-            .build_struct_gep(list_type, alloca, 0, "capacity")
-            .unwrap();
+        let i32_type = self.context.i32_type();
+        let zero = i32_type.const_int(0, false);
+        let capacity_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    list_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(0, false)],
+                    "capacity",
+                )
+                .unwrap()
+        };
         self.builder
             .build_store(
                 capacity_ptr,
@@ -2060,10 +2156,16 @@ impl<'ctx> Codegen<'ctx> {
             .unwrap();
 
         // Length = 0
-        let length_ptr = self
-            .builder
-            .build_struct_gep(list_type, alloca, 1, "length")
-            .unwrap();
+        let length_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    list_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(1, false)],
+                    "length",
+                )
+                .unwrap()
+        };
         self.builder
             .build_store(length_ptr, self.context.i64_type().const_int(0, false))
             .unwrap();
@@ -2083,10 +2185,16 @@ impl<'ctx> Codegen<'ctx> {
             _ => panic!("malloc should return a value"),
         };
 
-        let data_ptr_field = self
-            .builder
-            .build_struct_gep(list_type, alloca, 2, "data_ptr")
-            .unwrap();
+        let data_ptr_field = unsafe {
+            self.builder
+                .build_gep(
+                    list_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(2, false)],
+                    "data_ptr",
+                )
+                .unwrap()
+        };
         self.builder.build_store(data_ptr_field, data_ptr).unwrap();
 
         Ok(self.builder.build_load(list_type, alloca, "list").unwrap())
@@ -2139,10 +2247,18 @@ impl<'ctx> Codegen<'ctx> {
 
         // Initial capacity = 8
         let initial_capacity: u64 = 8;
-        let capacity_ptr = self
-            .builder
-            .build_struct_gep(map_type, alloca, 0, "capacity")
-            .unwrap();
+        let i32_type = self.context.i32_type();
+        let zero = i32_type.const_int(0, false);
+        let capacity_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    map_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(0, false)],
+                    "capacity",
+                )
+                .unwrap()
+        };
         self.builder
             .build_store(
                 capacity_ptr,
@@ -2151,10 +2267,16 @@ impl<'ctx> Codegen<'ctx> {
             .unwrap();
 
         // Length = 0
-        let length_ptr = self
-            .builder
-            .build_struct_gep(map_type, alloca, 1, "length")
-            .unwrap();
+        let length_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    map_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(1, false)],
+                    "length",
+                )
+                .unwrap()
+        };
         self.builder
             .build_store(length_ptr, self.context.i64_type().const_int(0, false))
             .unwrap();
@@ -2174,10 +2296,16 @@ impl<'ctx> Codegen<'ctx> {
             ValueKind::Basic(val) => val,
             _ => panic!("malloc should return a value"),
         };
-        let keys_field = self
-            .builder
-            .build_struct_gep(map_type, alloca, 2, "keys_ptr")
-            .unwrap();
+        let keys_field = unsafe {
+            self.builder
+                .build_gep(
+                    map_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(2, false)],
+                    "keys_ptr",
+                )
+                .unwrap()
+        };
         self.builder.build_store(keys_field, keys_ptr).unwrap();
 
         let values_call = self
@@ -2188,10 +2316,16 @@ impl<'ctx> Codegen<'ctx> {
             ValueKind::Basic(val) => val,
             _ => panic!("malloc should return a value"),
         };
-        let values_field = self
-            .builder
-            .build_struct_gep(map_type, alloca, 3, "values_ptr")
-            .unwrap();
+        let values_field = unsafe {
+            self.builder
+                .build_gep(
+                    map_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(3, false)],
+                    "values_ptr",
+                )
+                .unwrap()
+        };
         self.builder.build_store(values_field, values_ptr).unwrap();
 
         Ok(self.builder.build_load(map_type, alloca, "map").unwrap())
@@ -2217,10 +2351,18 @@ impl<'ctx> Codegen<'ctx> {
         match method {
             "push" => {
                 // Get current length and capacity
-                let length_ptr = self
-                    .builder
-                    .build_struct_gep(list_type, list_ptr, 1, "len_ptr")
-                    .unwrap();
+                let i32_type = self.context.i32_type();
+                let zero = i32_type.const_int(0, false);
+                let length_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(1, false)],
+                            "len_ptr",
+                        )
+                        .unwrap()
+                };
                 let length = self
                     .builder
                     .build_load(self.context.i64_type(), length_ptr, "len")
@@ -2228,10 +2370,16 @@ impl<'ctx> Codegen<'ctx> {
                     .into_int_value();
 
                 // Get data pointer
-                let data_ptr_ptr = self
-                    .builder
-                    .build_struct_gep(list_type, list_ptr, 2, "data_ptr_ptr")
-                    .unwrap();
+                let data_ptr_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(2, false)],
+                            "data_ptr_ptr",
+                        )
+                        .unwrap()
+                };
                 let data_ptr = self
                     .builder
                     .build_load(
@@ -2276,10 +2424,18 @@ impl<'ctx> Codegen<'ctx> {
             }
             "get" => {
                 // Get data pointer
-                let data_ptr_ptr = self
-                    .builder
-                    .build_struct_gep(list_type, list_ptr, 2, "data_ptr_ptr")
-                    .unwrap();
+                let i32_type = self.context.i32_type();
+                let zero = i32_type.const_int(0, false);
+                let data_ptr_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(2, false)],
+                            "data_ptr_ptr",
+                        )
+                        .unwrap()
+                };
                 let data_ptr = self
                     .builder
                     .build_load(
@@ -2310,10 +2466,18 @@ impl<'ctx> Codegen<'ctx> {
                 Ok(val)
             }
             "length" => {
-                let length_ptr = self
-                    .builder
-                    .build_struct_gep(list_type, list_ptr, 1, "len_ptr")
-                    .unwrap();
+                let i32_type = self.context.i32_type();
+                let zero = i32_type.const_int(0, false);
+                let length_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(1, false)],
+                            "len_ptr",
+                        )
+                        .unwrap()
+                };
                 let length = self
                     .builder
                     .build_load(self.context.i64_type(), length_ptr, "len")
@@ -2322,10 +2486,18 @@ impl<'ctx> Codegen<'ctx> {
             }
             "set" => {
                 // Get data pointer
-                let data_ptr_ptr = self
-                    .builder
-                    .build_struct_gep(list_type, list_ptr, 2, "data_ptr_ptr")
-                    .unwrap();
+                let i32_type = self.context.i32_type();
+                let zero = i32_type.const_int(0, false);
+                let data_ptr_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(2, false)],
+                            "data_ptr_ptr",
+                        )
+                        .unwrap()
+                };
                 let data_ptr = self
                     .builder
                     .build_load(
@@ -2381,10 +2553,18 @@ impl<'ctx> Codegen<'ctx> {
 
         match method {
             "length" => {
-                let length_ptr = self
-                    .builder
-                    .build_struct_gep(map_type, map_ptr, 1, "len_ptr")
-                    .unwrap();
+                let i32_type = self.context.i32_type();
+                let zero = i32_type.const_int(0, false);
+                let length_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            map_type.as_basic_type_enum(),
+                            map_ptr,
+                            &[zero, i32_type.const_int(1, false)],
+                            "len_ptr",
+                        )
+                        .unwrap()
+                };
                 let length = self
                     .builder
                     .build_load(self.context.i64_type(), length_ptr, "len")
@@ -2393,20 +2573,34 @@ impl<'ctx> Codegen<'ctx> {
             }
             "set" => {
                 // Simple implementation: append key-value at end (no duplicate check)
-                let length_ptr = self
-                    .builder
-                    .build_struct_gep(map_type, map_ptr, 1, "len_ptr")
-                    .unwrap();
+                let i32_type = self.context.i32_type();
+                let zero = i32_type.const_int(0, false);
+                let length_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            map_type.as_basic_type_enum(),
+                            map_ptr,
+                            &[zero, i32_type.const_int(1, false)],
+                            "len_ptr",
+                        )
+                        .unwrap()
+                };
                 let length = self
                     .builder
                     .build_load(self.context.i64_type(), length_ptr, "len")
                     .unwrap()
                     .into_int_value();
 
-                let keys_ptr_ptr = self
-                    .builder
-                    .build_struct_gep(map_type, map_ptr, 2, "keys_ptr_ptr")
-                    .unwrap();
+                let keys_ptr_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            map_type.as_basic_type_enum(),
+                            map_ptr,
+                            &[zero, i32_type.const_int(2, false)],
+                            "keys_ptr_ptr",
+                        )
+                        .unwrap()
+                };
                 let keys_ptr = self
                     .builder
                     .build_load(
@@ -2417,10 +2611,16 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap()
                     .into_pointer_value();
 
-                let values_ptr_ptr = self
-                    .builder
-                    .build_struct_gep(map_type, map_ptr, 3, "vals_ptr_ptr")
-                    .unwrap();
+                let values_ptr_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            map_type.as_basic_type_enum(),
+                            map_ptr,
+                            &[zero, i32_type.const_int(3, false)],
+                            "vals_ptr_ptr",
+                        )
+                        .unwrap()
+                };
                 let values_ptr = self
                     .builder
                     .build_load(
@@ -2471,21 +2671,39 @@ impl<'ctx> Codegen<'ctx> {
 
                 Ok(self.context.i8_type().const_int(0, false).into())
             }
+            "insert" => {
+                // Alias for set
+                self.compile_map_method(map_name, "set", args)
+            }
             "get" => {
                 // Simple linear search
-                let length_ptr = self
-                    .builder
-                    .build_struct_gep(map_type, map_ptr, 1, "len_ptr")
-                    .unwrap();
+                let i32_type = self.context.i32_type();
+                let zero = i32_type.const_int(0, false);
+                let length_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            map_type.as_basic_type_enum(),
+                            map_ptr,
+                            &[zero, i32_type.const_int(1, false)],
+                            "len_ptr",
+                        )
+                        .unwrap()
+                };
                 let _length = self
                     .builder
                     .build_load(self.context.i64_type(), length_ptr, "len")
                     .unwrap();
 
-                let keys_ptr_ptr = self
-                    .builder
-                    .build_struct_gep(map_type, map_ptr, 2, "keys_ptr_ptr")
-                    .unwrap();
+                let keys_ptr_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            map_type.as_basic_type_enum(),
+                            map_ptr,
+                            &[zero, i32_type.const_int(2, false)],
+                            "keys_ptr_ptr",
+                        )
+                        .unwrap()
+                };
                 let _keys_ptr = self
                     .builder
                     .build_load(
@@ -2495,10 +2713,16 @@ impl<'ctx> Codegen<'ctx> {
                     )
                     .unwrap();
 
-                let values_ptr_ptr = self
-                    .builder
-                    .build_struct_gep(map_type, map_ptr, 3, "vals_ptr_ptr")
-                    .unwrap();
+                let values_ptr_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            map_type.as_basic_type_enum(),
+                            map_ptr,
+                            &[zero, i32_type.const_int(3, false)],
+                            "vals_ptr_ptr",
+                        )
+                        .unwrap()
+                };
                 let _values_ptr = self
                     .builder
                     .build_load(
@@ -2511,6 +2735,10 @@ impl<'ctx> Codegen<'ctx> {
                 // For now, just return 0 - proper implementation would need loops
                 // TODO: Implement proper key search
                 Ok(self.context.i64_type().const_int(0, false).into())
+            }
+            "contains" => {
+                // For now, just return false
+                Ok(self.context.bool_type().const_int(0, false).into())
             }
             _ => Err(CodegenError::new(format!("Unknown Map method: {}", method))),
         }
@@ -2570,10 +2798,18 @@ impl<'ctx> Codegen<'ctx> {
                     .context
                     .struct_type(&[self.context.i8_type().into(), inner_llvm], false);
                 let alloca = self.builder.build_alloca(option_type, "none_ret").unwrap();
-                let tag_ptr = self
-                    .builder
-                    .build_struct_gep(option_type, alloca, 0, "tag")
-                    .unwrap();
+                let i32_type = self.context.i32_type();
+                let zero = i32_type.const_int(0, false);
+                let tag_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            option_type.as_basic_type_enum(),
+                            alloca,
+                            &[zero, i32_type.const_int(0, false)],
+                            "tag",
+                        )
+                        .unwrap()
+                };
                 self.builder
                     .build_store(tag_ptr, self.context.i8_type().const_int(0, false))
                     .unwrap();
@@ -2594,17 +2830,31 @@ impl<'ctx> Codegen<'ctx> {
                     .build_extract_value(struct_val, 2, "err_val")
                     .unwrap();
                 let alloca = self.builder.build_alloca(result_type, "err_ret").unwrap();
-                let tag_ptr = self
-                    .builder
-                    .build_struct_gep(result_type, alloca, 0, "tag")
-                    .unwrap();
+                let i32_type = self.context.i32_type();
+                let zero = i32_type.const_int(0, false);
+                let tag_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            result_type.as_basic_type_enum(),
+                            alloca,
+                            &[zero, i32_type.const_int(0, false)],
+                            "tag",
+                        )
+                        .unwrap()
+                };
                 self.builder
                     .build_store(tag_ptr, self.context.i8_type().const_int(0, false))
                     .unwrap();
-                let err_ptr = self
-                    .builder
-                    .build_struct_gep(result_type, alloca, 2, "err")
-                    .unwrap();
+                let err_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            result_type.as_basic_type_enum(),
+                            alloca,
+                            &[zero, i32_type.const_int(2, false)],
+                            "err",
+                        )
+                        .unwrap()
+                };
                 self.builder.build_store(err_ptr, err_val).unwrap();
                 let loaded = self.builder.build_load(result_type, alloca, "ret").unwrap();
                 self.builder.build_return(Some(&loaded)).unwrap();
