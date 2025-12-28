@@ -181,8 +181,8 @@ export function Docs() {
                                                 <li key={itemIdx}>
                                                     <button
                                                         onClick={() => navigate(item.path)}
-                                                        className={`w-full text-left px-3 py-1.5 rounded-md text-[14px] font-medium transition-all duration-200 outline-none focus:outline-none focus:ring-0 border ${isActive
-                                                            ? 'bg-[#18181b] text-white shadow-sm border-[#27272a]'
+                                                        className={`w-full text-left px-3 py-1.5 rounded-md text-[14px] font-medium transition-colors duration-100 outline-none focus:outline-none focus:ring-0 border ${isActive
+                                                            ? 'bg-[#18181b] text-white border-[#27272a]'
                                                             : 'text-gray-400 hover:text-gray-200 hover:bg-[#18181b]/50 border-transparent'
                                                             }`}
                                                     >
@@ -196,7 +196,7 @@ export function Docs() {
                             ) : (
                                 <button
                                     onClick={() => navigate(section.path)}
-                                    className={`w-full text-left px-3 py-1.5 rounded-md text-[14px] font-bold uppercase tracking-wider mb-2 transition-colors outline-none focus:outline-none focus:ring-0 border ${normalizedPath === section.path ? 'bg-[#18181b] text-white shadow-sm border-[#27272a]' : 'text-gray-500 hover:text-gray-300 hover:bg-[#18181b]/50 border-transparent'
+                                    className={`w-full text-left px-3 py-1.5 rounded-md text-[14px] font-bold uppercase tracking-wider mb-2 transition-colors duration-100 outline-none focus:outline-none focus:ring-0 border ${normalizedPath === section.path ? 'bg-[#18181b] text-white border-[#27272a]' : 'text-gray-500 hover:text-gray-300 hover:bg-[#18181b]/50 border-transparent'
                                         }`}
                                 >
                                     {section.title}
