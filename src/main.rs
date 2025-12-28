@@ -182,13 +182,16 @@ fn compile(
 }
 
 fn compile_ir(ir_path: &Path, output_path: &Path) -> Result<(), String> {
-    let result = Command::new("clang")
-        .arg(ir_path)
+    let mut cmd = Command::new("clang");
+    cmd.arg(ir_path)
         .arg("-o")
         .arg(output_path)
-        .arg("-Wno-override-module")
-        .arg("-llegacy_stdio_definitions")
-        .output();
+        .arg("-Wno-override-module");
+
+    #[cfg(windows)]
+    cmd.arg("-llegacy_stdio_definitions");
+
+    let result = cmd.output();
 
     match result {
         Ok(output) => {
