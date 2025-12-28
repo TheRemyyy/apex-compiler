@@ -36,6 +36,7 @@ impl CodegenError {
 type Result<T> = std::result::Result<T, CodegenError>;
 
 /// Variable in codegen
+#[derive(Debug, Clone)]
 struct Variable<'ctx> {
     ptr: PointerValue<'ctx>,
     ty: Type,
@@ -1500,20 +1501,67 @@ impl<'ctx> Codegen<'ctx> {
         }
 
         // Regular function call
-        let func_name = match callee {
-            Expr::Ident(name) => name.clone(),
-            _ => return Err(CodegenError::new("Invalid callee")),
-        };
+        let func = match callee {
+            Expr::Ident(name) => {
+                // First check if it's a function pointer/local variable
+                if let Some(var) = self.variables.get(name) {
+                    if let Type::Function(param_types, ret_type) = &var.ty {
+                        let ptr = self
+                            .builder
+                            .build_load(self.llvm_type(&var.ty), var.ptr, name)
+                            .unwrap()
+                            .into_pointer_value();
 
-        let func = if let Some(f) = self.functions.get(&func_name) {
-            *f
-        } else if let Some(f) = self.module.get_function(&func_name) {
-            f
-        } else {
-            return Err(CodegenError::new(format!(
-                "Unknown function: {}",
-                func_name
-            )));
+                        // Construct FunctionType
+                        let llvm_ret = self.llvm_type(ret_type);
+                        let llvm_params: Vec<BasicMetadataTypeEnum> = param_types
+                            .iter()
+                            .map(|p| self.llvm_type(p).into())
+                            .collect();
+
+                        let fn_type = match llvm_ret {
+                            BasicTypeEnum::IntType(i) => i.fn_type(&llvm_params, false),
+                            BasicTypeEnum::FloatType(f) => f.fn_type(&llvm_params, false),
+                            BasicTypeEnum::PointerType(p) => p.fn_type(&llvm_params, false),
+                            BasicTypeEnum::StructType(s) => s.fn_type(&llvm_params, false),
+                            _ => {
+                                return Err(CodegenError::new("Unsupported return type in lambda"))
+                            }
+                        };
+
+                        let compiled_args: Vec<BasicValueEnum> = args
+                            .iter()
+                            .map(|a| self.compile_expr(&a.node))
+                            .collect::<Result<_>>()?;
+
+                        let args_meta: Vec<BasicMetadataValueEnum> =
+                            compiled_args.iter().map(|a| (*a).into()).collect();
+
+                        let call = self
+                            .builder
+                            .build_indirect_call(fn_type, ptr, &args_meta, "call")
+                            .unwrap();
+
+                        let result = match call.try_as_basic_value() {
+                            ValueKind::Basic(val) => val,
+                            ValueKind::Instruction(_) => {
+                                self.context.i8_type().const_int(0, false).into()
+                            }
+                        };
+                        return Ok(result);
+                    }
+                }
+
+                // Fall back to global function lookup
+                if let Some(f) = self.functions.get(name) {
+                    *f
+                } else if let Some(f) = self.module.get_function(name) {
+                    f
+                } else {
+                    return Err(CodegenError::new(format!("Unknown function: {}", name)));
+                }
+            }
+            _ => return Err(CodegenError::new("Invalid callee")),
         };
 
         let compiled_args: Vec<BasicValueEnum> = args
@@ -1571,7 +1619,7 @@ impl<'ctx> Codegen<'ctx> {
         }
         .ok_or_else(|| CodegenError::new("Cannot determine object type"))?;
 
-        let class_info = self
+        let _class_info = self
             .classes
             .get(&class_name)
             .ok_or_else(|| CodegenError::new(format!("Unknown class: {}", class_name)))?;
