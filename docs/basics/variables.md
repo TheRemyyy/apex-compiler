@@ -40,7 +40,3 @@ This is often useful for type transformations:
 input: String = "100";
 input: Integer = to_int(input); // Shadowing with different type
 ```
-
-## Constants
-
-> **Note**: The `const` keyword is reserved but not yet implemented in the parser. For now, use immutable variables (default) for constant values.

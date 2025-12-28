@@ -40,8 +40,7 @@ pub enum Token<'src> {
     Mut,
     #[token("let")]
     Let,
-    #[token("const")]
-    Const,
+
     #[token("true")]
     True,
     #[token("false")]
