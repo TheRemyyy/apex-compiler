@@ -25,6 +25,9 @@ html {
 }
 
 /* Remove default focus outline for all buttons */
-button:focus {
-  outline: none;
+button:focus,
+button:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  -webkit-tap-highlight-color: transparent;
 }
