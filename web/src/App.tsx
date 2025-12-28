@@ -113,8 +113,8 @@ export default function App() {
         setLoading(true);
         fetch(path)
             .then(res => res.text())
-            .then(text => {
-                const html = marked.parse(text);
+            .then(async text => {
+                const html = await marked.parse(text);
                 setContent(html);
                 setLoading(false);
             })
@@ -148,8 +148,8 @@ export default function App() {
                                                 <button
                                                     onClick={() => setCurrentPath(item.path)}
                                                     className={() => `w-full text-left px-3 py-2 rounded-lg text-sm transition-all duration-200 ${currentPath() === item.path
-                                                            ? 'bg-purple-500/10 text-purple-400 font-medium'
-                                                            : 'text-gray-400 hover:text-gray-100 hover:bg-[#18181b]'
+                                                        ? 'bg-purple-500/10 text-purple-400 font-medium'
+                                                        : 'text-gray-400 hover:text-gray-100 hover:bg-[#18181b]'
                                                         }`}
                                                 >
                                                     {item.title}
