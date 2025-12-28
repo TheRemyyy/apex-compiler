@@ -7,7 +7,7 @@ export function Home() {
             <section className="max-w-7xl mx-auto px-6 py-20 flex flex-col md:flex-row gap-12 items-center">
                 <div className="flex-1 text-left space-y-8">
                     <div className="inline-block px-2.5 py-1 rounded-sm border border-neutral-800 bg-neutral-900 text-neutral-400 text-xs font-mono">
-                        Available in v1.1.1
+                        Available in v1.1.2
                     </div>
 
                     <h1 className="text-4xl md:text-6xl font-bold tracking-tight text-white leading-[1.1]">

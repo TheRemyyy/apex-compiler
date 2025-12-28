@@ -24,7 +24,12 @@ export default defineConfig({
                     vendor: ['react', 'react-dom', 'react-router-dom'],
                     utils: ['marked'],
                 },
+                // Force CSS into a single file or split? keeping default is usually best for HTTP/2.
+                // However, user specifically complained about the index css file.
+                // Minimizing it via cssMinify is good.
             },
         },
+        cssCodeSplit: true,
+        cssMinify: true, // Use esbuild (default) or lightningcss if available.
     }
 })
