@@ -1955,38 +1955,38 @@ impl<'ctx> Codegen<'ctx> {
         args: &[Spanned<Expr>],
     ) -> Result<BasicValueEnum<'ctx>> {
         // Handle List<T> construction
-        if ty.starts_with("List") {
+        if ty == "List" || ty.starts_with("List<") {
             return self.create_empty_list();
         }
 
         // Handle Map<K,V> construction
-        if ty.starts_with("Map") {
+        if ty == "Map" || ty.starts_with("Map<") {
             return self.create_empty_map();
         }
 
         // Handle Option<T> construction (default to None)
-        if ty.starts_with("Option") {
+        if ty == "Option" || ty.starts_with("Option<") {
             return self.create_option_none();
         }
 
         // Handle Result<T,E> construction (default to Error with zeroed memory)
-        if ty.starts_with("Result") {
+        if ty == "Result" || ty.starts_with("Result<") {
             return self.create_default_result();
         }
 
         // Handle Set<T> construction
-        if ty.starts_with("Set") {
+        if ty == "Set" || ty.starts_with("Set<") {
             return self.create_empty_set();
         }
 
         // Handle Smart Pointer construction
-        if ty.starts_with("Box") {
+        if ty == "Box" || ty.starts_with("Box<") {
             return self.create_empty_box();
         }
-        if ty.starts_with("Rc") {
+        if ty == "Rc" || ty.starts_with("Rc<") {
             return self.create_empty_rc();
         }
-        if ty.starts_with("Arc") {
+        if ty == "Arc" || ty.starts_with("Arc<") {
             return self.create_empty_arc();
         }
 
