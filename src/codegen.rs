@@ -4890,10 +4890,8 @@ impl<'ctx> Codegen<'ctx> {
                     self.walk_stmt_for_captures(&s.node, params, captures, seen);
                 }
             }
-            Stmt::Return(e) => {
-                if let Some(expr) = e {
-                    self.walk_expr_for_captures(&expr.node, params, captures, seen);
-                }
+            Stmt::Return(Some(expr)) => {
+                self.walk_expr_for_captures(&expr.node, params, captures, seen);
             }
             _ => {}
         }
