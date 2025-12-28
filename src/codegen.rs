@@ -46,6 +46,7 @@ struct Variable<'ctx> {
 struct ClassInfo<'ctx> {
     struct_type: StructType<'ctx>,
     field_indices: HashMap<String, u32>,
+    field_types: HashMap<String, Type>,
 }
 
 /// Loop context for break/continue
@@ -264,20 +265,23 @@ impl<'ctx> Codegen<'ctx> {
     // === Classes ===
 
     fn declare_class(&mut self, class: &ClassDecl) -> Result<()> {
-        let mut field_types: Vec<BasicTypeEnum<'ctx>> = Vec::new();
+        let mut field_llvm_types: Vec<BasicTypeEnum<'ctx>> = Vec::new();
         let mut field_indices: HashMap<String, u32> = HashMap::new();
+        let mut field_types_map: HashMap<String, Type> = HashMap::new();
 
         for (i, field) in class.fields.iter().enumerate() {
-            field_types.push(self.llvm_type(&field.ty));
+            field_llvm_types.push(self.llvm_type(&field.ty));
             field_indices.insert(field.name.clone(), i as u32);
+            field_types_map.insert(field.name.clone(), field.ty.clone());
         }
 
-        let struct_type = self.context.struct_type(&field_types, false);
+        let struct_type = self.context.struct_type(&field_llvm_types, false);
         self.classes.insert(
             class.name.clone(),
             ClassInfo {
                 struct_type,
                 field_indices,
+                field_types: field_types_map,
             },
         );
 
@@ -1708,39 +1712,62 @@ impl<'ctx> Codegen<'ctx> {
         method: &str,
         args: &[Spanned<Expr>],
     ) -> Result<BasicValueEnum<'ctx>> {
-        // Check if this is a List, Map, Set, or Option method call
-        if let Expr::Ident(object_name) = object {
-            if let Some(var) = self.variables.get(object_name) {
-                match &var.ty {
-                    Type::List(_) => return self.compile_list_method(object_name, method, args),
-                    Type::Map(_, _) => return self.compile_map_method(object_name, method, args),
-                    Type::Set(_) => return self.compile_set_method(object_name, method, args),
-                    Type::Option(_) => {
-                        return self.compile_option_method(object_name, method, args)
+        // Infer object type first
+        let obj_ty = self.infer_object_type(object);
+
+        // Handle built-in types (List, Map, Set, Option, Result) for any expression
+        if let Some(ref ty) = obj_ty {
+            match ty {
+                Type::List(_) => {
+                    // Get pointer to the list
+                    let list_ptr = match object {
+                        Expr::Ident(name) => self.variables.get(name).map(|v| v.ptr),
+                        Expr::Field { object: obj, field } => {
+                            self.compile_field_ptr(&obj.node, field).ok()
+                        }
+                        Expr::This => self.variables.get("this").map(|v| v.ptr),
+                        _ => None,
+                    };
+                    if let Some(ptr) = list_ptr {
+                        return self.compile_list_method_ptr(ptr, ty, method, args);
                     }
-                    Type::Result(_, _) => {
-                        return self.compile_result_method(object_name, method, args)
-                    }
-                    _ => {}
                 }
+                Type::Map(_, _) => {
+                    if let Expr::Ident(name) = object {
+                        return self.compile_map_method(name, method, args);
+                    }
+                }
+                Type::Set(_) => {
+                    if let Expr::Ident(name) = object {
+                        return self.compile_set_method(name, method, args);
+                    }
+                }
+                Type::Option(_) => {
+                    if let Expr::Ident(name) = object {
+                        return self.compile_option_method(name, method, args);
+                    }
+                }
+                Type::Result(_, _) => {
+                    if let Expr::Ident(name) = object {
+                        return self.compile_result_method(name, method, args);
+                    }
+                }
+                _ => {}
             }
         }
 
         let obj_val = self.compile_expr(object)?;
 
-        // Get class name from object type
-        let class_name = match object {
-            Expr::Ident(name) => self.variables.get(name).and_then(|v| match &v.ty {
-                Type::Named(n) => Some(n.clone()),
-                _ => None,
-            }),
-            Expr::This => self.variables.get("this").and_then(|v| match &v.ty {
-                Type::Named(n) => Some(n.clone()),
-                _ => None,
-            }),
-            _ => None,
-        }
-        .ok_or_else(|| CodegenError::new("Cannot determine object type"))?;
+        // Get class name from inferred type
+        let class_name = obj_ty
+            .as_ref()
+            .and_then(|ty| self.type_to_class_name(ty))
+            .ok_or_else(|| {
+                CodegenError::new(format!(
+                    "Cannot determine object type for method call: {:?}",
+                    object
+                ))
+            })?;
 
         let _class_info = self
             .classes
@@ -1779,19 +1806,17 @@ impl<'ctx> Codegen<'ctx> {
     fn compile_field(&mut self, object: &Expr, field: &str) -> Result<BasicValueEnum<'ctx>> {
         let obj_ptr = self.compile_expr(object)?.into_pointer_value();
 
-        // Get class info
-        let class_name = match object {
-            Expr::Ident(name) => self.variables.get(name).and_then(|v| match &v.ty {
-                Type::Named(n) => Some(n.clone()),
-                _ => None,
-            }),
-            Expr::This => self.variables.get("this").and_then(|v| match &v.ty {
-                Type::Named(n) => Some(n.clone()),
-                _ => None,
-            }),
-            _ => None,
-        }
-        .ok_or_else(|| CodegenError::new("Cannot determine object type"))?;
+        // Get class name using type inference
+        let obj_ty = self.infer_object_type(object);
+        let class_name = obj_ty
+            .as_ref()
+            .and_then(|ty| self.type_to_class_name(ty))
+            .ok_or_else(|| {
+                CodegenError::new(format!(
+                    "Cannot determine object type for field access: {:?}.{}",
+                    object, field
+                ))
+            })?;
 
         let class_info = self
             .classes
@@ -1826,6 +1851,44 @@ impl<'ctx> Codegen<'ctx> {
             .builder
             .build_load(field_type, field_ptr, field)
             .unwrap())
+    }
+
+    /// Get pointer to a field (for in-place modifications on collections)
+    fn compile_field_ptr(&mut self, object: &Expr, field: &str) -> Result<PointerValue<'ctx>> {
+        let obj_ptr = self.compile_expr(object)?.into_pointer_value();
+
+        let obj_ty = self.infer_object_type(object);
+        let class_name = obj_ty
+            .as_ref()
+            .and_then(|ty| self.type_to_class_name(ty))
+            .ok_or_else(|| CodegenError::new("Cannot determine object type for field ptr"))?;
+
+        let class_info = self
+            .classes
+            .get(&class_name)
+            .ok_or_else(|| CodegenError::new(format!("Unknown class: {}", class_name)))?;
+
+        let field_idx = *class_info
+            .field_indices
+            .get(field)
+            .ok_or_else(|| CodegenError::new(format!("Unknown field: {}", field)))?;
+
+        let i32_type = self.context.i32_type();
+        let zero = i32_type.const_int(0, false);
+        let idx = i32_type.const_int(field_idx as u64, false);
+
+        let field_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    class_info.struct_type.as_basic_type_enum(),
+                    obj_ptr,
+                    &[zero, idx],
+                    field,
+                )
+                .unwrap()
+        };
+
+        Ok(field_ptr)
     }
 
     fn compile_index(&mut self, object: &Expr, index: &Expr) -> Result<BasicValueEnum<'ctx>> {
@@ -3091,6 +3154,154 @@ impl<'ctx> Codegen<'ctx> {
                 self.builder.build_store(elem_ptr, value).unwrap();
 
                 Ok(self.context.i8_type().const_int(0, false).into())
+            }
+            _ => Err(CodegenError::new(format!(
+                "Unknown List method: {}",
+                method
+            ))),
+        }
+    }
+
+    /// Compile List method call with pointer (for non-identifier expressions like this.items)
+    fn compile_list_method_ptr(
+        &mut self,
+        list_ptr: PointerValue<'ctx>,
+        _list_ty: &Type,
+        method: &str,
+        args: &[Spanned<Expr>],
+    ) -> Result<BasicValueEnum<'ctx>> {
+        let list_type = self.context.struct_type(
+            &[
+                self.context.i64_type().into(),
+                self.context.i64_type().into(),
+                self.context.ptr_type(AddressSpace::default()).into(),
+            ],
+            false,
+        );
+        let i32_type = self.context.i32_type();
+        let zero = i32_type.const_int(0, false);
+
+        match method {
+            "push" => {
+                let length_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(1, false)],
+                            "len_ptr",
+                        )
+                        .unwrap()
+                };
+                let length = self
+                    .builder
+                    .build_load(self.context.i64_type(), length_ptr, "len")
+                    .unwrap()
+                    .into_int_value();
+
+                let data_ptr_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(2, false)],
+                            "data_ptr_ptr",
+                        )
+                        .unwrap()
+                };
+                let data_ptr = self
+                    .builder
+                    .build_load(
+                        self.context.ptr_type(AddressSpace::default()),
+                        data_ptr_ptr,
+                        "data",
+                    )
+                    .unwrap()
+                    .into_pointer_value();
+
+                let offset = self
+                    .builder
+                    .build_int_mul(
+                        length,
+                        self.context.i64_type().const_int(8, false),
+                        "offset",
+                    )
+                    .unwrap();
+                let elem_ptr = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), data_ptr, &[offset], "elem_ptr")
+                        .unwrap()
+                };
+
+                let value = self.compile_expr(&args[0].node)?;
+                self.builder.build_store(elem_ptr, value).unwrap();
+
+                let new_length = self
+                    .builder
+                    .build_int_add(
+                        length,
+                        self.context.i64_type().const_int(1, false),
+                        "new_len",
+                    )
+                    .unwrap();
+                self.builder.build_store(length_ptr, new_length).unwrap();
+
+                Ok(self.context.i8_type().const_int(0, false).into())
+            }
+            "length" => {
+                let length_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(1, false)],
+                            "len_ptr",
+                        )
+                        .unwrap()
+                };
+                let length = self
+                    .builder
+                    .build_load(self.context.i64_type(), length_ptr, "len")
+                    .unwrap();
+                Ok(length)
+            }
+            "get" => {
+                let data_ptr_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(2, false)],
+                            "data_ptr_ptr",
+                        )
+                        .unwrap()
+                };
+                let data_ptr = self
+                    .builder
+                    .build_load(
+                        self.context.ptr_type(AddressSpace::default()),
+                        data_ptr_ptr,
+                        "data",
+                    )
+                    .unwrap()
+                    .into_pointer_value();
+
+                let index = self.compile_expr(&args[0].node)?.into_int_value();
+                let offset = self
+                    .builder
+                    .build_int_mul(index, self.context.i64_type().const_int(8, false), "offset")
+                    .unwrap();
+                let elem_ptr = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), data_ptr, &[offset], "elem_ptr")
+                        .unwrap()
+                };
+
+                let val = self
+                    .builder
+                    .build_load(self.context.i64_type(), elem_ptr, "val")
+                    .unwrap();
+                Ok(val)
             }
             _ => Err(CodegenError::new(format!(
                 "Unknown List method: {}",
@@ -4383,6 +4594,37 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     // === Helpers ===
+
+    /// Infer the Apex Type of an expression
+    fn infer_object_type(&self, expr: &Expr) -> Option<Type> {
+        match expr {
+            Expr::Ident(name) => self.variables.get(name).map(|v| v.ty.clone()),
+            Expr::This => self.variables.get("this").map(|v| v.ty.clone()),
+            Expr::Field { object, field } => {
+                let obj_ty = self.infer_object_type(&object.node)?;
+                let class_name = match &obj_ty {
+                    Type::Named(n) => n.clone(),
+                    _ => return None,
+                };
+                let class_info = self.classes.get(&class_name)?;
+                class_info.field_types.get(field).cloned()
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract class name from a Type (handles Named, Ref, MutRef, etc.)
+    fn type_to_class_name(&self, ty: &Type) -> Option<String> {
+        match ty {
+            Type::Named(name) => Some(name.clone()),
+            Type::Ref(inner)
+            | Type::MutRef(inner)
+            | Type::Box(inner)
+            | Type::Rc(inner)
+            | Type::Arc(inner) => self.type_to_class_name(inner),
+            _ => None,
+        }
+    }
 
     fn needs_terminator(&self) -> bool {
         self.builder
