@@ -31,7 +31,7 @@ Apex is a modern systems programming language that combines the safety of Rust w
 - **🛠️ Modern Tooling** — Fast compilation, helpful error messages, and integrated toolchain
 - **🚀 LLVM Backend** — Leverages LLVM for world-class optimization and cross-platform support
 
-## 📚 Documentation
+## Documentation
 
 Detailed documentation is available in the `docs/` directory:
 

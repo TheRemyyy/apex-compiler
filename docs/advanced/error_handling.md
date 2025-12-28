@@ -1,6 +1,6 @@
 # Error Handling
 
-Apex prefers explicit error handling over exceptions.
+Apex provides robust error handling using the `Option<T>` and `Result<T, E>` types.
 
 ## Option<T>
 

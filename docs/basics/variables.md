@@ -43,4 +43,4 @@ input: Integer = to_int(input); // Shadowing with different type
 
 ## Constants
 
-(Note: Current implementation status of strict constants needs verification, check compiler source if `const` keyword exists. Assuming standard variable immutability serves this purpose for now).
+> **Note**: The `const` keyword is reserved but not yet implemented in the parser. For now, use immutable variables (default) for constant values.

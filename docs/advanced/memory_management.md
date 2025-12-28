@@ -18,8 +18,7 @@ There is no Garbage Collector (GC), ensuring predictable performance and low lat
 
 ## Smart Pointers
 
-(Reference)
-Apex supports smart pointers to manage heap memory:
+> **Note**: These smart pointers are reserved types in the compiler but full backend support is currently in development.
 
 - `Box<T>`: Unique ownership on the heap.
 - `Rc<T>`: Reference counting (shared ownership, single-threaded).
