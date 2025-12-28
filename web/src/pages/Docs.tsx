@@ -105,12 +105,14 @@ export function Docs() {
     const navigate = useNavigate();
     const [content, setContent] = useState('');
     const [loading, setLoading] = useState(true);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
     useEffect(() => {
         // Determine path from route. If route is just /docs, default to overview
         const path = location.pathname === '/docs' || location.pathname === '/docs/' ? '/docs/overview.md' : location.pathname;
 
         setLoading(true);
+        setIsSidebarOpen(false); // Close sidebar on nav
         fetch(path)
             .then(res => {
                 if (!res.ok) throw new Error('Not found');
@@ -130,12 +132,30 @@ export function Docs() {
     }, [location.pathname]);
 
     return (
-        <div className="flex bg-[#09090b] text-gray-100 font-sans selection:bg-purple-500/30 pt-16">
+        <div className="flex flex-col lg:flex-row bg-[#09090b] text-gray-100 font-sans selection:bg-purple-500/30 pt-14 lg:pt-16 min-h-screen">
 
-            {/* Sidebar - Adjusted top offset for global header */}
-            <nav className="fixed w-72 left-0 top-16 h-[calc(100vh-4rem)] border-r border-[#1f1f23] bg-[#0c0c0e] flex flex-col z-10">
+            {/* Mobile Sidebar Toggle Bar */}
+            <div className="lg:hidden fixed top-14 left-0 right-0 h-10 bg-[#0c0c0e] border-b border-[#1f1f23] flex items-center px-4 z-20">
+                <button
+                    onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                    className="text-sm font-medium text-purple-400 flex items-center gap-2"
+                >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+                    Menu
+                </button>
+                <span className="ml-auto text-xs text-gray-500 font-mono">
+                    {NAV_ITEMS.find(s => s.items?.some(i => i.path === location.pathname))?.title || 'Documentation'}
+                </span>
+            </div>
 
-                <div className="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-8">
+            {/* Sidebar */}
+            <nav className={`
+                fixed lg:fixed w-72 left-0 top-16 h-[calc(100vh-4rem)] 
+                border-r border-[#1f1f23] bg-[#0c0c0e] 
+                flex flex-col z-30 transition-transform duration-300
+                ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+            `}>
+                <div className="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-8 pb-20">
                     {NAV_ITEMS.map((section, idx) => (
                         <section key={idx}>
                             {section.items ? (
@@ -176,9 +196,17 @@ export function Docs() {
                 </div>
             </nav>
 
+            {/* Overlay for mobile sidebar */}
+            {isSidebarOpen && (
+                <div
+                    className="lg:hidden fixed inset-0 z-20 bg-black/50 backdrop-blur-sm top-14"
+                    onClick={() => setIsSidebarOpen(false)}
+                />
+            )}
+
             {/* Center Layout */}
-            <div className="flex-1 ml-72 xl:mr-64 w-full">
-                <main className="max-w-4xl mx-auto px-12 py-16 w-full">
+            <div className="flex-1 lg:ml-72 xl:mr-64 w-full pt-10 lg:pt-0">
+                <main className="max-w-4xl mx-auto px-6 md:px-12 py-10 lg:py-16 w-full min-h-[80vh]">
                     {loading ? (
                         <div className="animate-pulse space-y-8 pt-4">
                             <div className="h-10 bg-[#1f1f23] rounded w-1/2 mb-8"></div>
@@ -193,10 +221,10 @@ export function Docs() {
                             <article
                                 className="prose prose-invert prose-zinc max-w-none 
                         prose-headings:scroll-mt-24
-                        prose-h1:text-4xl prose-h1:font-bold prose-h1:tracking-tight prose-h1:mb-8 prose-h1:text-white
+                        prose-h1:text-3xl md:prose-h1:text-4xl prose-h1:font-bold prose-h1:tracking-tight prose-h1:mb-8 prose-h1:text-white
                         prose-h2:text-2xl prose-h2:font-semibold prose-h2:mt-12 prose-h2:mb-6 prose-h2:text-gray-100 prose-h2:border-b prose-h2:border-[#27272a] prose-h2:pb-2
                         prose-h3:text-xl prose-h3:font-semibold prose-h3:mt-8 prose-h3:mb-4 prose-h3:text-gray-200
-                        prose-p:text-[16px] prose-p:leading-7 prose-p:text-gray-300 prose-p:mb-6
+                        prose-p:text-[15px] md:prose-p:text-[16px] prose-p:leading-7 prose-p:text-gray-300 prose-p:mb-6
                         prose-ul:my-6 prose-ul:list-disc prose-ul:pl-6 prose-li:text-gray-300 prose-li:mb-2
                         prose-strong:text-white prose-strong:font-semibold
                         prose-code:text-[13px] prose-code:bg-[#18181b] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:border prose-code:border-[#27272a]/50

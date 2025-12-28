@@ -10,7 +10,7 @@ export function Home() {
                         Available in v1.1.1
                     </div>
 
-                    <h1 className="text-5xl md:text-6xl font-bold tracking-tight text-white leading-[1.1]">
+                    <h1 className="text-4xl md:text-6xl font-bold tracking-tight text-white leading-[1.1]">
                         Systems programming, <span className="text-neutral-400">simplified.</span>
                     </h1>
 
