@@ -143,26 +143,29 @@ export default function App() {
                                         {section.title}
                                     </h3>
                                     <ul className="space-y-1">
-                                        {section.items.map((item, itemIdx) => (
-                                            <li key={itemIdx}>
-                                                <button
-                                                    onClick={() => setCurrentPath(item.path)}
-                                                    className={() => `w-full text-left px-3 py-2 rounded-lg text-sm transition-all duration-200 ${currentPath() === item.path
-                                                        ? 'bg-purple-500/10 text-purple-400 font-medium'
-                                                        : 'text-gray-400 hover:text-gray-100 hover:bg-[#18181b]'
-                                                        }`}
-                                                >
-                                                    {item.title}
-                                                </button>
-                                            </li>
-                                        ))}
+                                        {section.items.map((item, itemIdx) => {
+                                            // @ts-ignore
+                                            return (
+                                                <li key={itemIdx}>
+                                                    <button
+                                                        onClick={() => setCurrentPath(item.path)}
+                                                        className={(() => `w-full text-left px-3 py-2 rounded-lg text-sm transition-all duration-200 ${currentPath() === item.path
+                                                                ? 'bg-purple-500/10 text-purple-400 font-medium'
+                                                                : 'text-gray-400 hover:text-gray-100 hover:bg-[#18181b]'
+                                                            }`) as any}
+                                                    >
+                                                        {item.title}
+                                                    </button>
+                                                </li>
+                                            );
+                                        })}
                                     </ul>
                                 </>
                             ) : (
                                 <button
                                     onClick={() => setCurrentPath(section.path)}
-                                    className={() => `w-full text-left text-sm font-bold uppercase tracking-wider mb-2 transition-colors ${currentPath() === section.path ? 'text-purple-400' : 'text-gray-500 hover:text-gray-300'
-                                        }`}
+                                    className={(() => `w-full text-left text-sm font-bold uppercase tracking-wider mb-2 transition-colors ${currentPath() === section.path ? 'text-purple-400' : 'text-gray-500 hover:text-gray-300'
+                                        }`) as any}
                                 >
                                     {section.title}
                                 </button>
