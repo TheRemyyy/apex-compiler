@@ -90,7 +90,7 @@ function TableOfContents({ html }: { html: string }) {
             <ul className="space-y-3">
                 {headings.map((h, i) => (
                     <li key={i}>
-                        <a href={`#${h.id}`} className="text-[13px] text-gray-400 hover:text-purple-400 transition-colors block leading-snug">
+                        <a href={`#${h.id}`} className="text-[13px] text-gray-400 hover:text-white transition-colors block leading-snug outline-none focus:text-white">
                             {h.text}
                         </a>
                     </li>
@@ -181,7 +181,7 @@ export function Docs() {
                                                 <li key={itemIdx}>
                                                     <button
                                                         onClick={() => navigate(item.path)}
-                                                        className={`w-full text-left px-3 py-1.5 rounded-md text-[14px] font-medium transition-all duration-200 ${isActive
+                                                        className={`w-full text-left px-3 py-1.5 rounded-md text-[14px] font-medium transition-all duration-200 outline-none ${isActive
                                                             ? 'bg-[#18181b] text-white shadow-sm border border-[#27272a]'
                                                             : 'text-gray-400 hover:text-gray-200 hover:bg-[#18181b]/50'
                                                             }`}
@@ -196,7 +196,7 @@ export function Docs() {
                             ) : (
                                 <button
                                     onClick={() => navigate(section.path)}
-                                    className={`w-full text-left px-3 py-1.5 rounded-md text-[14px] font-bold uppercase tracking-wider mb-2 transition-colors ${normalizedPath === section.path ? 'bg-[#18181b] text-white shadow-sm border border-[#27272a]' : 'text-gray-500 hover:text-gray-300 hover:bg-[#18181b]/50'
+                                    className={`w-full text-left px-3 py-1.5 rounded-md text-[14px] font-bold uppercase tracking-wider mb-2 transition-colors outline-none ${normalizedPath === section.path ? 'bg-[#18181b] text-white shadow-sm border border-[#27272a]' : 'text-gray-500 hover:text-gray-300 hover:bg-[#18181b]/50'
                                         }`}
                                 >
                                     {section.title}
