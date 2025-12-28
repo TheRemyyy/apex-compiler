@@ -9,6 +9,8 @@ age: Integer = 30;
 name: String = "Alice";
 ```
 
+> **Note:** The `let` keyword is optional. Both `let x: Integer = 10;` and `x: Integer = 10;` are valid and equivalent.
+
 ## Mutability
 
 By default, variables are **immutable**. Once assigned, their value cannot be changed.
