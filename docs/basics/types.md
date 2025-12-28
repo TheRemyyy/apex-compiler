@@ -5,7 +5,7 @@ Apex is strongly and statically typed. Every variable must have a type known at 
 ## Primitive Types
 
 | Type | Description | Example |
-|------|-------------|---------|
+| :--- | :--- | :--- |
 | `Integer` | 64-bit signed integer | `42`, `-1` |
 | `Float` | 64-bit floating point | `3.14`, `-0.01` |
 | `Boolean` | True or False | `true`, `false` |
@@ -66,6 +66,6 @@ See [Ownership and Borrowing](../advanced/ownership.md) for more details.
 
 ## Composite Types
 
-- **Lists**: `List<T>`
-- **Maps**: `Map<K, V>`
+- **Lists**: `List<T>` - See [Collections](../stdlib/collections.md#listt)
+- **Maps**: `Map<K, V>` - See [Collections](../stdlib/collections.md#mapk-v)
 - **User-defined**: Classes, Enums, Interfaces.

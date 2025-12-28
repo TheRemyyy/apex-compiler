@@ -24,6 +24,12 @@ function findParams(id: Integer): Option<String> {
 }
 ```
 
+### Option Methods
+
+- `is_some(): Boolean` - Returns `true` if the option is a `Some` value.
+- `is_none(): Boolean` - Returns `true` if the option is a `None` value.
+- `unwrap(): T` - Returns the inner value or panics if `None`.
+
 ## Result<T, E>
 
 Represents a success (`Ok`) or failure (`Error`).
@@ -45,6 +51,12 @@ function divide(a: Integer, b: Integer): Result<Integer, String> {
     return Result.Ok(a / b);
 }
 ```
+
+### Result Methods
+
+- `is_ok(): Boolean` - Returns `true` if the result is `Ok`.
+- `is_error(): Boolean` - Returns `true` if the result is `Error`.
+- `unwrap(): T` - Returns the success value or panics if `Error`.
 
 ## The `?` Operator
 
