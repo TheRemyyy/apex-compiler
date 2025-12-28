@@ -91,6 +91,18 @@ function Show(props: { when: () => boolean, fallback?: any, children: any }) {
     return { exec: () => container };
 }
 
+// Custom directive to set innerHTML reactively
+function InnerHTML(props: { html: () => string, className?: string }) {
+    const el = document.createElement('article');
+    if (props.className) el.className = props.className;
+
+    createEffect(() => {
+        el.innerHTML = props.html();
+    });
+
+    return { exec: () => el };
+}
+
 export default function App() {
     const [currentPath, setCurrentPath] = createSignal('/docs/stdlib/overview.md');
     const [content, setContent] = createSignal('');
@@ -164,15 +176,14 @@ export default function App() {
             <main className="flex-1 ml-64 p-12 max-w-5xl mx-auto">
                 <Show when={loading} fallback={
                     // Fallback is shown when NOT loading (i.e. content ready)
-                    <article
+                    <InnerHTML
+                        html={content}
                         className="prose prose-invert prose-purple max-w-none 
-              prose-headings:font-bold prose-h1:text-4xl prose-h1:tracking-tight prose-h1:mb-8
-              prose-p:text-gray-300 prose-p:leading-7
-              prose-code:text-purple-300 prose-code:bg-[#18181b] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none
-              prose-pre:bg-[#18181b] prose-pre:border prose-pre:border-[#27272a]
-              prose-strong:text-white
-              "
-                        innerHTML={content} // Pass signal directly
+                prose-headings:font-bold prose-h1:text-4xl prose-h1:tracking-tight prose-h1:mb-8
+                prose-p:text-gray-300 prose-p:leading-7
+                prose-code:text-purple-300 prose-code:bg-[#18181b] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none
+                prose-pre:bg-[#18181b] prose-pre:border prose-pre:border-[#27272a]
+                prose-strong:text-white"
                     />
                 }>
                     {/* Children are shown when loading is TRUE */}
