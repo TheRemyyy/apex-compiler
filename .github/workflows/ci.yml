@@ -66,9 +66,12 @@ jobs:
       - name: Build compiler
         run: cargo build --release
 
-      - name: Check all examples
+      - name: Check and run all examples
         run: |
           for file in examples/*.apex; do
             echo "Checking $file..."
             cargo run --release -- check "$file"
+            echo "Running $file..."
+            cargo run --release -- run "$file"
           done
+
