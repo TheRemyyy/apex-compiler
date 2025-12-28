@@ -191,6 +191,9 @@ fn compile_ir(ir_path: &Path, output_path: &Path) -> Result<(), String> {
     #[cfg(windows)]
     cmd.arg("-llegacy_stdio_definitions");
 
+    #[cfg(not(windows))]
+    cmd.arg("-lm");
+
     let result = cmd.output();
 
     match result {
