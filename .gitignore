@@ -2,3 +2,5 @@ target/
 *.exe
 *.ll
 *.o
+web/node_modules
+web/dist
