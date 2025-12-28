@@ -657,18 +657,19 @@ impl<'ctx> Codegen<'ctx> {
                                 let zero = self.context.i32_type().const_int(0, false);
                                 self.builder.build_return(Some(&zero)).unwrap();
                             } else {
-                                // Check if function returns void or a value
+                                // Check if function returns Task<None> (needs i8 return) or just None (void)
                                 let return_type = self.current_return_type.as_ref();
-                                let is_void = return_type
-                                    .map(|t| matches!(t, Type::None))
-                                    .unwrap_or(false);
+                                let is_task_none = return_type
+                                .map(|t| matches!(t, Type::Task(inner) if matches!(**inner, Type::None)))
+                                .unwrap_or(false);
 
-                                if is_void {
-                                    self.builder.build_return(None).unwrap();
-                                } else {
-                                    // Return i8 zero for None type
+                                if is_task_none {
+                                    // Task<None> returns i8 in our stub implementation
                                     let none_val = self.context.i8_type().const_int(0, false);
                                     self.builder.build_return(Some(&none_val)).unwrap();
+                                } else {
+                                    // Regular None return (void function)
+                                    self.builder.build_return(None).unwrap();
                                 }
                             }
                         } else {
