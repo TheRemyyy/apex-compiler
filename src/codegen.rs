@@ -60,7 +60,7 @@ pub struct Codegen<'ctx> {
     module: Module<'ctx>,
     builder: Builder<'ctx>,
     variables: HashMap<String, Variable<'ctx>>,
-    functions: HashMap<String, FunctionValue<'ctx>>,
+    functions: HashMap<String, (FunctionValue<'ctx>, Type)>,
     classes: HashMap<String, ClassInfo<'ctx>>,
     current_function: Option<FunctionValue<'ctx>>,
     current_return_type: Option<Type>,
@@ -172,7 +172,16 @@ impl<'ctx> Codegen<'ctx> {
             Type::None => self.context.i8_type().into(),
             Type::Named(_name) => self.context.ptr_type(AddressSpace::default()).into(),
             Type::Generic(_, _) => self.context.ptr_type(AddressSpace::default()).into(),
-            Type::Function(_, _) => self.context.ptr_type(AddressSpace::default()).into(),
+            Type::Function(_, _) => self
+                .context
+                .struct_type(
+                    &[
+                        self.context.ptr_type(AddressSpace::default()).into(), // function pointer
+                        self.context.ptr_type(AddressSpace::default()).into(), // environment pointer
+                    ],
+                    false,
+                )
+                .into(),
             // Option<T> is represented as a struct { is_some: i8, value: T }
             Type::Option(inner) => {
                 let inner_ty = self.llvm_type(inner);
@@ -293,12 +302,26 @@ impl<'ctx> Codegen<'ctx> {
             .map(|p| self.llvm_type(&p.ty).into())
             .collect();
 
+        let mut llvm_params: Vec<BasicMetadataTypeEnum> = vec![
+            self.context.ptr_type(AddressSpace::default()).into(), // env_ptr
+        ];
+        llvm_params.extend(param_types);
+
         let ret_type = self.context.ptr_type(AddressSpace::default());
-        let fn_type = ret_type.fn_type(&param_types, false);
+        let fn_type = ret_type.fn_type(&llvm_params, false);
 
         let name = format!("{}__new", class.name);
         let func = self.module.add_function(&name, fn_type, None);
-        self.functions.insert(name, func);
+        self.functions.insert(
+            name,
+            (
+                func,
+                Type::Function(
+                    constructor.params.iter().map(|p| p.ty.clone()).collect(),
+                    Box::new(Type::Named(class.name.clone())),
+                ),
+            ),
+        );
 
         Ok(())
     }
@@ -306,19 +329,31 @@ impl<'ctx> Codegen<'ctx> {
     fn declare_class_method(&mut self, class: &ClassDecl, method: &FunctionDecl) -> Result<()> {
         let self_type = self.context.ptr_type(AddressSpace::default());
 
-        let mut param_types: Vec<BasicMetadataTypeEnum> = vec![self_type.into()];
+        let mut llvm_params: Vec<BasicMetadataTypeEnum> = vec![
+            self.context.ptr_type(AddressSpace::default()).into(), // env_ptr
+            self_type.into(),                                      // this
+        ];
         for param in &method.params {
-            param_types.push(self.llvm_type(&param.ty).into());
+            llvm_params.push(self.llvm_type(&param.ty).into());
         }
 
         let fn_type = match &method.return_type {
-            Type::None => self.context.void_type().fn_type(&param_types, false),
-            ty => self.llvm_type(ty).fn_type(&param_types, false),
+            Type::None => self.context.void_type().fn_type(&llvm_params, false),
+            ty => self.llvm_type(ty).fn_type(&llvm_params, false),
         };
 
         let name = format!("{}__{}", class.name, method.name);
         let func = self.module.add_function(&name, fn_type, None);
-        self.functions.insert(name, func);
+        self.functions.insert(
+            name,
+            (
+                func,
+                Type::Function(
+                    method.params.iter().map(|p| p.ty.clone()).collect(),
+                    Box::new(method.return_type.clone()),
+                ),
+            ),
+        );
 
         Ok(())
     }
@@ -337,7 +372,7 @@ impl<'ctx> Codegen<'ctx> {
 
     fn compile_constructor(&mut self, class: &ClassDecl, constructor: &Constructor) -> Result<()> {
         let name = format!("{}__new", class.name);
-        let func = *self.functions.get(&name).unwrap();
+        let (func, _) = self.functions.get(&name).unwrap().clone();
 
         self.current_function = Some(func);
         let entry = self.context.append_basic_block(func, "entry");
@@ -345,8 +380,9 @@ impl<'ctx> Codegen<'ctx> {
         self.variables.clear();
 
         // Allocate parameters
+        // Param 0 is env_ptr, constructor params start at 1
         for (i, param) in constructor.params.iter().enumerate() {
-            let llvm_param = func.get_nth_param(i as u32).unwrap();
+            let llvm_param = func.get_nth_param((i + 1) as u32).unwrap();
             let alloca = self
                 .builder
                 .build_alloca(self.llvm_type(&param.ty), &param.name)
@@ -411,15 +447,16 @@ impl<'ctx> Codegen<'ctx> {
 
     fn compile_method(&mut self, class: &ClassDecl, method: &FunctionDecl) -> Result<()> {
         let name = format!("{}__{}", class.name, method.name);
-        let func = *self.functions.get(&name).unwrap();
+        let (func, _) = self.functions.get(&name).unwrap().clone();
 
         self.current_function = Some(func);
         let entry = self.context.append_basic_block(func, "entry");
         self.builder.position_at_end(entry);
         self.variables.clear();
 
-        // Store 'this'
-        let this_param = func.get_nth_param(0).unwrap();
+        // Param 0 is env_ptr
+        // Store 'this' (Param 1)
+        let this_param = func.get_nth_param(1).unwrap();
         let class_info = self.classes.get(&class.name).unwrap();
         let _struct_type = class_info.struct_type;
         let this_alloca = self
@@ -436,8 +473,9 @@ impl<'ctx> Codegen<'ctx> {
         );
 
         // Store parameters
+        // Start from index 2 because 0=env_ptr, 1=this
         for (i, param) in method.params.iter().enumerate() {
-            let llvm_param = func.get_nth_param((i + 1) as u32).unwrap();
+            let llvm_param = func.get_nth_param((i + 2) as u32).unwrap();
             let alloca = self
                 .builder
                 .build_alloca(self.llvm_type(&param.ty), &param.name)
@@ -476,33 +514,49 @@ impl<'ctx> Codegen<'ctx> {
     // === Functions ===
 
     fn declare_function(&mut self, func: &FunctionDecl) -> Result<FunctionValue<'ctx>> {
-        if let Some(existing) = self.functions.get(&func.name) {
-            return Ok(*existing);
-        }
-
         let param_types: Vec<BasicMetadataTypeEnum> = func
             .params
             .iter()
             .map(|p| self.llvm_type(&p.ty).into())
             .collect();
 
+        let mut llvm_params: Vec<BasicMetadataTypeEnum> = vec![
+            self.context.ptr_type(AddressSpace::default()).into(), // env_ptr
+        ];
+        llvm_params.extend(param_types);
+
         // Main function always returns i32 for C runtime compatibility
         let fn_type = if func.name == "main" {
-            self.context.i32_type().fn_type(&param_types, false)
+            // Main doesn't get an env_ptr in standard C entry
+            let main_params: Vec<BasicMetadataTypeEnum> = func
+                .params
+                .iter()
+                .map(|p| self.llvm_type(&p.ty).into())
+                .collect();
+            self.context.i32_type().fn_type(&main_params, false)
         } else {
             match &func.return_type {
-                Type::None => self.context.void_type().fn_type(&param_types, false),
-                ty => self.llvm_type(ty).fn_type(&param_types, false),
+                Type::None => self.context.void_type().fn_type(&llvm_params, false),
+                ty => self.llvm_type(ty).fn_type(&llvm_params, false),
             }
         };
 
         let function = self.module.add_function(&func.name, fn_type, None);
-        self.functions.insert(func.name.clone(), function);
+        self.functions.insert(
+            func.name.clone(),
+            (
+                function,
+                Type::Function(
+                    func.params.iter().map(|p| p.ty.clone()).collect(),
+                    Box::new(func.return_type.clone()),
+                ),
+            ),
+        );
         Ok(function)
     }
 
     fn compile_function(&mut self, func: &FunctionDecl) -> Result<()> {
-        let function = *self.functions.get(&func.name).unwrap();
+        let (function, _) = self.functions.get(&func.name).unwrap().clone();
 
         self.current_function = Some(function);
         self.current_return_type = Some(func.return_type.clone());
@@ -512,8 +566,9 @@ impl<'ctx> Codegen<'ctx> {
         self.loop_stack.clear();
 
         // Allocate parameters
+        // Param 0 is env_ptr
         for (i, param) in func.params.iter().enumerate() {
-            let llvm_param = function.get_nth_param(i as u32).unwrap();
+            let llvm_param = function.get_nth_param((i + 1) as u32).unwrap();
             let alloca = self
                 .builder
                 .build_alloca(self.llvm_type(&param.ty), &param.name)
@@ -1079,6 +1134,26 @@ impl<'ctx> Codegen<'ctx> {
                         .build_load(self.llvm_type(&var.ty), var.ptr, name)
                         .unwrap();
                     Ok(val)
+                } else if let Some((func, ty)) = self.functions.get(name) {
+                    // Create a closure struct { fn_ptr, null_env }
+                    let struct_ty = self.llvm_type(ty).into_struct_type();
+                    let mut closure = struct_ty.get_undef();
+
+                    let fn_ptr = func.as_global_value().as_pointer_value();
+                    let null_env = self.context.ptr_type(AddressSpace::default()).const_null();
+
+                    closure = self
+                        .builder
+                        .build_insert_value(closure, fn_ptr, 0, "fn")
+                        .unwrap()
+                        .into_struct_value();
+                    closure = self
+                        .builder
+                        .build_insert_value(closure, null_env, 1, "env")
+                        .unwrap()
+                        .into_struct_value();
+
+                    Ok(closure.into())
                 } else {
                     Err(CodegenError::new(format!("Unknown variable: {}", name)))
                 }
@@ -1506,18 +1581,30 @@ impl<'ctx> Codegen<'ctx> {
                 // First check if it's a function pointer/local variable
                 if let Some(var) = self.variables.get(name) {
                     if let Type::Function(param_types, ret_type) = &var.ty {
-                        let ptr = self
+                        let closure_val = self
                             .builder
                             .build_load(self.llvm_type(&var.ty), var.ptr, name)
                             .unwrap()
-                            .into_pointer_value();
+                            .into_struct_value();
 
-                        // Construct FunctionType
+                        let ptr = self
+                            .builder
+                            .build_extract_value(closure_val, 0, "fn_ptr")
+                            .unwrap()
+                            .into_pointer_value();
+                        let env_ptr = self
+                            .builder
+                            .build_extract_value(closure_val, 1, "env_ptr")
+                            .unwrap();
+
+                        // Construct FunctionType (including env_ptr as first arg)
                         let llvm_ret = self.llvm_type(ret_type);
-                        let llvm_params: Vec<BasicMetadataTypeEnum> = param_types
-                            .iter()
-                            .map(|p| self.llvm_type(p).into())
-                            .collect();
+                        let mut llvm_params: Vec<BasicMetadataTypeEnum> = vec![
+                            self.context.ptr_type(AddressSpace::default()).into(), // env_ptr
+                        ];
+                        for p in param_types {
+                            llvm_params.push(self.llvm_type(p).into());
+                        }
 
                         let fn_type = match llvm_ret {
                             BasicTypeEnum::IntType(i) => i.fn_type(&llvm_params, false),
@@ -1525,14 +1612,15 @@ impl<'ctx> Codegen<'ctx> {
                             BasicTypeEnum::PointerType(p) => p.fn_type(&llvm_params, false),
                             BasicTypeEnum::StructType(s) => s.fn_type(&llvm_params, false),
                             _ => {
-                                return Err(CodegenError::new("Unsupported return type in lambda"))
+                                // Default to i8 type for void-like returns if needed
+                                self.context.i8_type().fn_type(&llvm_params, false)
                             }
                         };
 
-                        let compiled_args: Vec<BasicValueEnum> = args
-                            .iter()
-                            .map(|a| self.compile_expr(&a.node))
-                            .collect::<Result<_>>()?;
+                        let mut compiled_args: Vec<BasicValueEnum> = vec![env_ptr];
+                        for a in args {
+                            compiled_args.push(self.compile_expr(&a.node)?);
+                        }
 
                         let args_meta: Vec<BasicMetadataValueEnum> =
                             compiled_args.iter().map(|a| (*a).into()).collect();
@@ -1553,7 +1641,7 @@ impl<'ctx> Codegen<'ctx> {
                 }
 
                 // Fall back to global function lookup
-                if let Some(f) = self.functions.get(name) {
+                if let Some((f, _)) = self.functions.get(name) {
                     *f
                 } else if let Some(f) = self.module.get_function(name) {
                     f
@@ -1564,10 +1652,20 @@ impl<'ctx> Codegen<'ctx> {
             _ => return Err(CodegenError::new("Invalid callee")),
         };
 
-        let compiled_args: Vec<BasicValueEnum> = args
-            .iter()
-            .map(|a| self.compile_expr(&a.node))
-            .collect::<Result<_>>()?;
+        let mut compiled_args: Vec<BasicValueEnum> = Vec::new();
+        // Add null env_ptr for direct calls (except main)
+        if func.get_name().to_str().unwrap() != "main" {
+            compiled_args.push(
+                self.context
+                    .ptr_type(AddressSpace::default())
+                    .const_null()
+                    .into(),
+            );
+        }
+
+        for a in args {
+            compiled_args.push(self.compile_expr(&a.node)?);
+        }
 
         let args_meta: Vec<BasicMetadataValueEnum> =
             compiled_args.iter().map(|a| (*a).into()).collect();
@@ -1626,14 +1724,21 @@ impl<'ctx> Codegen<'ctx> {
 
         let func_name = format!("{}__{}", class_name, method);
 
-        let func = *self
+        let (func, _) = self
             .functions
             .get(&func_name)
-            .ok_or_else(|| CodegenError::new(format!("Unknown method: {}", func_name)))?;
+            .ok_or_else(|| CodegenError::new(format!("Unknown method: {}", func_name)))?
+            .clone();
 
-        let mut compiled_args: Vec<BasicValueEnum> = vec![obj_val];
-        for arg in args {
-            compiled_args.push(self.compile_expr(&arg.node)?);
+        let mut compiled_args: Vec<BasicValueEnum> = vec![
+            self.context
+                .ptr_type(AddressSpace::default())
+                .const_null()
+                .into(), // env_ptr
+            obj_val, // this
+        ];
+        for a in args {
+            compiled_args.push(self.compile_expr(&a.node)?);
         }
 
         let args_meta: Vec<BasicMetadataValueEnum> =
@@ -1757,15 +1862,21 @@ impl<'ctx> Codegen<'ctx> {
 
         let func_name = format!("{}__new", ty);
 
-        let func = *self
+        let (func, _) = self
             .functions
             .get(&func_name)
-            .ok_or_else(|| CodegenError::new(format!("Unknown type: {}", ty)))?;
+            .ok_or_else(|| CodegenError::new(format!("Unknown type: {}", ty)))?
+            .clone();
 
-        let compiled_args: Vec<BasicValueEnum> = args
-            .iter()
-            .map(|a| self.compile_expr(&a.node))
-            .collect::<Result<_>>()?;
+        let mut compiled_args: Vec<BasicValueEnum> = vec![
+            self.context
+                .ptr_type(AddressSpace::default())
+                .const_null()
+                .into(), // env_ptr
+        ];
+        for a in args {
+            compiled_args.push(self.compile_expr(&a.node)?);
+        }
 
         let args_meta: Vec<BasicMetadataValueEnum> =
             compiled_args.iter().map(|a| (*a).into()).collect();
@@ -3970,6 +4081,55 @@ impl<'ctx> Codegen<'ctx> {
         params: &[Parameter],
         body: &Spanned<Expr>,
     ) -> Result<BasicValueEnum<'ctx>> {
+        // 1. Identify captures
+        let captures = self.identify_captures(&body.node, params);
+
+        // 2. Infer return type
+        let ret_apex_ty = self.infer_expr_type(&body.node, params);
+        let ret_llvm_ty = self.llvm_type(&ret_apex_ty);
+
+        // 3. Create environment struct in outer scope
+        let mut env_types = Vec::new();
+        for (_, ty) in &captures {
+            env_types.push(self.llvm_type(ty));
+        }
+        let env_struct_ty = self.context.struct_type(&env_types, false);
+
+        let malloc = self.get_or_declare_malloc();
+        let size = env_struct_ty.size_of().unwrap();
+        let env_ptr_raw = match self
+            .builder
+            .build_call(malloc, &[size.into()], "env_ptr")
+            .unwrap()
+            .try_as_basic_value()
+        {
+            ValueKind::Basic(val) => val.into_pointer_value(),
+            _ => panic!("malloc should return a value"),
+        };
+
+        // Fill environment
+        for (i, (name, ty)) in captures.iter().enumerate() {
+            let var = self.variables.get(name).unwrap();
+            let val = self
+                .builder
+                .build_load(self.llvm_type(ty), var.ptr, name)
+                .unwrap();
+            let field_ptr = unsafe {
+                self.builder
+                    .build_gep(
+                        env_struct_ty,
+                        env_ptr_raw,
+                        &[
+                            self.context.i32_type().const_int(0, false),
+                            self.context.i32_type().const_int(i as u64, false),
+                        ],
+                        "capture",
+                    )
+                    .unwrap()
+            };
+            self.builder.build_store(field_ptr, val).unwrap();
+        }
+
         // Save current function context
         let saved_function = self.current_function;
         let saved_return_type = self.current_return_type.clone();
@@ -3979,27 +4139,65 @@ impl<'ctx> Codegen<'ctx> {
         let lambda_name = format!("__lambda_{}", self.lambda_counter);
         self.lambda_counter += 1;
 
-        // Build parameter types
-        let param_types: Vec<BasicMetadataTypeEnum> = params
-            .iter()
-            .map(|p| self.llvm_type(&p.ty).into())
-            .collect();
+        // Build parameter types (including env_ptr as first arg)
+        let mut llvm_params: Vec<BasicMetadataTypeEnum> = vec![
+            self.context.ptr_type(AddressSpace::default()).into(), // env_ptr
+        ];
+        for p in params {
+            llvm_params.push(self.llvm_type(&p.ty).into());
+        }
 
-        // Infer return type from body - for now use i64 as default
-        let return_type = self.context.i64_type();
-        let fn_type = return_type.fn_type(&param_types, false);
+        // Create function with inferred return type
+        let fn_type = match ret_llvm_ty {
+            BasicTypeEnum::IntType(i) => i.fn_type(&llvm_params, false),
+            BasicTypeEnum::FloatType(f) => f.fn_type(&llvm_params, false),
+            BasicTypeEnum::PointerType(p) => p.fn_type(&llvm_params, false),
+            BasicTypeEnum::StructType(s) => s.fn_type(&llvm_params, false),
+            _ => self.context.i8_type().fn_type(&llvm_params, false),
+        };
         let lambda_fn = self.module.add_function(&lambda_name, fn_type, None);
 
         // Set up function body
         self.current_function = Some(lambda_fn);
-        self.current_return_type = Some(Type::Integer); // Default for lambdas
+        self.current_return_type = Some(ret_apex_ty.clone());
 
         let entry = self.context.append_basic_block(lambda_fn, "entry");
         self.builder.position_at_end(entry);
 
-        // Allocate parameters
+        // Populate local variables from env_ptr
+        let env_ptr_arg = lambda_fn.get_nth_param(0).unwrap().into_pointer_value();
+        for (i, (name, ty)) in captures.iter().enumerate() {
+            let field_ptr = unsafe {
+                self.builder
+                    .build_gep(
+                        env_struct_ty,
+                        env_ptr_arg,
+                        &[
+                            self.context.i32_type().const_int(0, false),
+                            self.context.i32_type().const_int(i as u64, false),
+                        ],
+                        "load_capture",
+                    )
+                    .unwrap()
+            };
+            let alloca = self.builder.build_alloca(self.llvm_type(ty), name).unwrap();
+            let val = self
+                .builder
+                .build_load(self.llvm_type(ty), field_ptr, "cap_val")
+                .unwrap();
+            self.builder.build_store(alloca, val).unwrap();
+            self.variables.insert(
+                name.clone(),
+                Variable {
+                    ptr: alloca,
+                    ty: ty.clone(),
+                },
+            );
+        }
+
+        // Allocate parameters (starting from index 1)
         for (i, param) in params.iter().enumerate() {
-            let llvm_param = lambda_fn.get_nth_param(i as u32).unwrap();
+            let llvm_param = lambda_fn.get_nth_param((i + 1) as u32).unwrap();
             let alloca = self
                 .builder
                 .build_alloca(self.llvm_type(&param.ty), &param.name)
@@ -4017,8 +4215,31 @@ impl<'ctx> Codegen<'ctx> {
         // Compile body expression
         let result = self.compile_expr(&body.node)?;
 
-        // Build return
-        self.builder.build_return(Some(&result)).unwrap();
+        // Build return with proper casting if needed
+        let final_result = if result.get_type() != ret_llvm_ty {
+            // Handle i32 to i64 (like from println)
+            if result.is_int_value() && ret_llvm_ty.is_int_type() {
+                let res_int = result.into_int_value();
+                let ret_int = ret_llvm_ty.into_int_type();
+                if res_int.get_type().get_bit_width() < ret_int.get_bit_width() {
+                    self.builder
+                        .build_int_z_extend(res_int, ret_int, "ret_cast")
+                        .unwrap()
+                        .into()
+                } else {
+                    self.builder
+                        .build_int_truncate(res_int, ret_int, "ret_cast")
+                        .unwrap()
+                        .into()
+                }
+            } else {
+                result
+            }
+        } else {
+            result
+        };
+
+        self.builder.build_return(Some(&final_result)).unwrap();
 
         // Restore context
         self.current_function = saved_function;
@@ -4032,8 +4253,30 @@ impl<'ctx> Codegen<'ctx> {
             }
         }
 
-        // Return function pointer
-        Ok(lambda_fn.as_global_value().as_pointer_value().into())
+        // Return closure struct { fn_ptr, env_ptr }
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+        let closure_ty = self
+            .context
+            .struct_type(&[ptr_type.into(), ptr_type.into()], false);
+
+        let mut closure = closure_ty.get_undef();
+        closure = self
+            .builder
+            .build_insert_value(
+                closure,
+                lambda_fn.as_global_value().as_pointer_value(),
+                0,
+                "fn",
+            )
+            .unwrap()
+            .into_struct_value();
+        closure = self
+            .builder
+            .build_insert_value(closure, env_ptr_raw, 1, "env")
+            .unwrap()
+            .into_struct_value();
+
+        Ok(closure.into())
     }
 
     fn compile_match_expr(
@@ -4162,5 +4405,216 @@ impl<'ctx> Codegen<'ctx> {
         machine
             .write_to_file(&self.module, FileType::Object, path)
             .map_err(|e| e.to_string())
+    }
+    fn identify_captures(&self, expr: &Expr, params: &[Parameter]) -> Vec<(String, Type)> {
+        let mut captures = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut param_names = std::collections::HashSet::new();
+        for p in params {
+            param_names.insert(p.name.clone());
+        }
+
+        self.walk_expr_for_captures(expr, &param_names, &mut captures, &mut seen);
+        captures
+    }
+
+    fn walk_expr_for_captures(
+        &self,
+        expr: &Expr,
+        params: &std::collections::HashSet<String>,
+        captures: &mut Vec<(String, Type)>,
+        seen: &mut std::collections::HashSet<String>,
+    ) {
+        match expr {
+            Expr::Ident(name) => {
+                if !params.contains(name) && !seen.contains(name) {
+                    if let Some(var) = self.variables.get(name) {
+                        seen.insert(name.clone());
+                        captures.push((name.clone(), var.ty.clone()));
+                    }
+                }
+            }
+            Expr::Binary { left, right, .. } => {
+                self.walk_expr_for_captures(&left.node, params, captures, seen);
+                self.walk_expr_for_captures(&right.node, params, captures, seen);
+            }
+            Expr::Unary { expr, .. } => {
+                self.walk_expr_for_captures(&expr.node, params, captures, seen);
+            }
+            Expr::Call { callee, args } => {
+                self.walk_expr_for_captures(&callee.node, params, captures, seen);
+                for arg in args {
+                    self.walk_expr_for_captures(&arg.node, params, captures, seen);
+                }
+            }
+            Expr::Field { object, .. } => {
+                self.walk_expr_for_captures(&object.node, params, captures, seen);
+            }
+            Expr::Index { object, index } => {
+                self.walk_expr_for_captures(&object.node, params, captures, seen);
+                self.walk_expr_for_captures(&index.node, params, captures, seen);
+            }
+            Expr::Construct { args, .. } => {
+                for arg in args {
+                    self.walk_expr_for_captures(&arg.node, params, captures, seen);
+                }
+            }
+            Expr::StringInterp(parts) => {
+                for part in parts {
+                    if let StringPart::Expr(e) = part {
+                        self.walk_expr_for_captures(&e.node, params, captures, seen);
+                    }
+                }
+            }
+            Expr::Lambda {
+                params: l_params,
+                body: l_body,
+            } => {
+                let mut nested_params = params.clone();
+                for p in l_params {
+                    nested_params.insert(p.name.clone());
+                }
+                self.walk_expr_for_captures(&l_body.node, &nested_params, captures, seen);
+            }
+            Expr::Match { expr, arms } => {
+                self.walk_expr_for_captures(&expr.node, params, captures, seen);
+                for arm in arms {
+                    for stmt in &arm.body {
+                        self.walk_stmt_for_captures(&stmt.node, params, captures, seen);
+                    }
+                }
+            }
+            Expr::Try(inner) => {
+                self.walk_expr_for_captures(&inner.node, params, captures, seen);
+            }
+            Expr::Await(inner) => {
+                self.walk_expr_for_captures(&inner.node, params, captures, seen);
+            }
+            Expr::AsyncBlock(stmts) => {
+                for stmt in stmts {
+                    self.walk_stmt_for_captures(&stmt.node, params, captures, seen);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn walk_stmt_for_captures(
+        &self,
+        stmt: &Stmt,
+        params: &std::collections::HashSet<String>,
+        captures: &mut Vec<(String, Type)>,
+        seen: &mut std::collections::HashSet<String>,
+    ) {
+        match stmt {
+            Stmt::Expr(e) => self.walk_expr_for_captures(&e.node, params, captures, seen),
+            Stmt::Let { value, .. } => {
+                self.walk_expr_for_captures(&value.node, params, captures, seen);
+                // Let doesn't capture the variable it's declaring, but we'll ignore shadowing for now
+            }
+            Stmt::Assign { target, value } => {
+                self.walk_expr_for_captures(&target.node, params, captures, seen);
+                self.walk_expr_for_captures(&value.node, params, captures, seen);
+            }
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                self.walk_expr_for_captures(&condition.node, params, captures, seen);
+                for s in then_block {
+                    self.walk_stmt_for_captures(&s.node, params, captures, seen);
+                }
+                if let Some(eb) = else_block {
+                    for s in eb {
+                        self.walk_stmt_for_captures(&s.node, params, captures, seen);
+                    }
+                }
+            }
+            Stmt::While { condition, body } => {
+                self.walk_expr_for_captures(&condition.node, params, captures, seen);
+                for s in body {
+                    self.walk_stmt_for_captures(&s.node, params, captures, seen);
+                }
+            }
+            Stmt::For { iterable, body, .. } => {
+                self.walk_expr_for_captures(&iterable.node, params, captures, seen);
+                for s in body {
+                    self.walk_stmt_for_captures(&s.node, params, captures, seen);
+                }
+            }
+            Stmt::Return(e) => {
+                if let Some(expr) = e {
+                    self.walk_expr_for_captures(&expr.node, params, captures, seen);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn infer_expr_type(&self, expr: &Expr, params: &[Parameter]) -> Type {
+        match expr {
+            Expr::Literal(lit) => match lit {
+                Literal::Integer(_) => Type::Integer,
+                Literal::Float(_) => Type::Float,
+                Literal::Boolean(_) => Type::Boolean,
+                Literal::String(_) => Type::String,
+                Literal::Char(_) => Type::Char,
+                Literal::None => Type::None,
+            },
+            Expr::Ident(name) => {
+                // Check parameters first
+                if let Some(p) = params.iter().find(|p| p.name == *name) {
+                    return p.ty.clone();
+                }
+                // Then local variables
+                if let Some(var) = self.variables.get(name) {
+                    return var.ty.clone();
+                }
+                // Then global functions
+                if let Some((_, ty)) = self.functions.get(name) {
+                    return ty.clone();
+                }
+                Type::Integer
+            }
+            Expr::Binary { op, left, .. } => match op {
+                BinOp::Eq
+                | BinOp::NotEq
+                | BinOp::Lt
+                | BinOp::LtEq
+                | BinOp::Gt
+                | BinOp::GtEq
+                | BinOp::And
+                | BinOp::Or => Type::Boolean,
+                _ => self.infer_expr_type(&left.node, params),
+            },
+            Expr::Unary { op, expr } => match op {
+                UnaryOp::Not => Type::Boolean,
+                UnaryOp::Neg => self.infer_expr_type(&expr.node, params),
+            },
+            Expr::Call { callee, .. } => match &callee.node {
+                Expr::Ident(name) if name == "println" => Type::None,
+                _ => {
+                    let callee_ty = self.infer_expr_type(&callee.node, params);
+                    if let Type::Function(_, ret_ty) = callee_ty {
+                        *ret_ty
+                    } else {
+                        Type::Integer
+                    }
+                }
+            },
+            Expr::Field { object, .. } => {
+                let _obj_ty = self.infer_expr_type(&object.node, params);
+                Type::Integer
+            }
+            Expr::Lambda { params, body } => {
+                let ret_ty = self.infer_expr_type(&body.node, params);
+                Type::Function(
+                    params.iter().map(|p| p.ty.clone()).collect(),
+                    Box::new(ret_ty),
+                )
+            }
+            _ => Type::Integer,
+        }
     }
 }
