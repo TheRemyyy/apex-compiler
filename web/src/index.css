@@ -6,8 +6,25 @@
   --color-primary: 220 20% 60%;
   --color-secondary: 220 20% 97%;
   --color-accent: 262 80% 50%;
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 html {
   scroll-behavior: smooth;
+}
+
+/* Remove default focus outline for all buttons */
+button:focus {
+  outline: none;
 }
