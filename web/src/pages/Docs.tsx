@@ -100,12 +100,20 @@ function TableOfContents({ html }: { html: string }) {
     );
 }
 
+// Helper to flatten nav items for next/prev logic
+const FLATTENED_DOCS = NAV_ITEMS.flatMap(section => section.items || []);
+
 export function Docs() {
     const location = useLocation();
     const navigate = useNavigate();
     const [content, setContent] = useState('');
     const [loading, setLoading] = useState(true);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+    // Calculate Next/Prev
+    const currentIndex = FLATTENED_DOCS.findIndex(item => item.path === location.pathname);
+    const prevDoc = currentIndex > 0 ? FLATTENED_DOCS[currentIndex - 1] : null;
+    const nextDoc = currentIndex !== -1 && currentIndex < FLATTENED_DOCS.length - 1 ? FLATTENED_DOCS[currentIndex + 1] : null;
 
     useEffect(() => {
         // Determine path from route. If route is just /docs, default to overview
@@ -132,13 +140,13 @@ export function Docs() {
     }, [location.pathname]);
 
     return (
-        <div className="flex flex-col lg:flex-row bg-[#09090b] text-gray-100 font-sans selection:bg-purple-500/30 pt-14 lg:pt-16 min-h-screen">
+        <div className="flex flex-col lg:flex-row bg-[#09090b] text-gray-100 font-sans selection:bg-gray-700 selection:text-white pt-14 lg:pt-16 min-h-screen">
 
             {/* Mobile Sidebar Toggle Bar */}
             <div className="lg:hidden fixed top-14 left-0 right-0 h-10 bg-[#0c0c0e] border-b border-[#1f1f23] flex items-center px-4 z-20">
                 <button
                     onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                    className="text-sm font-medium text-purple-400 flex items-center gap-2"
+                    className="text-sm font-medium text-white flex items-center gap-2"
                 >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
                     Menu
@@ -171,7 +179,7 @@ export function Docs() {
                                                     <button
                                                         onClick={() => navigate(item.path)}
                                                         className={`w-full text-left px-3 py-1.5 rounded-md text-[14px] font-medium transition-all duration-200 ${isActive
-                                                            ? 'bg-[#18181b] text-purple-400 shadow-sm border border-[#27272a]'
+                                                            ? 'bg-[#18181b] text-white shadow-sm border border-[#27272a]'
                                                             : 'text-gray-400 hover:text-gray-200 hover:bg-[#18181b]/50'
                                                             }`}
                                                     >
@@ -185,7 +193,7 @@ export function Docs() {
                             ) : (
                                 <button
                                     onClick={() => navigate(section.path)}
-                                    className={`w-full text-left px-3 py-1.5 rounded-md text-[14px] font-bold uppercase tracking-wider mb-2 transition-colors ${location.pathname === section.path ? 'bg-[#18181b] text-purple-400 shadow-sm border border-[#27272a]' : 'text-gray-500 hover:text-gray-300 hover:bg-[#18181b]/50'
+                                    className={`w-full text-left px-3 py-1.5 rounded-md text-[14px] font-bold uppercase tracking-wider mb-2 transition-colors ${location.pathname === section.path ? 'bg-[#18181b] text-white shadow-sm border border-[#27272a]' : 'text-gray-500 hover:text-gray-300 hover:bg-[#18181b]/50'
                                         }`}
                                 >
                                     {section.title}
@@ -231,6 +239,33 @@ export function Docs() {
                         prose-pre:bg-[#0c0c0e] prose-pre:border prose-pre:border-[#27272a] prose-pre:rounded-lg prose-pre:shadow-sm"
                                 dangerouslySetInnerHTML={{ __html: content }}
                             />
+
+                            {/* Navigation Footer */}
+                            <div className="mt-16 pt-8 border-t border-[#27272a] flex flex-col sm:flex-row justify-between gap-4">
+                                <div>
+                                    {prevDoc && (
+                                        <button
+                                            onClick={() => navigate(prevDoc.path)}
+                                            className="group flex flex-col items-start gap-1 p-4 rounded-lg border border-[#27272a] hover:border-white/20 hover:bg-[#18181b] transition-all w-full sm:w-auto"
+                                        >
+                                            <span className="text-xs text-gray-500 font-medium uppercase tracking-wider group-hover:text-gray-400">Previous</span>
+                                            <span className="text-gray-200 font-medium group-hover:text-white">{prevDoc.title}</span>
+                                        </button>
+                                    )}
+                                </div>
+                                <div className="flex justify-end">
+                                    {nextDoc && (
+                                        <button
+                                            onClick={() => navigate(nextDoc.path)}
+                                            className="group flex flex-col items-end gap-1 p-4 rounded-lg border border-[#27272a] hover:border-white/20 hover:bg-[#18181b] transition-all w-full sm:w-auto"
+                                        >
+                                            <span className="text-xs text-gray-500 font-medium uppercase tracking-wider group-hover:text-gray-400">Next</span>
+                                            <span className="text-gray-200 font-medium group-hover:text-white">{nextDoc.title}</span>
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
                             <TableOfContents html={content} />
                         </>
                     )}
