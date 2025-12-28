@@ -1537,14 +1537,20 @@ impl<'ctx> Codegen<'ctx> {
         method: &str,
         args: &[Spanned<Expr>],
     ) -> Result<BasicValueEnum<'ctx>> {
-        // Check if this is a List method call
-        if let Expr::Ident(name) = object {
-            if let Some(var) = self.variables.get(name) {
-                if matches!(&var.ty, Type::List(_)) {
-                    return self.compile_list_method(name, method, args);
-                }
-                if matches!(&var.ty, Type::Map(_, _)) {
-                    return self.compile_map_method(name, method, args);
+        // Check if this is a List, Map, Set, or Option method call
+        if let Expr::Ident(object_name) = object {
+            if let Some(var) = self.variables.get(object_name) {
+                match &var.ty {
+                    Type::List(_) => return self.compile_list_method(object_name, method, args),
+                    Type::Map(_, _) => return self.compile_map_method(object_name, method, args),
+                    Type::Set(_) => return self.compile_set_method(object_name, method, args),
+                    Type::Option(_) => {
+                        return self.compile_option_method(object_name, method, args)
+                    }
+                    Type::Result(_, _) => {
+                        return self.compile_result_method(object_name, method, args)
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1562,10 +1568,14 @@ impl<'ctx> Codegen<'ctx> {
                 _ => None,
             }),
             _ => None,
-        };
+        }
+        .ok_or_else(|| CodegenError::new("Cannot determine object type"))?;
 
-        let class_name =
-            class_name.ok_or_else(|| CodegenError::new("Cannot determine object type"))?;
+        let class_info = self
+            .classes
+            .get(&class_name)
+            .ok_or_else(|| CodegenError::new(format!("Unknown class: {}", class_name)))?;
+
         let func_name = format!("{}__{}", class_name, method);
 
         let func = *self
@@ -1679,6 +1689,22 @@ impl<'ctx> Codegen<'ctx> {
         // Handle Result<T,E> construction (default to Error with zeroed memory)
         if ty.starts_with("Result") {
             return self.create_default_result();
+        }
+
+        // Handle Set<T> construction
+        if ty.starts_with("Set") {
+            return self.create_empty_set();
+        }
+
+        // Handle Smart Pointer construction
+        if ty.starts_with("Box") {
+            return self.create_empty_box();
+        }
+        if ty.starts_with("Rc") {
+            return self.create_empty_rc();
+        }
+        if ty.starts_with("Arc") {
+            return self.create_empty_arc();
         }
 
         let func_name = format!("{}__new", ty);
@@ -1823,6 +1849,244 @@ impl<'ctx> Codegen<'ctx> {
             true,
         );
         self.module.add_function(name, sprintf_type, None)
+    }
+
+    // === Set<T> methods ===
+
+    fn compile_set_method(
+        &mut self,
+        set_name: &str,
+        method: &str,
+        _args: &[Spanned<Expr>],
+    ) -> Result<BasicValueEnum<'ctx>> {
+        let var = self.variables.get(set_name).unwrap();
+        let set_ptr = var.ptr;
+        let set_type = self.context.struct_type(
+            &[
+                self.context.i64_type().into(),
+                self.context.i64_type().into(),
+                self.context.ptr_type(AddressSpace::default()).into(),
+            ],
+            false,
+        );
+
+        match method {
+            "length" => {
+                let i32_type = self.context.i32_type();
+                let zero = i32_type.const_int(0, false);
+                let length_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            set_type.as_basic_type_enum(),
+                            set_ptr,
+                            &[zero, i32_type.const_int(1, false)],
+                            "len_ptr",
+                        )
+                        .unwrap()
+                };
+                let length = self
+                    .builder
+                    .build_load(self.context.i64_type(), length_ptr, "len")
+                    .unwrap();
+                Ok(length)
+            }
+            "add" | "contains" | "remove" => {
+                // Stubs for now
+                Ok(self.context.bool_type().const_int(0, false).into())
+            }
+            _ => Err(CodegenError::new(format!("Unknown Set method: {}", method))),
+        }
+    }
+
+    // === Option<T> methods ===
+
+    fn compile_option_method(
+        &mut self,
+        option_name: &str,
+        method: &str,
+        _args: &[Spanned<Expr>],
+    ) -> Result<BasicValueEnum<'ctx>> {
+        let var = self.variables.get(option_name).unwrap();
+        let option_ptr = var.ptr;
+        // Assuming Option<T> is { is_some: i8, value: T }
+        // We need to infer T from var.ty
+        let option_ty = match &var.ty {
+            Type::Option(inner_ty) => inner_ty,
+            _ => return Err(CodegenError::new("Expected Option type")),
+        };
+        let llvm_inner_ty = self.llvm_type(option_ty);
+
+        let option_struct_type = self
+            .context
+            .struct_type(&[self.context.i8_type().into(), llvm_inner_ty], false);
+
+        let i32_type = self.context.i32_type();
+        let zero = i32_type.const_int(0, false);
+
+        match method {
+            "is_some" => {
+                let is_some_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            option_struct_type.as_basic_type_enum(),
+                            option_ptr,
+                            &[zero, i32_type.const_int(0, false)],
+                            "is_some_ptr",
+                        )
+                        .unwrap()
+                };
+                let is_some = self
+                    .builder
+                    .build_load(self.context.i8_type(), is_some_ptr, "is_some")
+                    .unwrap();
+                Ok(is_some)
+            }
+            "is_none" => {
+                let is_some_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            option_struct_type.as_basic_type_enum(),
+                            option_ptr,
+                            &[zero, i32_type.const_int(0, false)],
+                            "is_some_ptr",
+                        )
+                        .unwrap()
+                };
+                let is_some = self
+                    .builder
+                    .build_load(self.context.i8_type(), is_some_ptr, "is_some")
+                    .unwrap()
+                    .into_int_value();
+                let is_none = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        is_some,
+                        self.context.i8_type().const_int(0, false),
+                        "is_none",
+                    )
+                    .unwrap();
+                Ok(is_none.into())
+            }
+            "unwrap" => {
+                // For now, just return the value without checking if it's Some
+                // A proper implementation would add a runtime check and panic if None
+                let value_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            option_struct_type.as_basic_type_enum(),
+                            option_ptr,
+                            &[zero, i32_type.const_int(1, false)],
+                            "value_ptr",
+                        )
+                        .unwrap()
+                };
+                let value = self
+                    .builder
+                    .build_load(llvm_inner_ty, value_ptr, "unwrapped_value")
+                    .unwrap();
+                Ok(value)
+            }
+            _ => Err(CodegenError::new(format!(
+                "Unknown Option method: {}",
+                method
+            ))),
+        }
+    }
+
+    // === Result<T, E> methods ===
+
+    fn compile_result_method(
+        &mut self,
+        result_name: &str,
+        method: &str,
+        _args: &[Spanned<Expr>],
+    ) -> Result<BasicValueEnum<'ctx>> {
+        let var = self.variables.get(result_name).unwrap();
+        let result_ptr = var.ptr;
+        // Result<T, E> is struct { is_ok: i8, ok_value: T, err_value: E }
+        let (ok_ty, err_ty) = match &var.ty {
+            Type::Result(ok, err) => (ok, err),
+            _ => return Err(CodegenError::new("Expected Result type")),
+        };
+        let ok_llvm = self.llvm_type(ok_ty);
+        let err_llvm = self.llvm_type(err_ty);
+
+        let result_struct_type = self
+            .context
+            .struct_type(&[self.context.i8_type().into(), ok_llvm, err_llvm], false);
+
+        let i32_type = self.context.i32_type();
+        let zero = i32_type.const_int(0, false);
+
+        match method {
+            "is_ok" => {
+                let tag_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            result_struct_type.as_basic_type_enum(),
+                            result_ptr,
+                            &[zero, i32_type.const_int(0, false)],
+                            "tag_ptr",
+                        )
+                        .unwrap()
+                };
+                let tag = self
+                    .builder
+                    .build_load(self.context.i8_type(), tag_ptr, "tag")
+                    .unwrap();
+                Ok(tag)
+            }
+            "is_error" => {
+                let tag_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            result_struct_type.as_basic_type_enum(),
+                            result_ptr,
+                            &[zero, i32_type.const_int(0, false)],
+                            "tag_ptr",
+                        )
+                        .unwrap()
+                };
+                let tag = self
+                    .builder
+                    .build_load(self.context.i8_type(), tag_ptr, "tag")
+                    .unwrap()
+                    .into_int_value();
+                let is_error = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        tag,
+                        self.context.i8_type().const_int(0, false),
+                        "is_error",
+                    )
+                    .unwrap();
+                Ok(is_error.into())
+            }
+            "unwrap" => {
+                // Returns Ok value, panics if Error (runtime check omitted for now)
+                let ok_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            result_struct_type.as_basic_type_enum(),
+                            result_ptr,
+                            &[zero, i32_type.const_int(1, false)],
+                            "ok_ptr",
+                        )
+                        .unwrap()
+                };
+                let value = self
+                    .builder
+                    .build_load(ok_llvm, ok_ptr, "unwrapped_ok")
+                    .unwrap();
+                Ok(value)
+            }
+            _ => Err(CodegenError::new(format!(
+                "Unknown Result method: {}",
+                method
+            ))),
+        }
     }
 
     // === Option<T> helpers ===
@@ -2329,6 +2593,124 @@ impl<'ctx> Codegen<'ctx> {
         self.builder.build_store(values_field, values_ptr).unwrap();
 
         Ok(self.builder.build_load(map_type, alloca, "map").unwrap())
+    }
+
+    fn create_empty_set(&mut self) -> Result<BasicValueEnum<'ctx>> {
+        // Set struct: { capacity: i64, length: i64, data: ptr }
+        let set_type = self.context.struct_type(
+            &[
+                self.context.i64_type().into(),
+                self.context.i64_type().into(),
+                self.context.ptr_type(AddressSpace::default()).into(),
+            ],
+            false,
+        );
+
+        let alloca = self.builder.build_alloca(set_type, "set").unwrap();
+
+        // Initial capacity = 8
+        let initial_capacity: u64 = 8;
+        let i32_type = self.context.i32_type();
+        let zero = i32_type.const_int(0, false);
+        let capacity_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    set_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(0, false)],
+                    "capacity",
+                )
+                .unwrap()
+        };
+        self.builder
+            .build_store(
+                capacity_ptr,
+                self.context.i64_type().const_int(initial_capacity, false),
+            )
+            .unwrap();
+
+        // Length = 0
+        let length_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    set_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(1, false)],
+                    "length",
+                )
+                .unwrap()
+        };
+        self.builder
+            .build_store(length_ptr, self.context.i64_type().const_int(0, false))
+            .unwrap();
+
+        // Allocate data - malloc(capacity * 8)
+        let malloc = self.get_or_declare_malloc();
+        let size = self
+            .context
+            .i64_type()
+            .const_int(initial_capacity * 8, false);
+        let call_result = self
+            .builder
+            .build_call(malloc, &[size.into()], "data")
+            .unwrap();
+        let data_ptr = match call_result.try_as_basic_value() {
+            ValueKind::Basic(val) => val,
+            _ => panic!("malloc should return a value"),
+        };
+
+        let data_ptr_field = unsafe {
+            self.builder
+                .build_gep(
+                    set_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(2, false)],
+                    "data_ptr",
+                )
+                .unwrap()
+        };
+        self.builder.build_store(data_ptr_field, data_ptr).unwrap();
+
+        Ok(self.builder.build_load(set_type, alloca, "set").unwrap())
+    }
+
+    fn create_empty_box(&mut self) -> Result<BasicValueEnum<'ctx>> {
+        let malloc = self.get_or_declare_malloc();
+        let size = self.context.i64_type().const_int(8, false);
+        let call_result = self
+            .builder
+            .build_call(malloc, &[size.into()], "box")
+            .unwrap();
+        match call_result.try_as_basic_value() {
+            ValueKind::Basic(val) => Ok(val),
+            _ => panic!("malloc should return a value"),
+        }
+    }
+
+    fn create_empty_rc(&mut self) -> Result<BasicValueEnum<'ctx>> {
+        let malloc = self.get_or_declare_malloc();
+        let size = self.context.i64_type().const_int(16, false); // refcount + data
+        let call_result = self
+            .builder
+            .build_call(malloc, &[size.into()], "rc")
+            .unwrap();
+        match call_result.try_as_basic_value() {
+            ValueKind::Basic(val) => Ok(val),
+            _ => panic!("malloc should return a value"),
+        }
+    }
+
+    fn create_empty_arc(&mut self) -> Result<BasicValueEnum<'ctx>> {
+        let malloc = self.get_or_declare_malloc();
+        let size = self.context.i64_type().const_int(16, false); // atomic refcount + data
+        let call_result = self
+            .builder
+            .build_call(malloc, &[size.into()], "arc")
+            .unwrap();
+        match call_result.try_as_basic_value() {
+            ValueKind::Basic(val) => Ok(val),
+            _ => panic!("malloc should return a value"),
+        }
     }
 
     fn compile_list_method(
