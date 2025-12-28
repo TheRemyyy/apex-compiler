@@ -1671,6 +1671,16 @@ impl<'ctx> Codegen<'ctx> {
             return self.create_empty_map();
         }
 
+        // Handle Option<T> construction (default to None)
+        if ty.starts_with("Option") {
+            return self.create_option_none();
+        }
+
+        // Handle Result<T,E> construction (default to Error with zeroed memory)
+        if ty.starts_with("Result") {
+            return self.create_default_result();
+        }
+
         let func_name = format!("{}__new", ty);
 
         let func = *self
@@ -1965,6 +1975,55 @@ impl<'ctx> Codegen<'ctx> {
             .build_struct_gep(result_type, alloca, 2, "err")
             .unwrap();
         self.builder.build_store(err_ptr, error).unwrap();
+
+        Ok(self
+            .builder
+            .build_load(result_type, alloca, "result")
+            .unwrap())
+    }
+
+    fn create_default_result(&mut self) -> Result<BasicValueEnum<'ctx>> {
+        // Result is struct { is_ok: i8, ok_value: i64, err_value: ptr }
+        // We default to Error (tag=0) with null pointer
+        let result_type = self.context.struct_type(
+            &[
+                self.context.i8_type().into(),
+                self.context.i64_type().into(), // default ok type
+                self.context.ptr_type(AddressSpace::default()).into(),
+            ],
+            false,
+        );
+
+        let alloca = self
+            .builder
+            .build_alloca(result_type, "default_result")
+            .unwrap();
+
+        // Set is_ok = 0
+        let tag_ptr = self
+            .builder
+            .build_struct_gep(result_type, alloca, 0, "tag")
+            .unwrap();
+        self.builder
+            .build_store(tag_ptr, self.context.i8_type().const_int(0, false))
+            .unwrap();
+
+        // Set ok_value to 0
+        let ok_ptr = self
+            .builder
+            .build_struct_gep(result_type, alloca, 1, "ok")
+            .unwrap();
+        self.builder
+            .build_store(ok_ptr, self.context.i64_type().const_int(0, false))
+            .unwrap();
+
+        // Set err_value to null
+        let err_ptr = self
+            .builder
+            .build_struct_gep(result_type, alloca, 2, "err")
+            .unwrap();
+        let null = self.context.ptr_type(AddressSpace::default()).const_null();
+        self.builder.build_store(err_ptr, null).unwrap();
 
         Ok(self
             .builder
