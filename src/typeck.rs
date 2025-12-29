@@ -1221,6 +1221,17 @@ impl TypeChecker {
                 }
                 Some(ResolvedType::Boolean)
             }
+            "Str__startsWith" | "Str__endsWith" => {
+                self.check_arg_count(name, args, 2, span.clone());
+                if args.len() >= 2 {
+                    let t1 = self.check_expr(&args[0].node, args[0].span.clone());
+                    let t2 = self.check_expr(&args[1].node, args[1].span.clone());
+                    if !matches!(t1, ResolvedType::String) || !matches!(t2, ResolvedType::String) {
+                        self.error(format!("{}.{}() requires two String arguments", name.split("__").next().unwrap(), name.split("__").last().unwrap()), span.clone());
+                    }
+                }
+                Some(ResolvedType::Boolean)
+            }
             "System__exit" => {
                 self.check_arg_count(name, args, 1, span.clone());
                 if !args.is_empty() {
@@ -1344,7 +1355,7 @@ impl TypeChecker {
                 }
                 Some(ResolvedType::String)
             }
-            "System__cwd" => {
+            "System__cwd" | "System__os" => {
                 self.check_arg_count(name, args, 0, span);
                 Some(ResolvedType::String)
             }
@@ -1445,6 +1456,10 @@ impl TypeChecker {
                 "length" => {
                     self.check_arg_count(method, args, 0, span);
                     ResolvedType::Integer
+                }
+                "pop" => {
+                    self.check_arg_count(method, args, 0, span);
+                    (**inner).clone()
                 }
                 _ => {
                     self.error(format!("Unknown List method: {}", method), span);
@@ -1616,6 +1631,13 @@ impl TypeChecker {
     ) -> ResolvedType {
         match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                if matches!(op, BinOp::Add)
+                    && matches!(left, ResolvedType::String)
+                    && matches!(right, ResolvedType::String)
+                {
+                    return ResolvedType::String;
+                }
+
                 if !left.is_numeric() || !right.is_numeric() {
                     self.error(
                         format!(

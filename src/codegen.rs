@@ -1619,6 +1619,19 @@ impl<'ctx> Codegen<'ctx> {
             return Ok(result);
         }
 
+        // String concatenation
+        if matches!(op, BinOp::Add) && lhs.is_pointer_value() && rhs.is_pointer_value() {
+            // Re-use Str__concat logic
+            // Since we don't have Spanned<Expr> here easily, we call compile_builtin_call with dummy spans
+            let args = vec![
+                Spanned::new(left.clone(), Span::default()),
+                Spanned::new(right.clone(), Span::default()),
+            ];
+            return self
+                .compile_stdlib_function("Str__concat", &args)
+                .map(|v| v.unwrap());
+        }
+
         Err(CodegenError::new("Type mismatch in binary operation"))
     }
 
@@ -3535,6 +3548,79 @@ impl<'ctx> Codegen<'ctx> {
                 self.builder.build_store(elem_ptr, value).unwrap();
 
                 Ok(self.context.i8_type().const_int(0, false).into())
+            }
+            "pop" => {
+                // Get current length
+                let length_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(1, false)],
+                            "len_ptr",
+                        )
+                        .unwrap()
+                };
+                let length = self
+                    .builder
+                    .build_load(self.context.i64_type(), length_ptr, "len")
+                    .unwrap()
+                    .into_int_value();
+
+                // new_length = length - 1
+                let new_length = self
+                    .builder
+                    .build_int_sub(
+                        length,
+                        self.context.i64_type().const_int(1, false),
+                        "new_len",
+                    )
+                    .unwrap();
+
+                // Update length
+                self.builder.build_store(length_ptr, new_length).unwrap();
+
+                // Get data pointer
+                let data_ptr_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(2, false)],
+                            "data_ptr_ptr",
+                        )
+                        .unwrap()
+                };
+                let data_ptr = self
+                    .builder
+                    .build_load(
+                        self.context.ptr_type(AddressSpace::default()),
+                        data_ptr_ptr,
+                        "data",
+                    )
+                    .unwrap()
+                    .into_pointer_value();
+
+                // Get value at new_length (the old last element)
+                let offset = self
+                    .builder
+                    .build_int_mul(
+                        new_length,
+                        self.context.i64_type().const_int(8, false),
+                        "offset",
+                    )
+                    .unwrap();
+                let elem_ptr = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), data_ptr, &[offset], "elem_ptr")
+                        .unwrap()
+                };
+
+                let val = self
+                    .builder
+                    .build_load(self.context.i64_type(), elem_ptr, "val")
+                    .unwrap();
+                Ok(val)
             }
             _ => Err(CodegenError::new(format!(
                 "Unknown List method: {}",
