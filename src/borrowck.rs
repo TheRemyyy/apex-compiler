@@ -436,9 +436,17 @@ impl BorrowChecker {
                 let mut param_modes = Vec::new();
                 if let Expr::Ident(name) = &callee.node {
                     // Stdlib functions that should borrow
-                    if matches!(name.as_str(), 
-                        "strlen" | "strcmp" | "strcat" | "print" | "println" | 
-                        "File__exists" | "File__read" | "File__write" | "File__delete"
+                    if matches!(
+                        name.as_str(),
+                        "strlen"
+                            | "strcmp"
+                            | "strcat"
+                            | "print"
+                            | "println"
+                            | "File__exists"
+                            | "File__read"
+                            | "File__write"
+                            | "File__delete"
                     ) {
                         param_modes = vec![ParamMode::Borrow; args.len()];
                     } else if let Some(modes) = self.functions.get(name) {

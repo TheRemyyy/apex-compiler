@@ -4232,50 +4232,76 @@ impl<'ctx> Codegen<'ctx> {
             "File__write" => {
                 let path = self.compile_expr(&args[0].node)?;
                 let content = self.compile_expr(&args[1].node)?;
-                
+
                 let fopen = self.get_or_declare_fopen();
                 let fputs = self.get_or_declare_fputs();
                 let fclose = self.get_or_declare_fclose();
-                
+
                 let mode = self.context.const_string(b"w", true);
                 let mode_global = self.module.add_global(mode.get_type(), None, "mode_w");
                 mode_global.set_initializer(&mode);
-                
-                let file_call = self.builder.build_call(fopen, &[path.into(), mode_global.as_pointer_value().into()], "file").unwrap();
+
+                let file_call = self
+                    .builder
+                    .build_call(
+                        fopen,
+                        &[path.into(), mode_global.as_pointer_value().into()],
+                        "file",
+                    )
+                    .unwrap();
                 let file_ptr = self.extract_call_value(file_call).into_pointer_value();
-                
+
                 let null = self.context.ptr_type(AddressSpace::default()).const_null();
                 let is_null = self.builder.build_is_null(file_ptr, "is_null").unwrap();
-                
-                let success_block = self.context.append_basic_block(self.current_function.unwrap(), "file.success");
-                let fail_block = self.context.append_basic_block(self.current_function.unwrap(), "file.fail");
-                let merge_block = self.context.append_basic_block(self.current_function.unwrap(), "file.merge");
-                
-                self.builder.build_conditional_branch(is_null, fail_block, success_block).unwrap();
-                
+
+                let success_block = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "file.success");
+                let fail_block = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "file.fail");
+                let merge_block = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "file.merge");
+
+                self.builder
+                    .build_conditional_branch(is_null, fail_block, success_block)
+                    .unwrap();
+
                 // Fail
                 self.builder.position_at_end(fail_block);
-                self.builder.build_unconditional_branch(merge_block).unwrap();
-                
+                self.builder
+                    .build_unconditional_branch(merge_block)
+                    .unwrap();
+
                 // Success
                 self.builder.position_at_end(success_block);
-                self.builder.build_call(fputs, &[content.into(), file_ptr.into()], "write").unwrap();
-                self.builder.build_call(fclose, &[file_ptr.into()], "close").unwrap();
-                self.builder.build_unconditional_branch(merge_block).unwrap();
-                
+                self.builder
+                    .build_call(fputs, &[content.into(), file_ptr.into()], "write")
+                    .unwrap();
+                self.builder
+                    .build_call(fclose, &[file_ptr.into()], "close")
+                    .unwrap();
+                self.builder
+                    .build_unconditional_branch(merge_block)
+                    .unwrap();
+
                 // Merge
                 self.builder.position_at_end(merge_block);
-                let phi = self.builder.build_phi(self.context.bool_type(), "result").unwrap();
+                let phi = self
+                    .builder
+                    .build_phi(self.context.bool_type(), "result")
+                    .unwrap();
                 let true_val = self.context.bool_type().const_int(1, false);
                 let false_val = self.context.bool_type().const_int(0, false);
                 phi.add_incoming(&[(&false_val, fail_block), (&true_val, success_block)]);
-                
+
                 Ok(Some(phi.as_basic_value()))
             }
-            
+
             "File__read" => {
                 let path = self.compile_expr(&args[0].node)?;
-                
+
                 let fopen = self.get_or_declare_fopen();
                 let fseek = self.get_or_declare_fseek();
                 let ftell = self.get_or_declare_ftell();
@@ -4283,68 +4309,121 @@ impl<'ctx> Codegen<'ctx> {
                 let fread = self.get_or_declare_fread();
                 let fclose = self.get_or_declare_fclose();
                 let malloc = self.get_or_declare_malloc();
-                
+
                 let mode = self.context.const_string(b"rb", true); // Binary mode to get exact bytes
                 let mode_global = self.module.add_global(mode.get_type(), None, "mode_r");
                 mode_global.set_initializer(&mode);
-                
-                let file_call = self.builder.build_call(fopen, &[path.into(), mode_global.as_pointer_value().into()], "file").unwrap();
+
+                let file_call = self
+                    .builder
+                    .build_call(
+                        fopen,
+                        &[path.into(), mode_global.as_pointer_value().into()],
+                        "file",
+                    )
+                    .unwrap();
                 let file_ptr = self.extract_call_value(file_call).into_pointer_value();
-                
+
                 let is_null = self.builder.build_is_null(file_ptr, "is_null").unwrap();
-                
-                let success_block = self.context.append_basic_block(self.current_function.unwrap(), "read.success");
-                let fail_block = self.context.append_basic_block(self.current_function.unwrap(), "read.fail");
-                let merge_block = self.context.append_basic_block(self.current_function.unwrap(), "read.merge");
-                
-                self.builder.build_conditional_branch(is_null, fail_block, success_block).unwrap();
-                
+
+                let success_block = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "read.success");
+                let fail_block = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "read.fail");
+                let merge_block = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "read.merge");
+
+                self.builder
+                    .build_conditional_branch(is_null, fail_block, success_block)
+                    .unwrap();
+
                 // Fail - return empty string
                 self.builder.position_at_end(fail_block);
                 let empty_str = self.context.const_string(b"", true);
-                let empty_global = self.module.add_global(empty_str.get_type(), None, "empty_s");
+                let empty_global = self
+                    .module
+                    .add_global(empty_str.get_type(), None, "empty_s");
                 empty_global.set_initializer(&empty_str);
                 let fail_res = empty_global.as_pointer_value();
-                self.builder.build_unconditional_branch(merge_block).unwrap();
-                
+                self.builder
+                    .build_unconditional_branch(merge_block)
+                    .unwrap();
+
                 // Success
                 self.builder.position_at_end(success_block);
                 // fseek(f, 0, SEEK_END)
                 let seek_end = self.context.i32_type().const_int(2, false); // SEEK_END = 2
                 let zero = self.context.i64_type().const_int(0, false);
-                self.builder.build_call(fseek, &[file_ptr.into(), zero.into(), seek_end.into()], "").unwrap();
-                
+                self.builder
+                    .build_call(fseek, &[file_ptr.into(), zero.into(), seek_end.into()], "")
+                    .unwrap();
+
                 // size = ftell(f)
-                let size_call = self.builder.build_call(ftell, &[file_ptr.into()], "size").unwrap();
+                let size_call = self
+                    .builder
+                    .build_call(ftell, &[file_ptr.into()], "size")
+                    .unwrap();
                 let size = self.extract_call_value(size_call).into_int_value();
-                
+
                 // rewind(f)
-                self.builder.build_call(rewind, &[file_ptr.into()], "").unwrap();
-                
+                self.builder
+                    .build_call(rewind, &[file_ptr.into()], "")
+                    .unwrap();
+
                 // buffer = malloc(size + 1)
                 let one = self.context.i64_type().const_int(1, false);
                 let alloc_size = self.builder.build_int_add(size, one, "alloc_size").unwrap();
-                let buffer_call = self.builder.build_call(malloc, &[alloc_size.into()], "buffer").unwrap();
+                let buffer_call = self
+                    .builder
+                    .build_call(malloc, &[alloc_size.into()], "buffer")
+                    .unwrap();
                 let buffer = self.extract_call_value(buffer_call).into_pointer_value();
-                
+
                 // fread(buffer, 1, size, f)
                 let size_size_t = size; // Assuming size_t is i64
-                self.builder.build_call(fread, &[buffer.into(), one.into(), size_size_t.into(), file_ptr.into()], "").unwrap();
-                
+                self.builder
+                    .build_call(
+                        fread,
+                        &[
+                            buffer.into(),
+                            one.into(),
+                            size_size_t.into(),
+                            file_ptr.into(),
+                        ],
+                        "",
+                    )
+                    .unwrap();
+
                 // buffer[size] = 0 (null terminate)
-                let term_ptr = unsafe { self.builder.build_gep(self.context.i8_type(), buffer, &[size], "term_ptr").unwrap() };
-                self.builder.build_store(term_ptr, self.context.i8_type().const_int(0, false)).unwrap();
-                
+                let term_ptr = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), buffer, &[size], "term_ptr")
+                        .unwrap()
+                };
+                self.builder
+                    .build_store(term_ptr, self.context.i8_type().const_int(0, false))
+                    .unwrap();
+
                 // fclose(f)
-                self.builder.build_call(fclose, &[file_ptr.into()], "").unwrap();
-                
-                self.builder.build_unconditional_branch(merge_block).unwrap();
-                
+                self.builder
+                    .build_call(fclose, &[file_ptr.into()], "")
+                    .unwrap();
+
+                self.builder
+                    .build_unconditional_branch(merge_block)
+                    .unwrap();
+
                 // Merge
                 self.builder.position_at_end(merge_block);
-                let phi = self.builder.build_phi(self.context.ptr_type(AddressSpace::default()), "result").unwrap();
+                let phi = self
+                    .builder
+                    .build_phi(self.context.ptr_type(AddressSpace::default()), "result")
+                    .unwrap();
                 phi.add_incoming(&[(&fail_res, fail_block), (&buffer, success_block)]);
-                
+
                 Ok(Some(phi.as_basic_value()))
             }
 
@@ -4352,30 +4431,45 @@ impl<'ctx> Codegen<'ctx> {
                 let path = self.compile_expr(&args[0].node)?;
                 let fopen = self.get_or_declare_fopen();
                 let fclose = self.get_or_declare_fclose();
-                
+
                 let mode = self.context.const_string(b"r", true);
                 let mode_global = self.module.add_global(mode.get_type(), None, "mode_r");
                 mode_global.set_initializer(&mode);
-                
-                let file_call = self.builder.build_call(fopen, &[path.into(), mode_global.as_pointer_value().into()], "file").unwrap();
+
+                let file_call = self
+                    .builder
+                    .build_call(
+                        fopen,
+                        &[path.into(), mode_global.as_pointer_value().into()],
+                        "file",
+                    )
+                    .unwrap();
                 let file_ptr = self.extract_call_value(file_call).into_pointer_value();
-                
+
                 let is_null = self.builder.build_is_null(file_ptr, "is_null").unwrap();
-                
+
                 let exists = self.builder.build_not(is_null, "exists").unwrap();
-                
+
                 // Close if opened
-                let close_block = self.context.append_basic_block(self.current_function.unwrap(), "exists.close");
-                let end_block = self.context.append_basic_block(self.current_function.unwrap(), "exists.end");
-                
-                self.builder.build_conditional_branch(exists, close_block, end_block).unwrap();
-                
+                let close_block = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "exists.close");
+                let end_block = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "exists.end");
+
+                self.builder
+                    .build_conditional_branch(exists, close_block, end_block)
+                    .unwrap();
+
                 self.builder.position_at_end(close_block);
-                self.builder.build_call(fclose, &[file_ptr.into()], "").unwrap();
+                self.builder
+                    .build_call(fclose, &[file_ptr.into()], "")
+                    .unwrap();
                 self.builder.build_unconditional_branch(end_block).unwrap();
-                
+
                 self.builder.position_at_end(end_block);
-                
+
                 // Cast i1 to boolean (i1) - basically same
                 Ok(Some(exists.into()))
             }
@@ -4383,13 +4477,19 @@ impl<'ctx> Codegen<'ctx> {
             "File__delete" => {
                 let path = self.compile_expr(&args[0].node)?;
                 let remove = self.get_or_declare_remove();
-                
-                let res_call = self.builder.build_call(remove, &[path.into()], "res").unwrap();
+
+                let res_call = self
+                    .builder
+                    .build_call(remove, &[path.into()], "res")
+                    .unwrap();
                 let res = self.extract_call_value(res_call).into_int_value();
-                
+
                 let zero = self.context.i32_type().const_int(0, false);
-                let success = self.builder.build_int_compare(IntPredicate::EQ, res, zero, "success").unwrap();
-                
+                let success = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, res, zero, "success")
+                    .unwrap();
+
                 Ok(Some(success.into()))
             }
 
@@ -4402,7 +4502,9 @@ impl<'ctx> Codegen<'ctx> {
 
     fn get_or_declare_fopen(&mut self) -> FunctionValue<'ctx> {
         let name = "fopen";
-        if let Some(f) = self.module.get_function(name) { return f; }
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
         // FILE* fopen(const char* filename, const char* mode)
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let fn_type = ptr_type.fn_type(&[ptr_type.into(), ptr_type.into()], false);
@@ -4411,7 +4513,9 @@ impl<'ctx> Codegen<'ctx> {
 
     fn get_or_declare_fclose(&mut self) -> FunctionValue<'ctx> {
         let name = "fclose";
-        if let Some(f) = self.module.get_function(name) { return f; }
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
         // int fclose(FILE* stream)
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let fn_type = self.context.i32_type().fn_type(&[ptr_type.into()], false);
@@ -4420,25 +4524,41 @@ impl<'ctx> Codegen<'ctx> {
 
     fn get_or_declare_fputs(&mut self) -> FunctionValue<'ctx> {
         let name = "fputs";
-        if let Some(f) = self.module.get_function(name) { return f; }
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
         // int fputs(const char* str, FILE* stream)
         let ptr_type = self.context.ptr_type(AddressSpace::default());
-        let fn_type = self.context.i32_type().fn_type(&[ptr_type.into(), ptr_type.into()], false);
+        let fn_type = self
+            .context
+            .i32_type()
+            .fn_type(&[ptr_type.into(), ptr_type.into()], false);
         self.module.add_function(name, fn_type, None)
     }
 
     fn get_or_declare_fseek(&mut self) -> FunctionValue<'ctx> {
         let name = "fseek";
-        if let Some(f) = self.module.get_function(name) { return f; }
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
         // int fseek(FILE* stream, long offset, int origin)
         let ptr_type = self.context.ptr_type(AddressSpace::default());
-        let fn_type = self.context.i32_type().fn_type(&[ptr_type.into(), self.context.i64_type().into(), self.context.i32_type().into()], false);
+        let fn_type = self.context.i32_type().fn_type(
+            &[
+                ptr_type.into(),
+                self.context.i64_type().into(),
+                self.context.i32_type().into(),
+            ],
+            false,
+        );
         self.module.add_function(name, fn_type, None)
     }
 
     fn get_or_declare_ftell(&mut self) -> FunctionValue<'ctx> {
         let name = "ftell";
-        if let Some(f) = self.module.get_function(name) { return f; }
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
         // long ftell(FILE* stream)
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let fn_type = self.context.i64_type().fn_type(&[ptr_type.into()], false);
@@ -4447,7 +4567,9 @@ impl<'ctx> Codegen<'ctx> {
 
     fn get_or_declare_rewind(&mut self) -> FunctionValue<'ctx> {
         let name = "rewind";
-        if let Some(f) = self.module.get_function(name) { return f; }
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
         // void rewind(FILE* stream)
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let fn_type = self.context.void_type().fn_type(&[ptr_type.into()], false);
@@ -4456,17 +4578,29 @@ impl<'ctx> Codegen<'ctx> {
 
     fn get_or_declare_fread(&mut self) -> FunctionValue<'ctx> {
         let name = "fread";
-        if let Some(f) = self.module.get_function(name) { return f; }
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
         // size_t fread(void* ptr, size_t size, size_t count, FILE* stream)
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let size_t = self.context.i64_type();
-        let fn_type = size_t.fn_type(&[ptr_type.into(), size_t.into(), size_t.into(), ptr_type.into()], false);
+        let fn_type = size_t.fn_type(
+            &[
+                ptr_type.into(),
+                size_t.into(),
+                size_t.into(),
+                ptr_type.into(),
+            ],
+            false,
+        );
         self.module.add_function(name, fn_type, None)
     }
 
     fn get_or_declare_remove(&mut self) -> FunctionValue<'ctx> {
         let name = "remove";
-        if let Some(f) = self.module.get_function(name) { return f; }
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
         // int remove(const char* filename)
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let fn_type = self.context.i32_type().fn_type(&[ptr_type.into()], false);

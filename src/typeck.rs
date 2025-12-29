@@ -1206,10 +1206,16 @@ impl TypeChecker {
                     let path_t = self.check_expr(&args[0].node, args[0].span.clone());
                     let content_t = self.check_expr(&args[1].node, args[1].span.clone());
                     if !matches!(path_t, ResolvedType::String) {
-                        self.error("File.write() path must be String".to_string(), args[0].span.clone());
+                        self.error(
+                            "File.write() path must be String".to_string(),
+                            args[0].span.clone(),
+                        );
                     }
                     if !matches!(content_t, ResolvedType::String) {
-                        self.error("File.write() content must be String".to_string(), args[1].span.clone());
+                        self.error(
+                            "File.write() content must be String".to_string(),
+                            args[1].span.clone(),
+                        );
                     }
                 }
                 Some(ResolvedType::Boolean)
@@ -1219,7 +1225,10 @@ impl TypeChecker {
                 if !args.is_empty() {
                     let t = self.check_expr(&args[0].node, args[0].span.clone());
                     if !matches!(t, ResolvedType::String) {
-                        self.error(format!("File.exists() requires String path, got {}", t), span);
+                        self.error(
+                            format!("File.exists() requires String path, got {}", t),
+                            span,
+                        );
                     }
                 }
                 Some(ResolvedType::Boolean)
@@ -1229,7 +1238,10 @@ impl TypeChecker {
                 if !args.is_empty() {
                     let t = self.check_expr(&args[0].node, args[0].span.clone());
                     if !matches!(t, ResolvedType::String) {
-                        self.error(format!("File.delete() requires String path, got {}", t), span);
+                        self.error(
+                            format!("File.delete() requires String path, got {}", t),
+                            span,
+                        );
                     }
                 }
                 Some(ResolvedType::Boolean)
