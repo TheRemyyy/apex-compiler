@@ -1013,7 +1013,7 @@ impl TypeChecker {
         if let Expr::Field { object, field } = callee {
             // Special handling for static calls (e.g. File.read, Time.now)
             if let Expr::Ident(name) = &object.node {
-                if matches!(name.as_str(), "File" | "Time") {
+                if matches!(name.as_str(), "File" | "Time" | "System" | "Math") {
                     let builtin_name = format!("{}__{}", name, field);
                     if let Some(ret) = self.check_builtin_call(&builtin_name, args, span.clone()) {
                         return ret;
@@ -1270,6 +1270,54 @@ impl TypeChecker {
                     }
                 }
                 Some(ResolvedType::None)
+            }
+            // System Functions
+            "System__getenv" => {
+                self.check_arg_count(name, args, 1, span.clone());
+                if !args.is_empty() {
+                    let t = self.check_expr(&args[0].node, args[0].span.clone());
+                    if !matches!(t, ResolvedType::String) {
+                        self.error("System.getenv() requires String name".to_string(), span.clone());
+                    }
+                }
+                Some(ResolvedType::String)
+            }
+            "System__shell" => {
+                self.check_arg_count(name, args, 1, span.clone());
+                if !args.is_empty() {
+                    let t = self.check_expr(&args[0].node, args[0].span.clone());
+                    if !matches!(t, ResolvedType::String) {
+                        self.error("System.shell() requires String command".to_string(), span.clone());
+                    }
+                }
+                Some(ResolvedType::Integer)
+            }
+            "System__exec" => {
+                self.check_arg_count(name, args, 1, span.clone());
+                if !args.is_empty() {
+                    let t = self.check_expr(&args[0].node, args[0].span.clone());
+                    if !matches!(t, ResolvedType::String) {
+                        self.error("System.exec() requires String command".to_string(), span.clone());
+                    }
+                }
+                Some(ResolvedType::String)
+            }
+            "System__cwd" => {
+                self.check_arg_count(name, args, 0, span);
+                Some(ResolvedType::String)
+            }
+            // Math Functions
+            "Math__random" => {
+                self.check_arg_count(name, args, 0, span);
+                Some(ResolvedType::Float)
+            }
+            "Math__pi" => {
+                self.check_arg_count(name, args, 0, span);
+                Some(ResolvedType::Float)
+            }
+            "Math__e" => {
+                self.check_arg_count(name, args, 0, span);
+                Some(ResolvedType::Float)
             }
             _ => None,
         }

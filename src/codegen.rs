@@ -1645,7 +1645,7 @@ impl<'ctx> Codegen<'ctx> {
         if let Expr::Field { object, field } = callee {
             // Check for File static methods
             if let Expr::Ident(name) = &object.node {
-                if matches!(name.as_str(), "File" | "Time") {
+                if matches!(name.as_str(), "File" | "Time" | "System" | "Math") {
                     let builtin_name = format!("{}__{}", name, field);
                     if let Some(result) = self.compile_stdlib_function(&builtin_name, args)? {
                         return Ok(result);
@@ -4582,6 +4582,153 @@ impl<'ctx> Codegen<'ctx> {
                 Ok(Some(self.context.i8_type().const_int(0, false).into()))
             }
 
+            // System Functions
+            "System__getenv" => {
+                let name = self.compile_expr(&args[0].node)?;
+                let getenv_fn = self.get_or_declare_getenv();
+                let res = self
+                    .builder
+                    .build_call(getenv_fn, &[name.into()], "env")
+                    .unwrap();
+                let val = self.extract_call_value(res).into_pointer_value();
+
+                // If NULL, return empty string
+                let is_null = self.builder.build_is_null(val, "is_null").unwrap();
+                let empty_str = self.get_or_create_empty_string();
+
+                let current_fn = self.current_function.unwrap();
+                let success_bb = self.context.append_basic_block(current_fn, "env.ok");
+                let fail_bb = self.context.append_basic_block(current_fn, "env.fail");
+                let merge_bb = self.context.append_basic_block(current_fn, "env.merge");
+
+                self.builder
+                    .build_conditional_branch(is_null, fail_bb, success_bb)
+                    .unwrap();
+
+                self.builder.position_at_end(fail_bb);
+                self.builder.build_unconditional_branch(merge_bb).unwrap();
+
+                self.builder.position_at_end(success_bb);
+                self.builder.build_unconditional_branch(merge_bb).unwrap();
+
+                self.builder.position_at_end(merge_bb);
+                let phi = self
+                    .builder
+                    .build_phi(self.context.ptr_type(AddressSpace::default()), "res")
+                    .unwrap();
+                phi.add_incoming(&[(&empty_str, fail_bb), (&val, success_bb)]);
+                Ok(Some(phi.as_basic_value()))
+            }
+
+            "System__shell" => {
+                let cmd = self.compile_expr(&args[0].node)?;
+                let system_fn = self.get_or_declare_system();
+                let res = self
+                    .builder
+                    .build_call(system_fn, &[cmd.into()], "exit_code")
+                    .unwrap();
+                let code = self.extract_call_value(res).into_int_value();
+                let code64 = self
+                    .builder
+                    .build_int_s_extend(code, self.context.i64_type(), "code64")
+                    .unwrap();
+                Ok(Some(code64.into()))
+            }
+
+            "System__exec" => {
+                let cmd = self.compile_expr(&args[0].node)?;
+                let popen_fn = self.get_or_declare_popen();
+                let pclose_fn = self.get_or_declare_pclose();
+                let fread_fn = self.get_or_declare_fread();
+                let malloc = self.get_or_declare_malloc();
+
+                let mode = self.context.const_string(b"r", true);
+                let mode_global = self.module.add_global(mode.get_type(), None, "mode_pop_r");
+                mode_global.set_initializer(&mode);
+
+                let pipe_val = self.builder.build_call(popen_fn, &[cmd.into(), mode_global.as_pointer_value().into()], "pipe").unwrap();
+                let pipe_ptr = self.extract_call_value(pipe_val).into_pointer_value();
+
+                let is_null = self.builder.build_is_null(pipe_ptr, "is_null").unwrap();
+                
+                let current_fn = self.current_function.unwrap();
+                let success_bb = self.context.append_basic_block(current_fn, "exec.ok");
+                let fail_bb = self.context.append_basic_block(current_fn, "exec.fail");
+                let merge_bb = self.context.append_basic_block(current_fn, "exec.merge");
+
+                self.builder.build_conditional_branch(is_null, fail_bb, success_bb).unwrap();
+
+                // Fail - return empty string
+                self.builder.position_at_end(fail_bb);
+                let empty_str = self.get_or_create_empty_string();
+                self.builder.build_unconditional_branch(merge_bb).unwrap();
+
+                // Success - Read from pipe
+                self.builder.position_at_end(success_bb);
+                let buf_size = self.context.i64_type().const_int(4096, false); // Cap at 4KB for simplicity
+                let buf_call = self.builder.build_call(malloc, &[buf_size.into()], "buf").unwrap();
+                let buf = self.extract_call_value(buf_call).into_pointer_value();
+
+                let one = self.context.i64_type().const_int(1, false);
+                let read_len_call = self.builder.build_call(fread_fn, &[buf.into(), one.into(), buf_size.into(), pipe_ptr.into()], "read_len").unwrap();
+                let read_len = self.extract_call_value(read_len_call).into_int_value();
+
+                // Null terminate at read_len
+                let term_ptr = unsafe { self.builder.build_gep(self.context.i8_type(), buf, &[read_len], "term_ptr").unwrap() };
+                self.builder.build_store(term_ptr, self.context.i8_type().const_int(0, false)).unwrap();
+
+                self.builder.build_call(pclose_fn, &[pipe_ptr.into()], "").unwrap();
+                self.builder.build_unconditional_branch(merge_bb).unwrap();
+
+                // Merge
+                self.builder.position_at_end(merge_bb);
+                let phi = self.builder.build_phi(self.context.ptr_type(AddressSpace::default()), "res").unwrap();
+                phi.add_incoming(&[(&empty_str, fail_bb), (&buf, success_bb)]);
+                Ok(Some(phi.as_basic_value()))
+            }
+
+            "System__cwd" => {
+                let getcwd_fn = self.get_or_declare_getcwd();
+                let malloc = self.get_or_declare_malloc();
+                let size = self.context.i64_type().const_int(1024, false);
+                let buf_call = self
+                    .builder
+                    .build_call(malloc, &[size.into()], "buf")
+                    .unwrap();
+                let buf = self.extract_call_value(buf_call).into_pointer_value();
+                self.builder
+                    .build_call(getcwd_fn, &[buf.into(), size.into()], "cwd")
+                    .unwrap();
+                Ok(Some(buf.into()))
+            }
+
+            // Math Functions (Extended)
+            "Math__random" => {
+                let rand_fn = self.get_or_declare_rand();
+                let res = self.builder.build_call(rand_fn, &[], "r").unwrap();
+                let val = self.extract_call_value(res).into_int_value();
+                let fval = self
+                    .builder
+                    .build_unsigned_int_to_float(val, self.context.f64_type(), "rf")
+                    .unwrap();
+                let rand_max = self.context.f64_type().const_float(32767.0);
+                let norm = self.builder.build_float_div(fval, rand_max, "rnd").unwrap();
+                Ok(Some(norm.into()))
+            }
+
+            "Math__pi" => Ok(Some(
+                self.context
+                    .f64_type()
+                    .const_float(std::f64::consts::PI)
+                    .into(),
+            )),
+            "Math__e" => Ok(Some(
+                self.context
+                    .f64_type()
+                    .const_float(std::f64::consts::E)
+                    .into(),
+            )),
+
             // Not a stdlib function
             _ => Ok(None),
         }
@@ -4696,6 +4843,27 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
+    fn get_or_declare_rand(&mut self) -> FunctionValue<'ctx> {
+        let name = "rand";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let fn_type = self.context.i32_type().fn_type(&[], false);
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn get_or_create_empty_string(&mut self) -> inkwell::values::PointerValue<'ctx> {
+        let name = "empty_string_const";
+        if let Some(g) = self.module.get_global(name) {
+            return g.as_pointer_value();
+        }
+        let val = self.context.const_string(b"", true);
+        let global = self.module.add_global(val.get_type(), None, name);
+        global.set_initializer(&val);
+        global.set_constant(true);
+        global.as_pointer_value()
+    }
+
     fn get_or_declare_time(&mut self) -> FunctionValue<'ctx> {
         let name = "time";
         if let Some(f) = self.module.get_function(name) {
@@ -4748,6 +4916,68 @@ impl<'ctx> Codegen<'ctx> {
             .context
             .i32_type()
             .fn_type(&[self.context.i32_type().into()], false);
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn get_or_declare_getenv(&mut self) -> FunctionValue<'ctx> {
+        let name = "getenv";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let fn_type = ptr.fn_type(&[ptr.into()], false);
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn get_or_declare_system(&mut self) -> FunctionValue<'ctx> {
+        let name = "system";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let fn_type = self.context.i32_type().fn_type(&[ptr.into()], false);
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn get_or_declare_popen(&mut self) -> FunctionValue<'ctx> {
+        #[cfg(windows)]
+        let name = "_popen";
+        #[cfg(not(windows))]
+        let name = "popen";
+
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let fn_type = ptr.fn_type(&[ptr.into(), ptr.into()], false);
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn get_or_declare_pclose(&mut self) -> FunctionValue<'ctx> {
+        #[cfg(windows)]
+        let name = "_pclose";
+        #[cfg(not(windows))]
+        let name = "pclose";
+
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let fn_type = self.context.i32_type().fn_type(&[ptr.into()], false);
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn get_or_declare_getcwd(&mut self) -> FunctionValue<'ctx> {
+        #[cfg(windows)]
+        let name = "_getcwd";
+        #[cfg(not(windows))]
+        let name = "getcwd";
+
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let fn_type = ptr.fn_type(&[ptr.into(), self.context.i64_type().into()], false);
         self.module.add_function(name, fn_type, None)
     }
 
