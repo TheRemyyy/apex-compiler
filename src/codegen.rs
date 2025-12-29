@@ -4099,6 +4099,32 @@ impl<'ctx> Codegen<'ctx> {
                 Ok(Some(self.extract_call_value(call)))
             }
 
+            "Math__random" => {
+                let rand_fn = self.get_or_declare_rand();
+                let res = self.builder.build_call(rand_fn, &[], "r").unwrap();
+                let val = self.extract_call_value(res).into_int_value();
+                let fval = self
+                    .builder
+                    .build_unsigned_int_to_float(val, self.context.f64_type(), "rf")
+                    .unwrap();
+                let rand_max = self.context.f64_type().const_float(32767.0);
+                let norm = self.builder.build_float_div(fval, rand_max, "rnd").unwrap();
+                Ok(Some(norm.into()))
+            }
+
+            "Math__pi" => Ok(Some(
+                self.context
+                    .f64_type()
+                    .const_float(std::f64::consts::PI)
+                    .into(),
+            )),
+            "Math__e" => Ok(Some(
+                self.context
+                    .f64_type()
+                    .const_float(std::f64::consts::E)
+                    .into(),
+            )),
+
             // Type conversion functions
             "to_float" => {
                 let val = self.compile_expr(&args[0].node)?;
@@ -4286,67 +4312,226 @@ impl<'ctx> Codegen<'ctx> {
 
             "Str__upper" => {
                 let s = self.compile_expr(&args[0].node)?;
-                let s_ptr = s.into_pointer_value();
-
-                let strlen_fn = self.get_or_declare_strlen();
-                let malloc_fn = self.get_or_declare_malloc();
                 let toupper_fn = self.get_or_declare_toupper();
+                self.compile_string_transform(s, toupper_fn).map(Some)
+            }
 
-                // 1. Get length
-                let len_call = self.builder.build_call(strlen_fn, &[s_ptr.into()], "len").unwrap();
+            "Str__lower" => {
+                let s = self.compile_expr(&args[0].node)?;
+                let tolower_fn = self.get_or_declare_tolower();
+                self.compile_string_transform(s, tolower_fn).map(Some)
+            }
+
+            "Str__trim" => {
+                let s = self.compile_expr(&args[0].node)?;
+                let s_ptr = s.into_pointer_value();
+                let strlen_fn = self.get_or_declare_strlen();
+                let isspace_fn = self.get_or_declare_isspace();
+                let malloc_fn = self.get_or_declare_malloc();
+                let strncpy_fn = self.get_or_declare_strncpy();
+
+                let len_call = self
+                    .builder
+                    .build_call(strlen_fn, &[s_ptr.into()], "len")
+                    .unwrap();
                 let len = self.extract_call_value(len_call).into_int_value();
 
-                // 2. Allocate new buffer (len + 1)
-                let one = self.context.i64_type().const_int(1, false);
-                let size = self.builder.build_int_add(len, one, "size").unwrap();
-                let buf_call = self.builder.build_call(malloc_fn, &[size.into()], "buf").unwrap();
+                // Find start (first non-space)
+                let start_ptr = self
+                    .builder
+                    .build_alloca(self.context.i64_type(), "start")
+                    .unwrap();
+                self.builder
+                    .build_store(start_ptr, self.context.i64_type().const_int(0, false))
+                    .unwrap();
+
+                let cur_fn = self.current_function.unwrap();
+                let start_cond = self.context.append_basic_block(cur_fn, "trim.start.cond");
+                let start_body = self.context.append_basic_block(cur_fn, "trim.start.body");
+                let start_after = self.context.append_basic_block(cur_fn, "trim.start.after");
+                self.builder.build_unconditional_branch(start_cond).unwrap();
+
+                self.builder.position_at_end(start_cond);
+                let start_val = self
+                    .builder
+                    .build_load(self.context.i64_type(), start_ptr, "s")
+                    .unwrap()
+                    .into_int_value();
+                let in_bounds = self
+                    .builder
+                    .build_int_compare(IntPredicate::SLT, start_val, len, "bounds")
+                    .unwrap();
+                let char_ptr = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), s_ptr, &[start_val], "")
+                        .unwrap()
+                };
+                let char_val = self
+                    .builder
+                    .build_load(self.context.i8_type(), char_ptr, "")
+                    .unwrap();
+                let char_i32 = self
+                    .builder
+                    .build_int_s_extend(char_val.into_int_value(), self.context.i32_type(), "")
+                    .unwrap();
+                let is_space_call = self
+                    .builder
+                    .build_call(isspace_fn, &[char_i32.into()], "")
+                    .unwrap();
+                let is_space = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        self.extract_call_value(is_space_call).into_int_value(),
+                        self.context.i32_type().const_int(0, false),
+                        "",
+                    )
+                    .unwrap();
+                let cond = self.builder.build_and(in_bounds, is_space, "").unwrap();
+                self.builder
+                    .build_conditional_branch(cond, start_body, start_after)
+                    .unwrap();
+
+                self.builder.position_at_end(start_body);
+                let next_start = self
+                    .builder
+                    .build_int_add(start_val, self.context.i64_type().const_int(1, false), "")
+                    .unwrap();
+                self.builder.build_store(start_ptr, next_start).unwrap();
+                self.builder.build_unconditional_branch(start_cond).unwrap();
+
+                self.builder.position_at_end(start_after);
+                let start_final = self
+                    .builder
+                    .build_load(self.context.i64_type(), start_ptr, "start_f")
+                    .unwrap()
+                    .into_int_value();
+
+                // Find end (last non-space)
+                let end_ptr = self
+                    .builder
+                    .build_alloca(self.context.i64_type(), "end")
+                    .unwrap();
+                self.builder.build_store(end_ptr, len).unwrap();
+
+                let end_cond = self.context.append_basic_block(cur_fn, "trim.end.cond");
+                let end_body = self.context.append_basic_block(cur_fn, "trim.end.body");
+                let end_after = self.context.append_basic_block(cur_fn, "trim.end.after");
+                self.builder.build_unconditional_branch(end_cond).unwrap();
+
+                self.builder.position_at_end(end_cond);
+                let end_val = self
+                    .builder
+                    .build_load(self.context.i64_type(), end_ptr, "e")
+                    .unwrap()
+                    .into_int_value();
+                let gt_start = self
+                    .builder
+                    .build_int_compare(IntPredicate::SGT, end_val, start_final, "gt_start")
+                    .unwrap();
+                let last_idx = self
+                    .builder
+                    .build_int_sub(end_val, self.context.i64_type().const_int(1, false), "")
+                    .unwrap();
+                let char_ptr = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), s_ptr, &[last_idx], "")
+                        .unwrap()
+                };
+                let char_val = self
+                    .builder
+                    .build_load(self.context.i8_type(), char_ptr, "")
+                    .unwrap();
+                let char_i32 = self
+                    .builder
+                    .build_int_s_extend(char_val.into_int_value(), self.context.i32_type(), "")
+                    .unwrap();
+                let is_space_call = self
+                    .builder
+                    .build_call(isspace_fn, &[char_i32.into()], "")
+                    .unwrap();
+                let is_space = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        self.extract_call_value(is_space_call).into_int_value(),
+                        self.context.i32_type().const_int(0, false),
+                        "",
+                    )
+                    .unwrap();
+                let cond = self.builder.build_and(gt_start, is_space, "").unwrap();
+                self.builder
+                    .build_conditional_branch(cond, end_body, end_after)
+                    .unwrap();
+
+                self.builder.position_at_end(end_body);
+                let next_end = self
+                    .builder
+                    .build_int_sub(end_val, self.context.i64_type().const_int(1, false), "")
+                    .unwrap();
+                self.builder.build_store(end_ptr, next_end).unwrap();
+                self.builder.build_unconditional_branch(end_cond).unwrap();
+
+                self.builder.position_at_end(end_after);
+                let end_final = self
+                    .builder
+                    .build_load(self.context.i64_type(), end_ptr, "end_f")
+                    .unwrap()
+                    .into_int_value();
+
+                // Allocate and copy result
+                let new_len = self
+                    .builder
+                    .build_int_sub(end_final, start_final, "new_len")
+                    .unwrap();
+                let alloc_size = self
+                    .builder
+                    .build_int_add(new_len, self.context.i64_type().const_int(1, false), "alloc")
+                    .unwrap();
+                let buf_call = self
+                    .builder
+                    .build_call(malloc_fn, &[alloc_size.into()], "buf")
+                    .unwrap();
                 let buf = self.extract_call_value(buf_call).into_pointer_value();
 
-                // 3. Loop through characters
-                let current_fn = self.current_function.unwrap();
-                let cond_bb = self.context.append_basic_block(current_fn, "upper.cond");
-                let body_bb = self.context.append_basic_block(current_fn, "upper.body");
-                let after_bb = self.context.append_basic_block(current_fn, "upper.after");
+                let src_ptr = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), s_ptr, &[start_final], "src")
+                        .unwrap()
+                };
+                self.builder
+                    .build_call(
+                        strncpy_fn,
+                        &[buf.into(), src_ptr.into(), new_len.into()],
+                        "",
+                    )
+                    .unwrap();
 
-                let index_ptr = self.builder.build_alloca(self.context.i64_type(), "i").unwrap();
-                self.builder.build_store(index_ptr, self.context.i64_type().const_int(0, false)).unwrap();
-
-                self.builder.build_unconditional_branch(cond_bb).unwrap();
-
-                // Condition: i < len
-                self.builder.position_at_end(cond_bb);
-                let i = self.builder.build_load(self.context.i64_type(), index_ptr, "i").unwrap().into_int_value();
-                let cond = self.builder.build_int_compare(IntPredicate::SLT, i, len, "cmp").unwrap();
-                self.builder.build_conditional_branch(cond, body_bb, after_bb).unwrap();
-
-                // Body
-                self.builder.position_at_end(body_bb);
-                
-                // char = s[i]
-                let char_ptr = unsafe { self.builder.build_gep(self.context.i8_type(), s_ptr, &[i], "char_ptr").unwrap() };
-                let char_val = self.builder.build_load(self.context.i8_type(), char_ptr, "char").unwrap();
-                
-                // upper_char = toupper(char)
-                let char_i32 = self.builder.build_int_s_extend(char_val.into_int_value(), self.context.i32_type(), "char32").unwrap();
-                let upper_call = self.builder.build_call(toupper_fn, &[char_i32.into()], "upper_char32").unwrap();
-                let upper_char32 = self.extract_call_value(upper_call).into_int_value();
-                let upper_char = self.builder.build_int_truncate(upper_char32, self.context.i8_type(), "upper_char").unwrap();
-                
-                // buf[i] = upper_char
-                let dest_ptr = unsafe { self.builder.build_gep(self.context.i8_type(), buf, &[i], "dest_ptr").unwrap() };
-                self.builder.build_store(dest_ptr, upper_char).unwrap();
-
-                // i = i + 1
-                let next_i = self.builder.build_int_add(i, one, "next_i").unwrap();
-                self.builder.build_store(index_ptr, next_i).unwrap();
-                self.builder.build_unconditional_branch(cond_bb).unwrap();
-
-                // After loop: null terminate
-                self.builder.position_at_end(after_bb);
-                let term_ptr = unsafe { self.builder.build_gep(self.context.i8_type(), buf, &[len], "term_ptr").unwrap() };
-                self.builder.build_store(term_ptr, self.context.i8_type().const_int(0, false)).unwrap();
+                // Null terminate
+                let term_ptr = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), buf, &[new_len], "")
+                        .unwrap()
+                };
+                self.builder
+                    .build_store(term_ptr, self.context.i8_type().const_int(0, false))
+                    .unwrap();
 
                 Ok(Some(buf.into()))
+            }
+
+            "Str__contains" => {
+                let s = self.compile_expr(&args[0].node)?;
+                let sub = self.compile_expr(&args[1].node)?;
+                let strstr = self.get_or_declare_strstr();
+                let res = self
+                    .builder
+                    .build_call(strstr, &[s.into(), sub.into()], "pos")
+                    .unwrap();
+                let ptr = self.extract_call_value(res).into_pointer_value();
+                let is_null = self.builder.build_is_null(ptr, "not_found").unwrap();
+                let found = self.builder.build_not(is_null, "found").unwrap();
+                Ok(Some(found.into()))
             }
 
             // I/O functions
@@ -4873,33 +5058,6 @@ impl<'ctx> Codegen<'ctx> {
                 Ok(Some(buf.into()))
             }
 
-            // Math Functions (Extended)
-            "Math__random" => {
-                let rand_fn = self.get_or_declare_rand();
-                let res = self.builder.build_call(rand_fn, &[], "r").unwrap();
-                let val = self.extract_call_value(res).into_int_value();
-                let fval = self
-                    .builder
-                    .build_unsigned_int_to_float(val, self.context.f64_type(), "rf")
-                    .unwrap();
-                let rand_max = self.context.f64_type().const_float(32767.0);
-                let norm = self.builder.build_float_div(fval, rand_max, "rnd").unwrap();
-                Ok(Some(norm.into()))
-            }
-
-            "Math__pi" => Ok(Some(
-                self.context
-                    .f64_type()
-                    .const_float(std::f64::consts::PI)
-                    .into(),
-            )),
-            "Math__e" => Ok(Some(
-                self.context
-                    .f64_type()
-                    .const_float(std::f64::consts::E)
-                    .into(),
-            )),
-
             // Args Functions
             "Args__count" => {
                 let argc_global = self.module.get_global("_apex_argc").unwrap();
@@ -5078,6 +5236,51 @@ impl<'ctx> Codegen<'ctx> {
             .context
             .i32_type()
             .fn_type(&[self.context.i32_type().into()], false);
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn get_or_declare_tolower(&mut self) -> FunctionValue<'ctx> {
+        let name = "tolower";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let fn_type = self
+            .context
+            .i32_type()
+            .fn_type(&[self.context.i32_type().into()], false);
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn get_or_declare_isspace(&mut self) -> FunctionValue<'ctx> {
+        let name = "isspace";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let fn_type = self
+            .context
+            .i32_type()
+            .fn_type(&[self.context.i32_type().into()], false);
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn get_or_declare_strstr(&mut self) -> FunctionValue<'ctx> {
+        let name = "strstr";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let fn_type = ptr.fn_type(&[ptr.into(), ptr.into()], false);
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn get_or_declare_strncpy(&mut self) -> FunctionValue<'ctx> {
+        let name = "strncpy";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let size_t = self.context.i64_type();
+        let fn_type = ptr.fn_type(&[ptr.into(), ptr.into(), size_t.into()], false);
         self.module.add_function(name, fn_type, None)
     }
 
@@ -5353,6 +5556,107 @@ impl<'ctx> Codegen<'ctx> {
             ValueKind::Basic(val) => val,
             _ => panic!("Expected call to return a value"),
         }
+    }
+
+    /// Helper to transform a string character by character using a C function (like toupper/tolower)
+    fn compile_string_transform(
+        &mut self,
+        s: BasicValueEnum<'ctx>,
+        transform_fn: FunctionValue<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>> {
+        let s_ptr = s.into_pointer_value();
+        let strlen_fn = self.get_or_declare_strlen();
+        let malloc_fn = self.get_or_declare_malloc();
+
+        let len_call = self
+            .builder
+            .build_call(strlen_fn, &[s_ptr.into()], "len")
+            .unwrap();
+        let len = self.extract_call_value(len_call).into_int_value();
+
+        let one = self.context.i64_type().const_int(1, false);
+        let size = self.builder.build_int_add(len, one, "size").unwrap();
+        let buf_call = self
+            .builder
+            .build_call(malloc_fn, &[size.into()], "buf")
+            .unwrap();
+        let buf = self.extract_call_value(buf_call).into_pointer_value();
+
+        let current_fn = self.current_function.unwrap();
+        let cond_bb = self.context.append_basic_block(current_fn, "trans.cond");
+        let body_bb = self.context.append_basic_block(current_fn, "trans.body");
+        let after_bb = self.context.append_basic_block(current_fn, "trans.after");
+
+        let index_ptr = self
+            .builder
+            .build_alloca(self.context.i64_type(), "i")
+            .unwrap();
+        self.builder
+            .build_store(index_ptr, self.context.i64_type().const_int(0, false))
+            .unwrap();
+        self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+        self.builder.position_at_end(cond_bb);
+        let i = self
+            .builder
+            .build_load(self.context.i64_type(), index_ptr, "i")
+            .unwrap()
+            .into_int_value();
+        let cond = self
+            .builder
+            .build_int_compare(IntPredicate::SLT, i, len, "cmp")
+            .unwrap();
+        self.builder
+            .build_conditional_branch(cond, body_bb, after_bb)
+            .unwrap();
+
+        self.builder.position_at_end(body_bb);
+        let char_ptr = unsafe {
+            self.builder
+                .build_gep(self.context.i8_type(), s_ptr, &[i], "char_ptr")
+                .unwrap()
+        };
+        let char_val = self
+            .builder
+            .build_load(self.context.i8_type(), char_ptr, "char")
+            .unwrap();
+        let char_i32 = self
+            .builder
+            .build_int_s_extend(char_val.into_int_value(), self.context.i32_type(), "c32")
+            .unwrap();
+
+        let trans_call = self
+            .builder
+            .build_call(transform_fn, &[char_i32.into()], "t32")
+            .unwrap();
+        let trans_val32 = self.extract_call_value(trans_call).into_int_value();
+        let trans_val = self
+            .builder
+            .build_int_truncate(trans_val32, self.context.i8_type(), "t8")
+            .unwrap();
+
+        let dest_ptr = unsafe {
+            self.builder
+                .build_gep(self.context.i8_type(), buf, &[i], "dest_ptr")
+                .unwrap()
+        };
+        self.builder.build_store(dest_ptr, trans_val).unwrap();
+
+        let next_i = self.builder.build_int_add(i, one, "next_i").unwrap();
+        self.builder.build_store(index_ptr, next_i).unwrap();
+        self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+        self.builder.position_at_end(after_bb);
+        let term_ptr = unsafe {
+            self.builder
+                .build_gep(self.context.i8_type(), buf, &[len], "term_ptr")
+                .unwrap()
+        };
+        self.builder
+            .build_store(term_ptr, self.context.i8_type().const_int(0, false))
+            .unwrap();
+
+        Ok(buf.into())
     }
 
     // === Borrow/Deref ===

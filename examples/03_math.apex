@@ -82,6 +82,15 @@ function main(): None {
     println("ceil(3.2) = 4.0");
     println("round(3.5) = 4.0");
 
+    // Math constants
+    pi: Float = Math.pi();
+    e: Float = Math.e();
+    println("Math constants (PI, E) defined");
+
+    // Random numbers
+    r: Float = Math.random();
+    println("Random number generation works");
+
     // Type conversion
     int_val: Integer = to_int(3.7);
     float_val: Float = to_float(42);

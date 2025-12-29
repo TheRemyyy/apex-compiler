@@ -1190,6 +1190,37 @@ impl TypeChecker {
                 }
                 Some(ResolvedType::String)
             }
+            "Str__lower" => {
+                self.check_arg_count(name, args, 1, span.clone());
+                if !args.is_empty() {
+                    let t = self.check_expr(&args[0].node, args[0].span.clone());
+                    if !matches!(t, ResolvedType::String) {
+                        self.error("Str.lower() requires String".to_string(), span.clone());
+                    }
+                }
+                Some(ResolvedType::String)
+            }
+            "Str__trim" => {
+                self.check_arg_count(name, args, 1, span.clone());
+                if !args.is_empty() {
+                    let t = self.check_expr(&args[0].node, args[0].span.clone());
+                    if !matches!(t, ResolvedType::String) {
+                        self.error("Str.trim() requires String".to_string(), span.clone());
+                    }
+                }
+                Some(ResolvedType::String)
+            }
+            "Str__contains" => {
+                self.check_arg_count(name, args, 2, span.clone());
+                if args.len() >= 2 {
+                    let t1 = self.check_expr(&args[0].node, args[0].span.clone());
+                    let t2 = self.check_expr(&args[1].node, args[1].span.clone());
+                    if !matches!(t1, ResolvedType::String) || !matches!(t2, ResolvedType::String) {
+                        self.error("Str.contains() requires two String arguments".to_string(), span.clone());
+                    }
+                }
+                Some(ResolvedType::Boolean)
+            }
             "System__exit" => {
                 self.check_arg_count(name, args, 1, span.clone());
                 if !args.is_empty() {
