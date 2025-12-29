@@ -150,7 +150,7 @@ class HintGenerator {
 
     function generateHint(target: Integer, guess: Integer): String {
         this.hintsUsed = this.hintsUsed + 1;
-        diff: Integer = abs(target - guess);
+        diff: Integer = Math.abs(target - guess);
 
         if (diff > 50) {
             return "Very far!";

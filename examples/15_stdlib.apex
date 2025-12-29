@@ -19,49 +19,50 @@ function testMathFunctions(): None {
     println("=== Math Functions ===");
 
     // abs - absolute value
-    absInt: Integer = abs(-42);
-    absFloat: Float = abs(-3.14);
+    absInt: Integer = Math.abs(-42);
+    absFloat: Float = Math.abs(-3.14);
     println("abs(-42) = 42");
     println("abs(-3.14) = 3.14");
 
     // min/max
-    minVal: Integer = min(10, 5);
-    maxVal: Integer = max(10, 5);
+    minVal: Integer = Math.min(10, 5);
+    maxVal: Integer = Math.max(10, 5);
     println("min(10, 5) = 5");
     println("max(10, 5) = 10");
 
     // sqrt - square root
-    sqrtVal: Float = sqrt(16.0);
+    sqrtVal: Float = Math.sqrt(16.0);
     println("sqrt(16.0) = 4.0");
 
     // pow - power
-    powVal: Float = pow(2.0, 8.0);
+    powVal: Float = Math.pow(2.0, 8.0);
     println("pow(2.0, 8.0) = 256.0");
 
     // Trigonometric functions
-    sinVal: Float = sin(0.0);
-    cosVal: Float = cos(0.0);
-    tanVal: Float = tan(0.0);
+    sinVal: Float = Math.sin(0.0);
+    cosVal: Float = Math.cos(0.0);
+    tanVal: Float = Math.tan(0.0);
     println("sin(0) = 0.0");
     println("cos(0) = 1.0");
     println("tan(0) = 0.0");
 
     // Rounding functions
-    floorVal: Float = floor(3.7);
-    ceilVal: Float = ceil(3.2);
-    roundVal: Float = round(3.5);
+    floorVal: Float = Math.floor(3.7);
+    ceilVal: Float = Math.ceil(3.2);
+    roundVal: Float = Math.round(3.5);
     println("floor(3.7) = 3.0");
     println("ceil(3.2) = 4.0");
-    println("round(3.5) = 4.0");
+    roundStr: String = "round(3.5) = 4.0";
+    println(roundStr);
 
     // Logarithms
-    logVal: Float = log(2.718281828);
-    log10Val: Float = log10(100.0);
+    logVal: Float = Math.log(2.718281828);
+    log10Val: Float = Math.log10(100.0);
     println("log(e) ~ 1.0");
     println("log10(100) = 2.0");
 
     // Exponential
-    expVal: Float = exp(1.0);
+    expVal: Float = Math.exp(1.0);
     println("exp(1) ~ 2.718...");
 
     return None;

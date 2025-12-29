@@ -42,7 +42,7 @@ class Calculator {
 
     // Advanced operations
     function power(base: Float, exp: Float): Float {
-        result: Float = pow(base, exp);
+        result: Float = Math.pow(base, exp);
         this.lastResult = result;
         return result;
     }
@@ -52,70 +52,70 @@ class Calculator {
             println("Error: Cannot take square root of negative number!");
             return 0.0;
         }
-        result: Float = sqrt(x);
+        result: Float = Math.sqrt(x);
         this.lastResult = result;
         return result;
     }
 
     function absolute(x: Float): Float {
-        result: Float = abs(x);
+        result: Float = Math.abs(x);
         this.lastResult = result;
         return result;
     }
 
     // Trigonometric functions
     function sine(x: Float): Float {
-        result: Float = sin(x);
+        result: Float = Math.sin(x);
         this.lastResult = result;
         return result;
     }
 
     function cosine(x: Float): Float {
-        result: Float = cos(x);
+        result: Float = Math.cos(x);
         this.lastResult = result;
         return result;
     }
 
     function tangent(x: Float): Float {
-        result: Float = tan(x);
+        result: Float = Math.tan(x);
         this.lastResult = result;
         return result;
     }
 
     // Logarithmic functions
     function naturalLog(x: Float): Float {
-        result: Float = log(x);
+        result: Float = Math.log(x);
         this.lastResult = result;
         return result;
     }
 
     function log10(x: Float): Float {
-        result: Float = log10(x);
+        result: Float = Math.log10(x);
         this.lastResult = result;
         return result;
     }
 
     function exponential(x: Float): Float {
-        result: Float = exp(x);
+        result: Float = Math.exp(x);
         this.lastResult = result;
         return result;
     }
 
     // Rounding functions
     function roundDown(x: Float): Float {
-        result: Float = floor(x);
+        result: Float = Math.floor(x);
         this.lastResult = result;
         return result;
     }
 
     function roundUp(x: Float): Float {
-        result: Float = ceil(x);
+        result: Float = Math.ceil(x);
         this.lastResult = result;
         return result;
     }
 
     function roundNearest(x: Float): Float {
-        result: Float = round(x);
+        result: Float = Math.round(x);
         this.lastResult = result;
         return result;
     }

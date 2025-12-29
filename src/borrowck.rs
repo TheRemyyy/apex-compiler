@@ -452,6 +452,20 @@ impl BorrowChecker {
                             | "System__getenv"
                             | "System__shell"
                             | "System__exec"
+                            | "Math__abs"
+                            | "Math__min"
+                            | "Math__max"
+                            | "Math__sqrt"
+                            | "Math__pow"
+                            | "Math__sin"
+                            | "Math__cos"
+                            | "Math__tan"
+                            | "Math__floor"
+                            | "Math__ceil"
+                            | "Math__round"
+                            | "Math__log"
+                            | "Math__log10"
+                            | "Math__exp"
                     ) {
                         param_modes = vec![ParamMode::Borrow; args.len()];
                     } else if let Some(modes) = self.functions.get(name) {

@@ -3757,7 +3757,7 @@ impl<'ctx> Codegen<'ctx> {
     ) -> Result<Option<BasicValueEnum<'ctx>>> {
         match name {
             // Math functions
-            "abs" => {
+            "Math__abs" => {
                 let val = self.compile_expr(&args[0].node)?;
                 if val.is_int_value() {
                     let v = val.into_int_value();
@@ -3779,7 +3779,7 @@ impl<'ctx> Codegen<'ctx> {
                     Ok(Some(self.extract_call_value(call)))
                 }
             }
-            "min" => {
+            "Math__min" => {
                 let a = self.compile_expr(&args[0].node)?;
                 let b = self.compile_expr(&args[1].node)?;
                 if a.is_int_value() {
@@ -3800,7 +3800,7 @@ impl<'ctx> Codegen<'ctx> {
                     Ok(Some(self.extract_call_value(call)))
                 }
             }
-            "max" => {
+            "Math__max" => {
                 let a = self.compile_expr(&args[0].node)?;
                 let b = self.compile_expr(&args[1].node)?;
                 if a.is_int_value() {
@@ -3821,7 +3821,7 @@ impl<'ctx> Codegen<'ctx> {
                     Ok(Some(self.extract_call_value(call)))
                 }
             }
-            "sqrt" => {
+            "Math__sqrt" => {
                 let val = self.compile_expr(&args[0].node)?;
                 let sqrt = self.get_or_declare_math_func("sqrt", true);
                 let fval = if val.is_int_value() {
@@ -3842,7 +3842,7 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
                 Ok(Some(self.extract_call_value(call)))
             }
-            "pow" => {
+            "Math__pow" => {
                 let base = self.compile_expr(&args[0].node)?;
                 let exp = self.compile_expr(&args[1].node)?;
                 let pow_fn = self.get_or_declare_math_func2("pow");
@@ -3876,7 +3876,7 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
                 Ok(Some(self.extract_call_value(call)))
             }
-            "sin" => {
+            "Math__sin" => {
                 let val = self.compile_expr(&args[0].node)?;
                 let sin_fn = self.get_or_declare_math_func("sin", true);
                 let fval = if val.is_int_value() {
@@ -3897,7 +3897,7 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
                 Ok(Some(self.extract_call_value(call)))
             }
-            "cos" => {
+            "Math__cos" => {
                 let val = self.compile_expr(&args[0].node)?;
                 let cos_fn = self.get_or_declare_math_func("cos", true);
                 let fval = if val.is_int_value() {
@@ -3918,7 +3918,7 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
                 Ok(Some(self.extract_call_value(call)))
             }
-            "tan" => {
+            "Math__tan" => {
                 let val = self.compile_expr(&args[0].node)?;
                 let tan_fn = self.get_or_declare_math_func("tan", true);
                 let fval = if val.is_int_value() {
@@ -3939,7 +3939,7 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
                 Ok(Some(self.extract_call_value(call)))
             }
-            "floor" => {
+            "Math__floor" => {
                 let val = self.compile_expr(&args[0].node)?;
                 let floor_fn = self.get_or_declare_math_func("floor", true);
                 let call = self
@@ -3948,7 +3948,7 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
                 Ok(Some(self.extract_call_value(call)))
             }
-            "ceil" => {
+            "Math__ceil" => {
                 let val = self.compile_expr(&args[0].node)?;
                 let ceil_fn = self.get_or_declare_math_func("ceil", true);
                 let call = self
@@ -3957,7 +3957,7 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
                 Ok(Some(self.extract_call_value(call)))
             }
-            "round" => {
+            "Math__round" => {
                 let val = self.compile_expr(&args[0].node)?;
                 let round_fn = self.get_or_declare_math_func("round", true);
                 let call = self
@@ -3966,7 +3966,7 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
                 Ok(Some(self.extract_call_value(call)))
             }
-            "log" => {
+            "Math__log" => {
                 let val = self.compile_expr(&args[0].node)?;
                 let log_fn = self.get_or_declare_math_func("log", true);
                 let fval = if val.is_int_value() {
@@ -3987,7 +3987,7 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
                 Ok(Some(self.extract_call_value(call)))
             }
-            "log10" => {
+            "Math__log10" => {
                 let val = self.compile_expr(&args[0].node)?;
                 let log10_fn = self.get_or_declare_math_func("log10", true);
                 let fval = if val.is_int_value() {
@@ -4008,7 +4008,7 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
                 Ok(Some(self.extract_call_value(call)))
             }
-            "exp" => {
+            "Math__exp" => {
                 let val = self.compile_expr(&args[0].node)?;
                 let exp_fn = self.get_or_declare_math_func("exp", true);
                 let fval = if val.is_int_value() {

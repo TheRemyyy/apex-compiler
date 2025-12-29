@@ -59,21 +59,21 @@ function main(): None {
     println("Complex expression: (2+3)*4-6/2 = 17");
 
     // Built-in math functions
-    abs_val: Integer = abs(-42);
-    min_val: Integer = min(10, 5);
-    max_val: Integer = max(10, 5);
+    abs_val: Integer = Math.abs(-42);
+    min_val: Integer = Math.min(10, 5);
+    max_val: Integer = Math.max(10, 5);
     println("abs(-42) = 42");
     println("min(10, 5) = 5");
     println("max(10, 5) = 10");
 
     // Float math functions
-    sqrt_val: Float = sqrt(16.0);
-    pow_val: Float = pow(2.0, 3.0);
-    sin_val: Float = sin(0.0);
-    cos_val: Float = cos(0.0);
-    floor_val: Float = floor(3.7);
-    ceil_val: Float = ceil(3.2);
-    round_val: Float = round(3.5);
+    sqrt_val: Float = Math.sqrt(16.0);
+    pow_val: Float = Math.pow(2.0, 3.0);
+    sin_val: Float = Math.sin(0.0);
+    cos_val: Float = Math.cos(0.0);
+    floor_val: Float = Math.floor(3.7);
+    ceil_val: Float = Math.ceil(3.2);
+    round_val: Float = Math.round(3.5);
     println("sqrt(16) = 4.0");
     println("pow(2, 3) = 8.0");
     println("sin(0) = 0.0");

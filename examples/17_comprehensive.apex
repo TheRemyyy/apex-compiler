@@ -153,9 +153,9 @@ function main(): None {
     println("10 % 3 = {rem}");
 
     // Built-in math
-    sqrtVal: Float = sqrt(16.0);
-    powVal: Float = pow(2.0, 3.0);
-    absVal: Integer = abs(-42);
+    sqrtVal: Float = Math.sqrt(16.0);
+    powVal: Float = Math.pow(2.0, 3.0);
+    absVal: Integer = Math.abs(-42);
     println("sqrt(16) = 4");
     println("pow(2,3) = 8");
     println("abs(-42) = 42");

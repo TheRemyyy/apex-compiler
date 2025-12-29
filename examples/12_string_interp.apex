@@ -53,7 +53,7 @@ function main(): None {
 
     // Interpolation with function calls
     num: Integer = -5;
-    absStr: String = "Absolute value of {num} is {abs(num)}";
+    absStr: String = "Absolute value of {num} is {Math.abs(num)}";
     println(absStr);
 
     // Conditional expression (simulated)

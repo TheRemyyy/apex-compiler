@@ -20,7 +20,7 @@ class Point {
     }
 
     function distance(): Float {
-        dist: Float = sqrt(to_float(this.x * this.x + this.y * this.y));
+        dist: Float = Math.sqrt(to_float(this.x * this.x + this.y * this.y));
         return dist;
     }
 }

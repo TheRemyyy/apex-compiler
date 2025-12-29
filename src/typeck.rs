@@ -1077,26 +1077,27 @@ impl TypeChecker {
                 }
                 Some(ResolvedType::None)
             }
-            "abs" => {
+            "Math__abs" => {
                 self.check_arg_count(name, args, 1, span.clone());
                 if !args.is_empty() {
                     let t = self.check_expr(&args[0].node, args[0].span.clone());
                     if !t.is_numeric() {
-                        self.error(format!("abs() requires numeric type, got {}", t), span);
+                        self.error(format!("Math.abs() requires numeric type, got {}", t), span);
                     }
                     Some(t)
                 } else {
                     Some(ResolvedType::Unknown)
                 }
             }
-            "min" | "max" => {
+            "Math__min" | "Math__max" => {
+                let func_name = if name.contains("min") { "Math.min" } else { "Math.max" };
                 self.check_arg_count(name, args, 2, span.clone());
                 if args.len() >= 2 {
                     let t1 = self.check_expr(&args[0].node, args[0].span.clone());
                     let t2 = self.check_expr(&args[1].node, args[1].span.clone());
                     if !self.types_compatible(&t1, &t2) {
                         self.error(
-                            format!("{}() arguments must have same type: {} vs {}", name, t1, t2),
+                            format!("{}() arguments must have same type: {} vs {}", func_name, t1, t2),
                             span,
                         );
                     }
@@ -1105,24 +1106,24 @@ impl TypeChecker {
                     Some(ResolvedType::Unknown)
                 }
             }
-            "sqrt" | "sin" | "cos" | "tan" | "floor" | "ceil" | "round" | "log" | "log10"
-            | "exp" => {
+            "Math__sqrt" | "Math__sin" | "Math__cos" | "Math__tan" | "Math__floor" | "Math__ceil" | "Math__round" | "Math__log" | "Math__log10"
+            | "Math__exp" => {
                 self.check_arg_count(name, args, 1, span.clone());
                 if !args.is_empty() {
                     let t = self.check_expr(&args[0].node, args[0].span.clone());
                     if !t.is_numeric() {
-                        self.error(format!("{}() requires numeric type, got {}", name, t), span);
+                        self.error(format!("{}() requires numeric type, got {}", name.replace("__", "."), t), span);
                     }
                 }
                 Some(ResolvedType::Float)
             }
-            "pow" => {
+            "Math__pow" => {
                 self.check_arg_count(name, args, 2, span.clone());
                 if args.len() >= 2 {
                     let t1 = self.check_expr(&args[0].node, args[0].span.clone());
                     let t2 = self.check_expr(&args[1].node, args[1].span.clone());
                     if !t1.is_numeric() || !t2.is_numeric() {
-                        self.error("pow() requires numeric types".to_string(), span);
+                        self.error("Math.pow() requires numeric types".to_string(), span);
                     }
                 }
                 Some(ResolvedType::Float)

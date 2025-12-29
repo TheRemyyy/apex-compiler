@@ -195,14 +195,14 @@ module Bank {
 
     function calculateCompoundInterest(principal: Float, rate: Float, years: Integer): Float {
         // A = P(1 + r)^n
-        factor: Float = pow(1.0 + rate, to_float(years));
+        factor: Float = Math.pow(1.0 + rate, to_float(years));
         return principal * factor;
     }
 
     function calculateLoanPayment(principal: Float, rate: Float, months: Integer): Float {
         // Simplified monthly payment calculation
         monthlyRate: Float = rate / 12.0;
-        payment: Float = principal * (monthlyRate / (1.0 - pow(1.0 + monthlyRate, to_float(-months))));
+        payment: Float = principal * (monthlyRate / (1.0 - Math.pow(1.0 + monthlyRate, to_float(-months))));
         return payment;
     }
 }
