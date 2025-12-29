@@ -2,6 +2,8 @@
 
 # Apex Programming Language
 
+[![Website](https://img.shields.io/badge/Website-apex--compiler.vercel.app-white?style=flat-square&logo=vercel)](https://apex-compiler.vercel.app/)
+
 **Modern Systems Programming with Safety and Performance**
 
 [![Rust](https://img.shields.io/badge/Rust-1.83+-orange.svg?style=flat-square)](https://www.rust-lang.org/)
