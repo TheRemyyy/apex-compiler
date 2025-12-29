@@ -435,17 +435,32 @@ impl BorrowChecker {
                 // Get param modes if possible
                 let mut param_modes = Vec::new();
                 if let Expr::Ident(name) = &callee.node {
-                    if let Some(modes) = self.functions.get(name) {
+                    // Stdlib functions that should borrow
+                    if matches!(name.as_str(), 
+                        "strlen" | "strcmp" | "strcat" | "print" | "println" | 
+                        "File__exists" | "File__read" | "File__write" | "File__delete"
+                    ) {
+                        param_modes = vec![ParamMode::Borrow; args.len()];
+                    } else if let Some(modes) = self.functions.get(name) {
                         param_modes = modes.clone();
                     }
-                } else if let Expr::Field { object: _, field } = &callee.node {
+                } else if let Expr::Field { object, field } = &callee.node {
+                    // Check for File static methods
+                    if let Expr::Ident(name) = &object.node {
+                        if name == "File" {
+                            param_modes = vec![ParamMode::Borrow; args.len()];
+                        }
+                    }
+
                     // Method call - ideally we'd know the type of object
                     // For now, look for any method with this name across all classes
                     // (heuristic until we have full type info in borrowck)
-                    for class_sig in self.classes.values() {
-                        if let Some(modes) = class_sig.methods.get(field) {
-                            param_modes = modes.clone();
-                            break;
+                    if param_modes.is_empty() {
+                        for class_sig in self.classes.values() {
+                            if let Some(modes) = class_sig.methods.get(field) {
+                                param_modes = modes.clone();
+                                break;
+                            }
                         }
                     }
                 }

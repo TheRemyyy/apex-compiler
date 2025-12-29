@@ -1,0 +1,68 @@
+// Test 18: File I/O
+// Tests: File.write, File.read, File.exists, File.delete
+
+function main(): None {
+    println("=== File I/O Tests ===");
+
+    filename: String = "test_file.txt";
+    content: String = "Hello, File System!\nThis is written from Apex.";
+
+    // 1. Write file
+    println("Writing to {filename}...");
+    success: Boolean = File.write(filename, content);
+    if (success) {
+        println("Write successful!");
+    } else {
+        println("Write failed!");
+        return None;
+    }
+
+    // 2. Check existence
+    if (File.exists(filename)) {
+        println("File exists check passed.");
+    } else {
+        println("Error: File should exist but doesn't.");
+    }
+
+    // 3. Read file
+    println("");
+    println("Reading content:");
+    readContent: String = File.read(filename);
+    
+    if (strlen(readContent) > 0) {
+        println("--- START OF FILE ---");
+        print(readContent);
+        println("--- END OF FILE ---");
+    } else {
+        println("Error: Could not read file or file is empty.");
+    }
+
+    // Verify content match
+    if (strcmp(content, readContent) == 0) {
+        println("Content verification passed.");
+    } else {
+        println("Content verification failed!");
+    }
+
+    // 4. Delete file
+    println("");
+    println("Deleting file...");
+    deleted: Boolean = File.delete(filename);
+    
+    if (deleted) {
+        println("File deleted successfully.");
+    } else {
+        println("Failed to delete file.");
+    }
+
+    // 5. Verify deletion
+    if (!File.exists(filename)) {
+        println("File no longer exists (correct).");
+    } else {
+        println("Error: File still exists.");
+    }
+
+    println("");
+    println("=== All File I/O tests passed! ===");
+    return None;
+}

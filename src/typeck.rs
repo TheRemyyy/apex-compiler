@@ -1011,6 +1011,16 @@ impl TypeChecker {
 
         // 2. Method call
         if let Expr::Field { object, field } = callee {
+            // Special handling for File.method() static calls
+            if let Expr::Ident(name) = &object.node {
+                if name == "File" {
+                    let builtin_name = format!("File__{}", field);
+                    if let Some(ret) = self.check_builtin_call(&builtin_name, args, span.clone()) {
+                        return ret;
+                    }
+                }
+            }
+
             let obj_type = self.check_expr(&object.node, object.span.clone());
             return self.check_method_call(&obj_type, field, args, span);
         }
@@ -1178,6 +1188,51 @@ impl TypeChecker {
                     }
                 }
                 Some(ResolvedType::None)
+            }
+            // File I/O
+            "File__read" => {
+                self.check_arg_count(name, args, 1, span.clone());
+                if !args.is_empty() {
+                    let t = self.check_expr(&args[0].node, args[0].span.clone());
+                    if !matches!(t, ResolvedType::String) {
+                        self.error(format!("File.read() requires String path, got {}", t), span);
+                    }
+                }
+                Some(ResolvedType::String)
+            }
+            "File__write" => {
+                self.check_arg_count(name, args, 2, span.clone());
+                if args.len() >= 2 {
+                    let path_t = self.check_expr(&args[0].node, args[0].span.clone());
+                    let content_t = self.check_expr(&args[1].node, args[1].span.clone());
+                    if !matches!(path_t, ResolvedType::String) {
+                        self.error("File.write() path must be String".to_string(), args[0].span.clone());
+                    }
+                    if !matches!(content_t, ResolvedType::String) {
+                        self.error("File.write() content must be String".to_string(), args[1].span.clone());
+                    }
+                }
+                Some(ResolvedType::Boolean)
+            }
+            "File__exists" => {
+                self.check_arg_count(name, args, 1, span.clone());
+                if !args.is_empty() {
+                    let t = self.check_expr(&args[0].node, args[0].span.clone());
+                    if !matches!(t, ResolvedType::String) {
+                        self.error(format!("File.exists() requires String path, got {}", t), span);
+                    }
+                }
+                Some(ResolvedType::Boolean)
+            }
+            "File__delete" => {
+                self.check_arg_count(name, args, 1, span.clone());
+                if !args.is_empty() {
+                    let t = self.check_expr(&args[0].node, args[0].span.clone());
+                    if !matches!(t, ResolvedType::String) {
+                        self.error(format!("File.delete() requires String path, got {}", t), span);
+                    }
+                }
+                Some(ResolvedType::Boolean)
             }
             _ => None,
         }
