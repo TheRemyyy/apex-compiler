@@ -4251,7 +4251,7 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
                 let file_ptr = self.extract_call_value(file_call).into_pointer_value();
 
-                let null = self.context.ptr_type(AddressSpace::default()).const_null();
+                let _null = self.context.ptr_type(AddressSpace::default()).const_null();
                 let is_null = self.builder.build_is_null(file_ptr, "is_null").unwrap();
 
                 let success_block = self
