@@ -4,3 +4,4 @@ target/
 *.o
 web/node_modules
 web/dist
+.idea/
