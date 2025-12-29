@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+﻿import { Link } from 'react-router-dom';
 
 export function Footer() {
     return (
@@ -17,7 +17,7 @@ export function Footer() {
                     <h3 className="text-sm font-semibold text-white tracking-wider uppercase mb-4">Resources</h3>
                     <ul className="space-y-3 text-sm">
                         <li><Link to="/docs/overview.md" className="hover:text-white transition-colors">Documentation</Link></li>
-                        <li><Link to="/docs/stdlib/overview.md" className="hover:text-white transition-colors">Standard Library</Link></li>
+                        <li><Link to="/docs/stdlib/overview.md" className="hover:text-white transition-colors">Standard Library</Link></li>`n                        <li><Link to="/changelog" className="hover:text-white transition-colors">Changelog</Link></li>
                         <li><a href="https://github.com/TheRemyyy/apex-compiler" className="hover:text-white transition-colors">GitHub</a></li>
                     </ul>
                 </div>
@@ -40,3 +40,4 @@ export function Footer() {
         </footer>
     );
 }
+

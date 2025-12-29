@@ -6,6 +6,7 @@ import { Footer } from './components/Footer';
 import { Home } from './pages/Home';
 
 const Docs = lazy(() => import('./pages/Docs').then(module => ({ default: module.Docs })));
+const Changelog = lazy(() => import('./pages/Changelog').then(module => ({ default: module.Changelog })));
 
 export default function App() {
     const location = useLocation();
@@ -19,6 +20,7 @@ export default function App() {
                   <Routes>
                       <Route path="/" element={<Home />} />
                       <Route path="/docs/*" element={<Docs />} />
+                      <Route path="/changelog" element={<Changelog />} />
                   </Routes>
                 </Suspense>
             </main>
