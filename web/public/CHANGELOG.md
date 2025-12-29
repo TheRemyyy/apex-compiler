@@ -12,6 +12,9 @@
   - `Str.compare(a, b)`: Compare two strings.
   - `Str.concat(a, b)`: Concatenate two strings.
   - `Str.upper(s)`: Convert to uppercase (stub).
+  - `Str.lower(s)`: Convert to lowercase.
+  - `Str.trim(s)`: Remove leading/trailing whitespace.
+  - `Str.contains(s, sub)`: Check if string contains substring.
 - **System Module Improvements**:
   - `System.getenv(name)`: Get environment variables.
   - `System.shell(cmd)`: Run shell command (exit code).
@@ -23,7 +26,7 @@
   - `Time.now(format)`: Returns formatted local time.
   - `Time.unix()`: Returns raw Unix timestamp.
   - `Time.sleep(ms)`: Suspends program execution.
-- **New Examples**: Added `19_time.apex`, `20_system.apex`, `21_conversions.apex`, `22_args.apex`.
+- **New Examples**: Added `19_time.apex`, `20_system.apex`, `21_conversions.apex`, `22_args.apex`, `23_str_utils.apex`.
 
 ### ♻️ Changed
 

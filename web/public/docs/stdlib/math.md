@@ -19,7 +19,7 @@ Returns the value of Euler's number (~2.71828).
 | `Math.pow` | `(base: Float, exp: Float) -> Float` | Power function. |
 | `Math.sin` | `(x: Float) -> Float` | Sine (radians). |
 | `Math.cos` | `(x: Float) -> Float` | Cosine (radians). |
-| `Math.tan" | `(x: Float) -> Float` | Tangent (radians). |
+| `Math.tan` | `(x: Float) -> Float` | Tangent (radians). |
 | `Math.floor` | `(x: Float) -> Float` | Floor rounding. |
 | `Math.ceil` | `(x: Float) -> Float` | Ceiling rounding. |
 | `Math.round` | `(x: Float) -> Float` | Nearest integer rounding. |
@@ -35,4 +35,4 @@ Returns the value of Euler's number (~2.71828).
 | Function | Type Signature | Description |
 | :--- | :--- | :--- |
 | `to_int` | `(x: Float) -> Integer` | Float to Integer (truncates). |
-| `to_float` | `(x: Integer) -> Float" | Integer to Float. |
+| `to_float` | `(x: Integer) -> Float` | Integer to Float. |

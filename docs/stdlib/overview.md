@@ -13,4 +13,4 @@ The Apex Standard Library (`std`) provides core functionality for building appli
 - [Collections](collections.md): Built-in List and Map types.
 - [I/O](io.md): Console input and output.
 
-> **Note**: The entire Standard Library is currently implemented as **compiler intrinsics**. This means functions like `Math.sqrt` or `Str.length` are compiled directly to efficient LLVM instructions or C runtime calls with zero overhead. There are no external `.apex` module files for the standard library yet.
+> **Note**: The entire Standard Library is currently implemented as **compiler intrinsics**. This means functions like `Math.sqrt` or `Str.len` are compiled directly to efficient LLVM instructions or C runtime calls with zero overhead. There are no external `.apex` module files for the standard library yet.

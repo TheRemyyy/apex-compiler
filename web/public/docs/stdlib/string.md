@@ -10,8 +10,11 @@ String manipulation utilities. All functions are available as static methods on 
 | :--- | :--- | :--- |
 | `Str.len` | `(s: String) -> Integer` | Returns the length of the string in bytes. |
 | `Str.compare` | `(a: String, b: String) -> Integer` | Compares two strings. Returns 0 if equal. |
-| `Str.concat" | `(a: String, b: String) -> String` | Concatenates two strings into a new one. |
+| `Str.concat` | `(a: String, b: String) -> String` | Concatenates two strings into a new one. |
 | `Str.upper` | `(s: String) -> String` | Converts string to uppercase. |
+| `Str.lower` | `(s: String) -> String` | Converts string to lowercase. |
+| `Str.trim` | `(s: String) -> String` | Removes leading/trailing whitespace. |
+| `Str.contains` | `(s: String, sub: String) -> Boolean` | Checks if string contains a substring. |
 
 ## Conversions
 
