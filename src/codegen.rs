@@ -1645,8 +1645,8 @@ impl<'ctx> Codegen<'ctx> {
         if let Expr::Field { object, field } = callee {
             // Check for File static methods
             if let Expr::Ident(name) = &object.node {
-                if name == "File" {
-                    let builtin_name = format!("File__{}", field);
+                if matches!(name.as_str(), "File" | "Time") {
+                    let builtin_name = format!("{}__{}", name, field);
                     if let Some(result) = self.compile_stdlib_function(&builtin_name, args)? {
                         return Ok(result);
                     }
@@ -4493,6 +4493,95 @@ impl<'ctx> Codegen<'ctx> {
                 Ok(Some(success.into()))
             }
 
+            // Time Functions
+            "Time__now" => {
+                let format = self.compile_expr(&args[0].node)?;
+                let time_fn = self.get_or_declare_time();
+                let localtime_fn = self.get_or_declare_localtime();
+                let strftime_fn = self.get_or_declare_strftime();
+                let malloc = self.get_or_declare_malloc();
+
+                // 1. Get current time
+                let null = self.context.ptr_type(AddressSpace::default()).const_null();
+                let t_val = self.builder.build_call(time_fn, &[null.into()], "t").unwrap();
+                let t_raw = self.extract_call_value(t_val);
+
+                // 2. Alloca for time_t (i64)
+                let t_ptr = self.builder.build_alloca(self.context.i64_type(), "t_ptr").unwrap();
+                self.builder.build_store(t_ptr, t_raw).unwrap();
+
+                // 3. Get local time struct pointer
+                let tm_ptr_val = self.builder.build_call(localtime_fn, &[t_ptr.into()], "tm").unwrap();
+                let tm_ptr = self.extract_call_value(tm_ptr_val).into_pointer_value();
+
+                // 4. Allocate buffer for string (64 bytes should be enough for time)
+                let buf_size = self.context.i64_type().const_int(64, false);
+                let buf_ptr_val = self.builder.build_call(malloc, &[buf_size.into()], "buf").unwrap();
+                let buf_ptr = self.extract_call_value(buf_ptr_val).into_pointer_value();
+
+                // 5. If format is empty string, use default "%H:%M:%S"
+                let strlen_fn = self.get_or_declare_strlen();
+                let is_empty = self.builder.build_call(strlen_fn, &[format.into()], "len").unwrap();
+                let is_empty_val = self.extract_call_value(is_empty).into_int_value();
+                let is_zero = self.builder.build_int_compare(IntPredicate::EQ, is_empty_val, self.context.i64_type().const_int(0, false), "is_zero").unwrap();
+                
+                let default_fmt = self.context.const_string(b"%H:%M:%S", true);
+                let default_fmt_global = self.module.add_global(default_fmt.get_type(), None, "default_time_fmt");
+                default_fmt_global.set_initializer(&default_fmt);
+                
+                let actual_fmt = self.builder.build_select(is_zero, default_fmt_global.as_pointer_value(), format.into_pointer_value(), "fmt").unwrap();
+
+                // 6. Call strftime(buf, 64, format, tm)
+                self.builder.build_call(strftime_fn, &[buf_ptr.into(), buf_size.into(), actual_fmt.into(), tm_ptr.into()], "res").unwrap();
+
+                Ok(Some(buf_ptr.into()))
+            }
+
+            "Time__unix" => {
+                let time_fn = self.get_or_declare_time();
+                let null = self.context.ptr_type(AddressSpace::default()).const_null();
+                let res = self
+                    .builder
+                    .build_call(time_fn, &[null.into()], "time")
+                    .unwrap();
+                Ok(Some(self.extract_call_value(res)))
+            }
+
+            "Time__sleep" => {
+                let ms = self.compile_expr(&args[0].node)?;
+                #[cfg(windows)]
+                {
+                    let sleep_fn = self.get_or_declare_sleep_win();
+                    let ms_i32 = self
+                        .builder
+                        .build_int_truncate(ms.into_int_value(), self.context.i32_type(), "ms32")
+                        .unwrap();
+                    self.builder
+                        .build_call(sleep_fn, &[ms_i32.into()], "")
+                        .unwrap();
+                }
+                #[cfg(not(windows))]
+                {
+                    let usleep_fn = self.get_or_declare_usleep();
+                    let us = self
+                        .builder
+                        .build_int_mul(
+                            ms.into_int_value(),
+                            self.context.i64_type().const_int(1000, false),
+                            "us",
+                        )
+                        .unwrap();
+                    let us_i32 = self
+                        .builder
+                        .build_int_truncate(us, self.context.i32_type(), "us32")
+                        .unwrap();
+                    self.builder
+                        .build_call(usleep_fn, &[us_i32.into()], "")
+                        .unwrap();
+                }
+                Ok(Some(self.context.i8_type().const_int(0, false).into()))
+            }
+
             // Not a stdlib function
             _ => Ok(None),
         }
@@ -4604,6 +4693,61 @@ impl<'ctx> Codegen<'ctx> {
         // int remove(const char* filename)
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let fn_type = self.context.i32_type().fn_type(&[ptr_type.into()], false);
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn get_or_declare_time(&mut self) -> FunctionValue<'ctx> {
+        let name = "time";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let fn_type = self.context.i64_type().fn_type(&[ptr.into()], false);
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn get_or_declare_localtime(&mut self) -> FunctionValue<'ctx> {
+        let name = "localtime";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let fn_type = ptr.fn_type(&[ptr.into()], false);
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn get_or_declare_strftime(&mut self) -> FunctionValue<'ctx> {
+        let name = "strftime";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let size_t = self.context.i64_type();
+        let fn_type = size_t.fn_type(&[ptr.into(), size_t.into(), ptr.into(), ptr.into()], false);
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn get_or_declare_sleep_win(&mut self) -> FunctionValue<'ctx> {
+        let name = "Sleep";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let fn_type = self
+            .context
+            .void_type()
+            .fn_type(&[self.context.i32_type().into()], false);
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn get_or_declare_usleep(&mut self) -> FunctionValue<'ctx> {
+        let name = "usleep";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let fn_type = self
+            .context
+            .i32_type()
+            .fn_type(&[self.context.i32_type().into()], false);
         self.module.add_function(name, fn_type, None)
     }
 

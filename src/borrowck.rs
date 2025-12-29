@@ -447,6 +447,8 @@ impl BorrowChecker {
                             | "File__read"
                             | "File__write"
                             | "File__delete"
+                            | "Time__now"
+                            | "Time__sleep"
                     ) {
                         param_modes = vec![ParamMode::Borrow; args.len()];
                     } else if let Some(modes) = self.functions.get(name) {
@@ -455,7 +457,7 @@ impl BorrowChecker {
                 } else if let Expr::Field { object, field } = &callee.node {
                     // Check for File static methods
                     if let Expr::Ident(name) = &object.node {
-                        if name == "File" {
+                        if matches!(name.as_str(), "File" | "Time") {
                             param_modes = vec![ParamMode::Borrow; args.len()];
                         }
                     }

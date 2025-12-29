@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.4] - 2025-12-29
+
+### ✨ Added
+
+- **Time Module**: Added native support for time-related operations via the `Time` static object.
+  - `Time.now(format)`: Returns formatted local time.
+  - `Time.unix()`: Returns raw Unix timestamp.
+  - `Time.sleep(ms)`: Suspends program execution.
+- **New Example**: Added `19_time.apex` demonstrating time operations and sleeping.
+
+### ♻️ Changed
+
+- **Standard Library Expansion**: Continued efforts to expand the builtin library capabilities.
+
 ## [1.1.3] - 2025-12-29
 
 ### ✨ Added

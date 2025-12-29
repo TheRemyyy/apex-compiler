@@ -1011,10 +1011,10 @@ impl TypeChecker {
 
         // 2. Method call
         if let Expr::Field { object, field } = callee {
-            // Special handling for File.method() static calls
+            // Special handling for static calls (e.g. File.read, Time.now)
             if let Expr::Ident(name) = &object.node {
-                if name == "File" {
-                    let builtin_name = format!("File__{}", field);
+                if matches!(name.as_str(), "File" | "Time") {
+                    let builtin_name = format!("{}__{}", name, field);
                     if let Some(ret) = self.check_builtin_call(&builtin_name, args, span.clone()) {
                         return ret;
                     }
@@ -1245,6 +1245,31 @@ impl TypeChecker {
                     }
                 }
                 Some(ResolvedType::Boolean)
+            }
+            // Time Functions
+            "Time__now" => {
+                self.check_arg_count(name, args, 1, span.clone());
+                if !args.is_empty() {
+                    let t = self.check_expr(&args[0].node, args[0].span.clone());
+                    if !matches!(t, ResolvedType::String) {
+                        self.error("Time.now() requires String format".to_string(), span.clone());
+                    }
+                }
+                Some(ResolvedType::String)
+            }
+            "Time__unix" => {
+                self.check_arg_count(name, args, 0, span);
+                Some(ResolvedType::Integer)
+            }
+            "Time__sleep" => {
+                self.check_arg_count(name, args, 1, span.clone());
+                if !args.is_empty() {
+                    let t = self.check_expr(&args[0].node, args[0].span.clone());
+                    if !matches!(t, ResolvedType::Integer) {
+                        self.error("Time.sleep() requires Integer milliseconds".to_string(), span);
+                    }
+                }
+                Some(ResolvedType::None)
             }
             _ => None,
         }

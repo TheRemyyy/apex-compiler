@@ -16,7 +16,7 @@ export function Home() {
                         className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-neutral-800 bg-neutral-900/50 text-neutral-400 text-xs font-mono"
                     >
                         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                        Apex v1.1.3 — The Native Evolution
+                        Apex v1.1.4 — The Native Evolution
                     </motion.div>
 
                     <motion.h1 

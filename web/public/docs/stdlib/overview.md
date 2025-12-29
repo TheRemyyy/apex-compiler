@@ -6,6 +6,7 @@ The Apex Standard Library (`std`) provides core functionality for building appli
 
 - [Math](math.md): Mathematical functions and constants.
 - [String](string.md): String manipulation utilities.
+- [Time](time.md): Time retrieval and sleeping.
 - [Collections](collections.md): Built-in List and Map types.
 - [I/O](io.md): Input and Output operations.
 - [System](system.md): System-level interactions (exit, etc.).
