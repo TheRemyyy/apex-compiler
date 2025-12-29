@@ -4347,7 +4347,8 @@ impl<'ctx> Codegen<'ctx> {
                             "bool_str",
                         )
                         .unwrap();
-                                            return Ok(Some(res));                }
+                    return Ok(Some(res));
+                }
 
                 let sprintf = self.get_or_declare_sprintf();
                 let malloc = self.get_or_declare_malloc();
