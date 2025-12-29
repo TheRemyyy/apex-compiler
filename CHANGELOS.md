@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.1.3] - 2025-12-29
+
+### ✨ Added
+
+- **File I/O Support**: Added native support for file system operations via the `File` static object.
+  - `File.read(path)`: Reads entire file to String.
+  - `File.write(path, content)`: Writes content to file.
+  - `File.exists(path)`: Checks for file existence.
+  - `File.delete(path)`: Deletes a file.
+- **New Examples**: Added `18_file_io.apex` and `app_notes.apex` demonstrating file system interactions.
+- **Test Infrastructure**: Added `test_examples.bat` for automated verification of all example programs.
+
+### ♻️ Changed
+
+- **Standard Library Ownership**: Relaxed borrow checker rules for standard library functions (`strlen`, `println`, etc.). These functions now borrow their arguments instead of consuming them, allowing variables to be reused after being printed or measured.
+- **Compiler Intrinsics**: Optimized C binding generation for standard library calls in the LLVM backend.
+
+### 🐛 Fixed
+
+- **Borrow Checker**: Fixed a bug where standard library calls would incorrectly mark string variables as moved.
+
 ## [1.1.2] - 2025-12-28
 
 ### 🐛 Fixed

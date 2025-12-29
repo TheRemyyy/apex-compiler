@@ -32,3 +32,41 @@ print("Enter name: ");
 name: String = read_line();
 println("Hello, " + name);
 ```
+
+## File I/O Functions
+
+The `File` object provides static methods for interacting with the file system.
+
+### `File.read(path: String): String`
+
+Reads the entire content of a file. Returns an empty string if the file cannot be read.
+
+```apex
+content: String = File.read("data.txt");
+```
+
+### `File.write(path: String, content: String): Boolean`
+
+Writes the given content to a file. Overwrites the file if it already exists. Returns `true` if successful.
+
+```apex
+success: Boolean = File.write("output.txt", "Hello, Apex!");
+```
+
+### `File.exists(path: String): Boolean`
+
+Checks if a file exists and is accessible.
+
+```apex
+if (File.exists("config.json")) {
+    println("Config found");
+}
+```
+
+### `File.delete(path: String): Boolean`
+
+Deletes a file from the file system. Returns `true` if successful.
+
+```apex
+File.delete("temp.log");
+```
