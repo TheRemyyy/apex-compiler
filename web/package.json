@@ -28,6 +28,8 @@
         "terser": "^5.44.1",
         "typescript": "^5.2.2",
         "vite": "^6.0.0",
-        "vite-plugin-compression": "^0.5.1"
+        "vite-plugin-compression": "^0.5.1",
+        "vite-plugin-css-injected-by-js": "^3.5.2",
+        "vite-plugin-webfont-dl": "^3.11.1"
     }
 }
