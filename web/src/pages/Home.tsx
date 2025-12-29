@@ -69,16 +69,17 @@ export function Home() {
                         <div className="p-8 font-mono text-sm leading-relaxed overflow-x-auto text-neutral-400">
                             <pre>
                                 <code>
-                                    <div><span className="text-purple-400">async function</span> <span className="text-blue-400">fetch_data</span>(): <span className="text-yellow-300">Task</span>&lt;<span className="text-yellow-300">String</span>&gt; {'{'}</div>
-                                    <div className="pl-4"><span className="text-neutral-500">// Direct hardware access with safety</span></div>
-                                    <div className="pl-4">data: <span className="text-yellow-300">String</span> = <span className="text-purple-400">await</span> io.<span className="text-blue-400">get</span>(<span className="text-green-400">"api.v1/stream"</span>);</div>
+                                    <div><span className="text-purple-400">async function</span> <span className="text-blue-400">initialize_core</span>(): <span className="text-yellow-300">Task</span>&lt;<span className="text-yellow-300">Integer</span>&gt; {'{'}</div>
+                                    <div className="pl-4"><span className="text-neutral-500">// Direct collection manipulation</span></div>
+                                    <div className="pl-4">cores: <span className="text-yellow-300">List</span>&lt;<span className="text-yellow-300">Integer</span>&gt; = <span className="text-yellow-300">List</span>&lt;<span className="text-yellow-300">Integer</span>&gt;();</div>
+                                    <div className="pl-4">cores.<span className="text-blue-400">push</span>(1);</div>
                                     <div className="pl-4"></div>
-                                    <div className="pl-4"><span className="text-purple-400">match</span> (data) {'{'}</div>
-                                    <div className="pl-8"><span className="text-green-400">"ready"</span> =&gt; println(<span className="text-green-400">"System OK"</span>),</div>
-                                    <div className="pl-8">_ =&gt; <span className="text-red-400">panic</span>(<span className="text-green-400">"Initialization failed"</span>)</div>
+                                    <div className="pl-4"><span className="text-purple-400">match</span> (cores.<span className="text-blue-400">get</span>(0)) {'{'}</div>
+                                    <div className="pl-8">1 =&gt; <span className="text-blue-400">println</span>(<span className="text-green-400">"Core sequence OK"</span>),</div>
+                                    <div className="pl-8">_ =&gt; <span className="text-blue-400">exit</span>(1)</div>
                                     <div className="pl-4">{'}'}</div>
                                     <div className="pl-4"></div>
-                                    <div className="pl-4"><span className="text-purple-400">return</span> data;</div>
+                                    <div className="pl-4"><span className="text-purple-400">return</span> cores.<span className="text-blue-400">length</span>();</div>
                                     <div>{'}'}</div>
                                 </code>
                             </pre>
@@ -160,6 +161,7 @@ function FeatureBox({ icon: Icon, title, desc }: { icon: any, title: string, des
         </div>
     );
 }
+
 
 
 
