@@ -41,6 +41,7 @@ const NAV_ITEMS = [
     },
     {
         title: 'Standard Library', items: [
+            { title: 'Overview', path: '/docs/stdlib/overview.md' },
             { title: 'Math', path: '/docs/stdlib/math.md' },
             { title: 'String', path: '/docs/stdlib/string.md' },
             { title: 'Collections', path: '/docs/stdlib/collections.md' },
@@ -54,7 +55,7 @@ const NAV_ITEMS = [
             { title: 'Generics', path: '/docs/advanced/generics.md' },
             { title: 'Async/Await', path: '/docs/advanced/async.md' },
             { title: 'Error Handling', path: '/docs/advanced/error_handling.md' },
-            { title: 'Memory Management', path: '/docs/advanced/memory_management.md' },
+            { title: 'Memory Management', path: '/docs/advanced/memory_management.md' },        
         ]
     },
     {
@@ -90,7 +91,7 @@ function TableOfContents({ html }: { html: string }) {
             <ul className="space-y-3">
                 {headings.map((h, i) => (
                     <li key={i}>
-                        <a href={`#${h.id}`} className="text-[13px] text-gray-400 hover:text-white transition-colors block leading-snug outline-none focus:text-white">
+                        <a href={`#${h.id}`} className="text-[13px] text-gray-400 hover:text-[#a5b4fc] transition-colors block leading-snug outline-none focus:text-white">
                             {h.text}
                         </a>
                     </li>
@@ -100,8 +101,12 @@ function TableOfContents({ html }: { html: string }) {
     );
 }
 
-// Helper to flatten nav items for next/prev logic
-const FLATTENED_DOCS = NAV_ITEMS.flatMap(section => section.items || []);
+// Helper to flatten ALL clickable items for next/prev logic
+const FLATTENED_DOCS = NAV_ITEMS.reduce((acc: {title: string, path: string}[], section) => {
+    if (section.path) acc.push({ title: section.title, path: section.path });
+    if (section.items) section.items.forEach(item => acc.push(item));
+    return acc;
+}, []);
 
 export function Docs() {
     const location = useLocation();
@@ -110,18 +115,16 @@ export function Docs() {
     const [loading, setLoading] = useState(true);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-    // Normalize path just like inside useEffect
+    // Normalize path
     const normalizedPath = location.pathname === '/docs' || location.pathname === '/docs/' ? '/docs/overview.md' : location.pathname;
 
-    // Calculate Next/Prev using normalized path
-    const currentIndex = FLATTENED_DOCS.findIndex(item => item.path === normalizedPath);
+    // Calculate Next/Prev
+    const currentIndex = FLATTENED_DOCS.findIndex(item => item.path === normalizedPath);        
     const prevDoc = currentIndex > 0 ? FLATTENED_DOCS[currentIndex - 1] : null;
     const nextDoc = currentIndex !== -1 && currentIndex < FLATTENED_DOCS.length - 1 ? FLATTENED_DOCS[currentIndex + 1] : null;
 
     useEffect(() => {
-        setIsSidebarOpen(false); // Close sidebar on nav
-
-        // Only show full skeleton on initial load, otherwise just dim or keep content
+        setIsSidebarOpen(false);
         if (!content) setLoading(true);
 
         fetch(normalizedPath)
@@ -140,7 +143,7 @@ export function Docs() {
                 setContent('<h1>Document not found</h1><p>The requested page could not be found.</p>');
                 setLoading(false);
             });
-    }, [normalizedPath]); // Depend on normalizedPath
+    }, [normalizedPath]);
 
     return (
         <div className="flex flex-col lg:flex-row bg-[#09090b] text-gray-100 font-sans selection:bg-gray-700 selection:text-white pt-14 lg:pt-16 min-h-screen">
@@ -155,18 +158,13 @@ export function Docs() {
                     Menu
                 </button>
                 <span className="ml-auto text-xs text-gray-500 font-mono">
-                    {NAV_ITEMS.find(s => s.items?.some(i => i.path === normalizedPath))?.title || 'Documentation'}
+                    {NAV_ITEMS.find(s => s.items?.some(i => i.path === normalizedPath) || s.path === normalizedPath)?.title || 'Documentation'}
                 </span>
             </div>
 
             {/* Sidebar */}
-            <nav className={`
-                fixed lg:fixed w-72 left-0 top-16 h-[calc(100vh-4rem)] 
-                border-r border-[#1f1f23] bg-[#0c0c0e] 
-                flex flex-col z-30 transition-transform duration-300
-                ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-            `}>
-                <div className="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-8 pb-20">
+            <nav className={`fixed lg:fixed w-72 left-0 top-16 h-[calc(100vh-4rem)] border-r border-[#1f1f23] bg-[#0c0c0e] flex flex-col z-30 transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+                <div className="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-8 pb-20">   
                     {NAV_ITEMS.map((section, idx) => (
                         <section key={idx}>
                             {section.items ? (
@@ -176,11 +174,11 @@ export function Docs() {
                                     </h3>
                                     <ul className="space-y-0.5">
                                         {section.items.map((item, itemIdx) => {
-                                            const isActive = normalizedPath === item.path;
+                                            const isActive = normalizedPath === item.path;      
                                             return (
                                                 <li key={itemIdx}>
                                                     <button
-                                                        onClick={() => navigate(item.path)}
+                                                        onClick={() => navigate(item.path)}     
                                                         className={`w-full text-left px-3 py-1.5 rounded-md text-[14px] font-medium transition-colors duration-100 outline-none focus:outline-none focus:ring-0 border ${isActive
                                                             ? 'bg-[#18181b] text-white border-[#27272a]'
                                                             : 'text-gray-400 hover:text-gray-200 hover:bg-[#18181b]/50 border-transparent'
@@ -195,8 +193,8 @@ export function Docs() {
                                 </>
                             ) : (
                                 <button
-                                    onClick={() => navigate(section.path)}
-                                    className={`w-full text-left px-3 py-1.5 rounded-md text-[14px] font-bold uppercase tracking-wider mb-2 transition-colors duration-100 outline-none focus:outline-none focus:ring-0 border ${normalizedPath === section.path ? 'bg-[#18181b] text-white border-[#27272a]' : 'text-gray-500 hover:text-gray-300 hover:bg-[#18181b]/50 border-transparent'
+                                    onClick={() => navigate(section.path!)}
+                                    className={`w-full text-left px-3 py-1.5 rounded-md text-[14px] font-bold uppercase tracking-wider mb-2 transition-colors duration-100 outline-none focus:outline-none focus:ring-0 border ${normalizedPath === section.path ? 'bg-[#18181b] text-white border-[#27272a]' : 'text-gray-500 hover:text-gray-300 hover:bg-[#18181b]/50 border-transparent'    
                                         }`}
                                 >
                                     {section.title}
@@ -220,7 +218,7 @@ export function Docs() {
                 <main className="max-w-4xl mx-auto px-6 md:px-12 py-10 lg:py-16 w-full min-h-[80vh]">
                     {loading ? (
                         <div className="animate-pulse space-y-8 pt-4">
-                            <div className="h-10 bg-[#1f1f23] rounded w-1/2 mb-8"></div>
+                            <div className="h-10 bg-[#1f1f23] rounded w-1/2 mb-8"></div>        
                             <div className="space-y-4">
                                 <div className="h-4 bg-[#1f1f23] rounded w-full"></div>
                                 <div className="h-4 bg-[#1f1f23] rounded w-5/6"></div>
@@ -230,7 +228,7 @@ export function Docs() {
                     ) : (
                         <>
                             <article
-                                className="prose prose-invert prose-zinc max-w-none 
+                                className="prose prose-invert prose-zinc max-w-none
                         prose-headings:scroll-mt-24
                         prose-h1:text-3xl md:prose-h1:text-4xl prose-h1:font-bold prose-h1:tracking-tight prose-h1:mb-8 prose-h1:text-white
                         prose-h2:text-2xl prose-h2:font-semibold prose-h2:mt-12 prose-h2:mb-6 prose-h2:text-gray-100 prose-h2:border-b prose-h2:border-[#27272a] prose-h2:pb-2
@@ -251,19 +249,19 @@ export function Docs() {
                                             onClick={() => navigate(prevDoc.path)}
                                             className="group flex flex-col items-start gap-1 p-4 rounded-lg border border-[#27272a] hover:border-white/20 hover:bg-[#18181b] transition-all w-full sm:w-auto"
                                         >
-                                            <span className="text-xs text-gray-500 font-medium uppercase tracking-wider group-hover:text-gray-400">Previous</span>
-                                            <span className="text-gray-200 font-medium group-hover:text-white">{prevDoc.title}</span>
+                                            <span className="text-xs text-gray-500 font-medium uppercase tracking-wider group-hover:text-gray-400 text-left">Previous</span>
+                                            <span className="text-gray-200 font-medium group-hover:text-white text-left">{prevDoc.title}</span>
                                         </button>
                                     )}
                                 </div>
-                                <div className="flex justify-end">
+                                <div className="flex justify-end text-right">
                                     {nextDoc && (
                                         <button
                                             onClick={() => navigate(nextDoc.path)}
                                             className="group flex flex-col items-end gap-1 p-4 rounded-lg border border-[#27272a] hover:border-white/20 hover:bg-[#18181b] transition-all w-full sm:w-auto"
                                         >
-                                            <span className="text-xs text-gray-500 font-medium uppercase tracking-wider group-hover:text-gray-400">Next</span>
-                                            <span className="text-gray-200 font-medium group-hover:text-white">{nextDoc.title}</span>
+                                            <span className="text-xs text-gray-500 font-medium uppercase tracking-wider group-hover:text-gray-400 text-right">Next</span>
+                                            <span className="text-gray-200 font-medium group-hover:text-white text-right">{nextDoc.title}</span>
                                         </button>
                                     )}
                                 </div>

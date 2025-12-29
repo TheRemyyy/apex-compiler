@@ -91,7 +91,7 @@ export function Home() {
                         <h2 className="text-4xl font-bold mb-10 tracking-tighter uppercase italic">Bridging the Gap.</h2>
                         <div className="space-y-8 text-neutral-400 text-xl leading-relaxed font-medium">
                             <p>
-                                C++ gives you power but demands blood. Rust gives you safety but demands your time. **Apex was created to end the war.**
+                                C++ gives you power but demands blood. Rust gives you safety but demands your time. <span className="text-white font-semibold italic underline decoration-neutral-700 decoration-2 underline-offset-4">Apex was created to end the war.</span>
                             </p>
                             <p>
                                 We've engineered a compiler that feels like an ally, not an obstacle. By leveraging <span className="text-white border-b-2 border-neutral-700">ownership inference</span> and the full power of the LLVM backend, Apex lets you build the next generation of software with the flow of a modern script language.
@@ -157,3 +157,5 @@ function FeatureBox({ icon: Icon, title, desc }: { icon: any, title: string, des
         </div>
     );
 }
+
+
