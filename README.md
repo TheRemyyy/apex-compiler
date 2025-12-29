@@ -7,7 +7,7 @@
 
 [![Website](https://img.shields.io/badge/Website-apex--compiler.vercel.app-white?style=flat-square&logo=vercel)](https://apex-compiler.vercel.app/)
 [![Rust](https://img.shields.io/badge/Rust-1.83+-orange.svg?style=flat-square)](https://www.rust-lang.org/)
-[![LLVM](https://img.shields.io/badge/LLVM-21.0+-blue.svg?style=flat-square)](https://llvm.org/)
+[![LLVM](https://img.shields.io/badge/LLVM-21.0+-blue.svg?style=flat-square)](https://llvm.org/) 
 *Strong static typing • Ownership & borrowing • Async/await • Zero-cost abstractions*
 
 [Quick Start](docs/getting_started/quick_start.md) • [Examples](examples/) • [Documentation](docs/)
