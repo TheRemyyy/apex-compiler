@@ -4215,7 +4215,7 @@ impl<'ctx> Codegen<'ctx> {
 
                 Ok(Some(buffer.into()))
             }
-            "exit" => {
+            "System__exit" => {
                 let code = self.compile_expr(&args[0].node)?;
                 let exit_fn = self.get_or_declare_exit();
                 let code_i32 = self

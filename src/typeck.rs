@@ -1180,12 +1180,12 @@ impl TypeChecker {
                 }
                 Some(ResolvedType::String)
             }
-            "exit" => {
+            "System__exit" => {
                 self.check_arg_count(name, args, 1, span.clone());
                 if !args.is_empty() {
                     let t = self.check_expr(&args[0].node, args[0].span.clone());
                     if !matches!(t, ResolvedType::Integer) {
-                        self.error(format!("exit() requires Integer, got {}", t), span);
+                        self.error("System.exit() requires Integer code".to_string(), span);
                     }
                 }
                 Some(ResolvedType::None)

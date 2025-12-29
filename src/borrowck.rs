@@ -452,6 +452,7 @@ impl BorrowChecker {
                             | "System__getenv"
                             | "System__shell"
                             | "System__exec"
+                            | "System__exit"
                             | "Math__abs"
                             | "Math__min"
                             | "Math__max"

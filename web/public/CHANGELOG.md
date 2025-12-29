@@ -9,6 +9,7 @@
   - `System.shell(cmd)`: Run shell command (exit code).
   - `System.exec(cmd)`: Run shell command and capture stdout.
   - `System.cwd()`: Get current working directory.
+  - `System.exit(code)`: Terminate program with exit code.
 - **Math Module Improvements**: Added `Math.pi()`, `Math.e()`, and `Math.random()`.
 - **Time Module**: Added native support for time-related operations.
   - `Time.now(format)`: Returns formatted local time.

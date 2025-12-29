@@ -34,5 +34,8 @@ function main(): None {
 
     println("");
     println("=== All System tests passed! ===");
+    
+    // Exit successfully
+    System.exit(0);
     return None;
 }

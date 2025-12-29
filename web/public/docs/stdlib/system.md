@@ -40,3 +40,13 @@ Returns the current working directory.
 currentDir: String = System.cwd();
 println("Working in: {currentDir}");
 ```
+
+### `System.exit(code: Integer): None`
+
+Terminates the program immediately with the specified exit code. `0` usually indicates success, while any other value indicates an error.
+
+```apex
+if (error_occurred) {
+    System.exit(1);
+}
+```
