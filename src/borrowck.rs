@@ -438,9 +438,10 @@ impl BorrowChecker {
                     // Stdlib functions that should borrow
                     if matches!(
                         name.as_str(),
-                        "strlen"
-                            | "strcmp"
-                            | "strcat"
+                        "Str__len"
+                            | "Str__compare"
+                            | "Str__concat"
+                            | "Str__upper"
                             | "print"
                             | "println"
                             | "File__exists"
@@ -475,10 +476,14 @@ impl BorrowChecker {
                 } else if let Expr::Field { object, field } = &callee.node {
                     // Check for File static methods
                     if let Expr::Ident(name) = &object.node {
-                        if matches!(name.as_str(), "File" | "Time" | "System" | "Math") {
+                        if matches!(
+                            name.as_str(),
+                            "File" | "Time" | "System" | "Math" | "Str"
+                        ) {
                             param_modes = vec![ParamMode::Borrow; args.len()];
                         }
                     }
+
 
                     // Method call - ideally we'd know the type of object
                     // For now, look for any method with this name across all classes

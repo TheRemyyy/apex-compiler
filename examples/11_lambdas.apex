@@ -138,8 +138,8 @@ function testTypedLambdas(): None {
     floatFunc: (Float) -> Float = (x: Float) => x * 2.0;
     println("Float -> Float lambda");
 
-    // String -> Integer
-    strLen: (String) -> Integer = (s: String) => strlen(s);
+    // String -> Integer lambda
+    strLen: (String) -> Integer = (s: String) => Str.len(s);
     println("String -> Integer lambda (length)");
 
     // Boolean -> Boolean

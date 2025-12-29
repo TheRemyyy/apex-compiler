@@ -29,7 +29,7 @@ function main(): None {
     println("Reading content:");
     readContent: String = File.read(filename);
     
-    if (strlen(readContent) > 0) {
+    if (Str.len(readContent) > 0) {
         println("--- START OF FILE ---");
         print(readContent);
         println("--- END OF FILE ---");
@@ -38,7 +38,7 @@ function main(): None {
     }
 
     // Verify content match
-    if (strcmp(content, readContent) == 0) {
+    if (Str.compare(content, readContent) == 0) {
         println("Content verification passed.");
     } else {
         println("Content verification failed!");

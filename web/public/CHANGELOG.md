@@ -4,6 +4,11 @@
 
 ### ✨ Added
 
+- **Str Module**: Introduced the `Str` static object for string manipulation (renamed from `String` to avoid type name collisions).
+  - `Str.len(s)`: Get string length.
+  - `Str.compare(a, b)`: Compare two strings.
+  - `Str.concat(a, b)`: Concatenate two strings.
+  - `Str.upper(s)`: Convert to uppercase (stub).
 - **System Module**: Added support for OS interactions via `System` object.
   - `System.getenv(name)`: Get environment variables.
   - `System.shell(cmd)`: Run shell command (exit code).

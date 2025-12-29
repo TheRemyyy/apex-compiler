@@ -1013,7 +1013,7 @@ impl TypeChecker {
         if let Expr::Field { object, field } = callee {
             // Special handling for static calls (e.g. File.read, Time.now)
             if let Expr::Ident(name) = &object.node {
-                if matches!(name.as_str(), "File" | "Time" | "System" | "Math") {
+                if matches!(name.as_str(), "File" | "Time" | "System" | "Math" | "Str") {
                     let builtin_name = format!("{}__{}", name, field);
                     if let Some(ret) = self.check_builtin_call(&builtin_name, args, span.clone()) {
                         return ret;
@@ -1140,24 +1140,24 @@ impl TypeChecker {
                 self.check_arg_count(name, args, 1, span);
                 Some(ResolvedType::String)
             }
-            "strlen" => {
+            "Str__len" => {
                 self.check_arg_count(name, args, 1, span.clone());
                 if !args.is_empty() {
                     let t = self.check_expr(&args[0].node, args[0].span.clone());
                     if !matches!(t, ResolvedType::String) {
-                        self.error(format!("strlen() requires String, got {}", t), span);
+                        self.error(format!("Str.len() requires String, got {}", t), span);
                     }
                 }
                 Some(ResolvedType::Integer)
             }
-            "strcmp" => {
+            "Str__compare" => {
                 self.check_arg_count(name, args, 2, span.clone());
                 if args.len() >= 2 {
                     for arg in &args[..2] {
                         let t = self.check_expr(&arg.node, arg.span.clone());
                         if !matches!(t, ResolvedType::String) {
                             self.error(
-                                "strcmp() requires String arguments".to_string(),
+                                "Str.compare() requires String arguments".to_string(),
                                 arg.span.clone(),
                             );
                         }
@@ -1165,17 +1165,27 @@ impl TypeChecker {
                 }
                 Some(ResolvedType::Integer)
             }
-            "strcat" => {
+            "Str__concat" => {
                 self.check_arg_count(name, args, 2, span.clone());
                 if args.len() >= 2 {
                     for arg in &args[..2] {
                         let t = self.check_expr(&arg.node, arg.span.clone());
                         if !matches!(t, ResolvedType::String) {
                             self.error(
-                                "strcat() requires String arguments".to_string(),
+                                "Str.concat() requires String arguments".to_string(),
                                 arg.span.clone(),
                             );
                         }
+                    }
+                }
+                Some(ResolvedType::String)
+            }
+            "Str__upper" => {
+                self.check_arg_count(name, args, 1, span.clone());
+                if !args.is_empty() {
+                    let t = self.check_expr(&args[0].node, args[0].span.clone());
+                    if !matches!(t, ResolvedType::String) {
+                        self.error("Str.upper() requires String".to_string(), span.clone());
                     }
                 }
                 Some(ResolvedType::String)

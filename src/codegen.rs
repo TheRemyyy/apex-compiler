@@ -1645,7 +1645,10 @@ impl<'ctx> Codegen<'ctx> {
         if let Expr::Field { object, field } = callee {
             // Check for File static methods
             if let Expr::Ident(name) = &object.node {
-                if matches!(name.as_str(), "File" | "Time" | "System" | "Math") {
+                if matches!(
+                    name.as_str(),
+                    "File" | "Time" | "System" | "Math" | "Str"
+                ) {
                     let builtin_name = format!("{}__{}", name, field);
                     if let Some(result) = self.compile_stdlib_function(&builtin_name, args)? {
                         return Ok(result);
@@ -4102,7 +4105,7 @@ impl<'ctx> Codegen<'ctx> {
             }
 
             // String functions
-            "strlen" => {
+            "Str__len" => {
                 let s = self.compile_expr(&args[0].node)?;
                 let strlen_fn = self.get_or_declare_strlen();
                 let call = self
@@ -4111,7 +4114,7 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
                 Ok(Some(self.extract_call_value(call)))
             }
-            "strcmp" => {
+            "Str__compare" => {
                 let s1 = self.compile_expr(&args[0].node)?;
                 let s2 = self.compile_expr(&args[1].node)?;
                 let strcmp_fn = self.get_or_declare_strcmp();
@@ -4127,7 +4130,7 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
                 Ok(Some(extended.into()))
             }
-            "strcat" => {
+            "Str__concat" => {
                 // Allocate new buffer and concatenate
                 let s1 = self.compile_expr(&args[0].node)?;
                 let s2 = self.compile_expr(&args[1].node)?;
@@ -4176,6 +4179,12 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
 
                 Ok(Some(buffer.into()))
+            }
+
+            "Str__upper" => {
+                let s = self.compile_expr(&args[0].node)?;
+                // Stub for now
+                Ok(Some(s))
             }
 
             // I/O functions

@@ -43,7 +43,7 @@ const NAV_ITEMS = [
         title: 'Standard Library', items: [
             { title: 'Overview', path: '/docs/stdlib/overview.md' },
             { title: 'Math', path: '/docs/stdlib/math.md' },
-            { title: 'String', path: '/docs/stdlib/string.md' },
+            { title: 'Str', path: '/docs/stdlib/string.md' },
             { title: 'Time', path: '/docs/stdlib/time.md' },
             { title: 'Collections', path: '/docs/stdlib/collections.md' },
             { title: 'I/O', path: '/docs/stdlib/io.md' },

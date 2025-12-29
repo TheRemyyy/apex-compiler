@@ -10,7 +10,7 @@ function main(): None {
 
     // 2. Get environment variable
     path: String = System.getenv("PATH");
-    if (strlen(path) > 0) {
+    if (Str.len(path) > 0) {
         println("Environment variable PATH found.");
     }
 
@@ -26,7 +26,7 @@ function main(): None {
     output: String = System.exec("echo ApexCaptured");
     
     // Check if output contains our string
-    if (strlen(output) > 0) {
+    if (Str.len(output) > 0) {
         println("Captured output: {output}");
     } else {
         println("Error: Failed to capture output.");

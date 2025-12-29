@@ -189,7 +189,7 @@ module Bank {
     }
 
     function validateAccountNumber(accNum: String): Boolean {
-        len: Integer = strlen(accNum);
+        len: Integer = Str.len(accNum);
         return len > 0;
     }
 

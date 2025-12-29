@@ -94,18 +94,18 @@ function testStringFunctions(): None {
     println("=== String Functions ===");
 
     // strlen - string length
-    len: Integer = strlen("Hello, World!");
-    println("strlen(\"Hello, World!\") = 13");
+    len: Integer = Str.len("Hello, World!");
+    println("Str.len(\"Hello, World!\") = 13");
 
     // strcmp - string comparison
-    cmp1: Integer = strcmp("abc", "abc");
-    cmp2: Integer = strcmp("abc", "abd");
-    println("strcmp(\"abc\", \"abc\") = 0");
-    println("strcmp(\"abc\", \"abd\") < 0");
+    cmp1: Integer = Str.compare("abc", "abc");
+    cmp2: Integer = Str.compare("abc", "abd");
+    println("Str.compare(\"abc\", \"abc\") = 0");
+    println("Str.compare(\"abc\", \"abd\") < 0");
 
     // strcat - string concatenation
-    combined: String = strcat("Hello, ", "World!");
-    println("strcat(\"Hello, \", \"World!\") = \"Hello, World!\"");
+    combined: String = Str.concat("Hello, ", "World!");
+    println("Str.concat(\"Hello, \", \"World!\") = \"Hello, World!\"");
 
     return None;
 }

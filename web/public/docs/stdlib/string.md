@@ -1,12 +1,20 @@
-# String Module
+# Str Module (Strings)
 
-String manipulation utilities.
+String manipulation utilities. All functions are available as static methods on the `Str` object.
+
+> **Note**: We use the `Str` object instead of `String` to avoid conflicts with the built-in `String` type.
 
 ## Functions
 
 | Function | Type Signature | Description |
 | :--- | :--- | :--- |
-| `strlen` | `(s: String) -> Integer` | Returns the length of the string in bytes. |
-| `strcmp` | `(a: String, b: String) -> Integer` | Compares two strings. Returns 0 if equal. |
-| `strcat` | `(a: String, b: String) -> String` | Concatenates two strings into a new one. |
-| `to_string` | `<T>(x: T) -> String` | Converts any type to its string representation. |
+| `Str.len` | `(s: String) -> Integer` | Returns the length of the string in bytes. |
+| `Str.compare` | `(a: String, b: String) -> Integer` | Compares two strings. Returns 0 if equal. |
+| `Str.concat" | `(a: String, b: String) -> String` | Concatenates two strings into a new one. |
+| `Str.upper` | `(s: String) -> String` | Converts string to uppercase. |
+
+## Conversions
+
+| Function | Type Signature | Description |
+| :--- | :--- | :--- |
+| `to_string` | `<T>(x: T) -> String` | Converts any type to its string representation (Global). |

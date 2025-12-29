@@ -157,7 +157,7 @@ module Hash {
 
     function stringHash(s: String, size: Integer): Integer {
         // Simple string hash
-        len: Integer = strlen(s);
+        len: Integer = Str.len(s);
         return len % size;
     }
 }

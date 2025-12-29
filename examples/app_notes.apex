@@ -23,9 +23,9 @@ class NoteManager {
         current: String = this.loadNotes();
         mut finalContent: String = "";
         
-        if (strlen(current) > 0) {
-            part1: String = strcat(current, "\n");
-            finalContent = strcat(part1, note);
+        if (Str.len(current) > 0) {
+            part1: String = Str.concat(current, "\n");
+            finalContent = Str.concat(part1, note);
         } else {
             finalContent = note;
         }
@@ -72,7 +72,7 @@ function main(): None {
         // 1. List (Empty)
         println("\n> Action: List Notes");
         content: String = manager.loadNotes();
-        if (strlen(content) == 0) {
+        if (Str.len(content) == 0) {
             println("(No notes found)");
         } else {
             println(content);

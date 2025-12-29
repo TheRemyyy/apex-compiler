@@ -38,13 +38,13 @@ module Math {
 // String utilities module
 module StringUtils {
     function isEmpty(s: String): Boolean {
-        len: Integer = strlen(s);
+        len: Integer = Str.len(s);
         return len == 0;
     }
 
     function isBlank(s: String): Boolean {
         // Simplified: just check if empty
-        len: Integer = strlen(s);
+        len: Integer = Str.len(s);
         return len == 0;
     }
 
