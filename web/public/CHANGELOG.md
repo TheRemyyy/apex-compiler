@@ -4,14 +4,21 @@
 
 ### ✨ Added
 
-- **Time Module**: Added native support for time-related operations via the `Time` static object.
+- **System Module**: Added support for OS interactions via `System` object.
+  - `System.getenv(name)`: Get environment variables.
+  - `System.shell(cmd)`: Run shell command (exit code).
+  - `System.exec(cmd)`: Run shell command and capture stdout.
+  - `System.cwd()`: Get current working directory.
+- **Math Module Improvements**: Added `Math.pi()`, `Math.e()`, and `Math.random()`.
+- **Time Module**: Added native support for time-related operations.
   - `Time.now(format)`: Returns formatted local time.
   - `Time.unix()`: Returns raw Unix timestamp.
   - `Time.sleep(ms)`: Suspends program execution.
-- **New Example**: Added `19_time.apex` demonstrating time operations and sleeping.
+- **New Examples**: Added `19_time.apex`, `20_system.apex`.
 
 ### ♻️ Changed
 
+- **Math Unification**: All mathematical functions (sqrt, sin, abs, etc.) now require the `Math.` prefix for consistency and better namespacing.
 - **Standard Library Expansion**: Continued efforts to expand the builtin library capabilities.
 
 ## [1.1.3] - 2025-12-29
