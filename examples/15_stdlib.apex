@@ -107,6 +107,12 @@ function testStringFunctions(): None {
     combined: String = Str.concat("Hello, ", "World!");
     println("Str.concat(\"Hello, \", \"World!\") = \"Hello, World!\"");
 
+    // startsWith / endsWith
+    hasPre: Boolean = Str.startsWith("Hello", "He");
+    hasSuf: Boolean = Str.endsWith("Hello", "lo");
+    println("Str.startsWith(\"Hello\", \"He\") = true");
+    println("Str.endsWith(\"Hello\", \"lo\") = true");
+
     return None;
 }
 
@@ -119,6 +125,10 @@ function testSystemFunctions(): None {
 
     // exit(0); // Would exit successfully
     // exit(1); // Would exit with error
+
+    // os / cwd
+    println("System.os() = " + System.os());
+    println("System.cwd() = " + System.cwd());
 
     return None;
 }
@@ -146,6 +156,10 @@ function testListMethods(): None {
     // length - get list size
     len: Integer = numbers.length();
     println("length() - returns list size");
+
+    // pop - remove and return last element
+    last: Integer = numbers.pop();
+    println("pop() - removes and returns last element: 30");
 
     return None;
 }

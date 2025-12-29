@@ -37,7 +37,20 @@ function main(): None {
         println("Contains 'Rust': false");
     }
 
-    // 5. Comparison
+    // 5. StartsWith / EndsWith
+    if (Str.startsWith(trimmed, "Apex")) {
+        println("Starts with 'Apex': true");
+    }
+    if (Str.endsWith(trimmed, "Language")) {
+        println("Ends with 'Language': true");
+    }
+    if (Str.startsWith(trimmed, "Java")) {
+        println("Starts with 'Java': true");
+    } else {
+        println("Starts with 'Java': false");
+    }
+
+    // 6. Comparison
     if (Str.compare(lower, "apex language") == 0) {
         println("Lower case comparison: OK");
     }
