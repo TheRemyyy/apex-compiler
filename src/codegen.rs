@@ -4068,6 +4068,37 @@ impl<'ctx> Codegen<'ctx> {
             }
             "to_string" => {
                 let val = self.compile_expr(&args[0].node)?;
+
+                // Special handling for Booleans (i1 in LLVM)
+                if val.is_int_value() && val.into_int_value().get_type().get_bit_width() == 1 {
+                    let int_val = val.into_int_value();
+                    let true_s = self.context.const_string(b"true", true);
+                    let false_s = self.context.const_string(b"false", true);
+
+                    let t_name = format!("str.bool.true.{}", self.str_counter);
+                    let f_name = format!("str.bool.false.{}", self.str_counter);
+                    self.str_counter += 1;
+
+                    let t_glob = self.module.add_global(true_s.get_type(), None, &t_name);
+                    t_glob.set_initializer(&true_s);
+                    t_glob.set_constant(true);
+
+                    let f_glob = self.module.add_global(false_s.get_type(), None, &f_name);
+                    f_glob.set_initializer(&false_s);
+                    f_glob.set_constant(true);
+
+                    let res = self
+                        .builder
+                        .build_select(
+                            int_val,
+                            t_glob.as_pointer_value(),
+                            f_glob.as_pointer_value(),
+                            "bool_str",
+                        )
+                        .unwrap();
+                    return Ok(Some(res.into()));
+                }
+
                 let sprintf = self.get_or_declare_sprintf();
                 let malloc = self.get_or_declare_malloc();
 
@@ -4081,7 +4112,13 @@ impl<'ctx> Codegen<'ctx> {
 
                 // Format string based on type
                 let (fmt, print_args): (&str, Vec<BasicMetadataValueEnum>) = if val.is_int_value() {
-                    ("%lld", vec![val.into()])
+                    // Promote to i64 for %lld
+                    let int_val = val.into_int_value();
+                    let promoted = self
+                        .builder
+                        .build_int_s_extend(int_val, self.context.i64_type(), "promoted")
+                        .unwrap();
+                    ("%lld", vec![promoted.into()])
                 } else if val.is_float_value() {
                     ("%f", vec![val.into()])
                 } else {
