@@ -4,12 +4,15 @@
 
 ### ✨ Added
 
+- **Args Module**: Introduced support for command-line arguments via the `Args` object.
+  - `Args.count()`: Returns the number of arguments.
+  - `Args.get(index)`: Retrieves a specific argument.
 - **Str Module**: Introduced the `Str` static object for string manipulation (renamed from `String` to avoid type name collisions).
   - `Str.len(s)`: Get string length.
   - `Str.compare(a, b)`: Compare two strings.
   - `Str.concat(a, b)`: Concatenate two strings.
   - `Str.upper(s)`: Convert to uppercase (stub).
-- **System Module**: Added support for OS interactions via `System` object.
+- **System Module Improvements**:
   - `System.getenv(name)`: Get environment variables.
   - `System.shell(cmd)`: Run shell command (exit code).
   - `System.exec(cmd)`: Run shell command and capture stdout.
@@ -20,12 +23,17 @@
   - `Time.now(format)`: Returns formatted local time.
   - `Time.unix()`: Returns raw Unix timestamp.
   - `Time.sleep(ms)`: Suspends program execution.
-- **New Examples**: Added `19_time.apex`, `20_system.apex`.
+- **New Examples**: Added `19_time.apex`, `20_system.apex`, `21_conversions.apex`, `22_args.apex`.
 
 ### ♻️ Changed
 
 - **Math Unification**: All mathematical functions (sqrt, sin, abs, etc.) now require the `Math.` prefix for consistency and better namespacing.
+- **Improved For Loops**: Loop ranges now support variables (e.g., `for (i in 0..count)`), allowing for dynamic iteration.
 - **Standard Library Expansion**: Continued efforts to expand the builtin library capabilities.
+
+### 🐛 Fixed
+
+- **Boolean String Conversion**: `to_string(bool)` now correctly returns "true" or "false" instead of garbage values.
 
 ## [1.1.3] - 2025-12-29
 

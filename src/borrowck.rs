@@ -478,7 +478,7 @@ impl BorrowChecker {
                     if let Expr::Ident(name) = &object.node {
                         if matches!(
                             name.as_str(),
-                            "File" | "Time" | "System" | "Math" | "Str"
+                            "File" | "Time" | "System" | "Math" | "Str" | "Args"
                         ) {
                             param_modes = vec![ParamMode::Borrow; args.len()];
                         }

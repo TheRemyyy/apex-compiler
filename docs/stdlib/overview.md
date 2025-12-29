@@ -9,6 +9,7 @@ The Apex Standard Library (`std`) provides core functionality for building appli
 - [Time](time.md): Time retrieval and sleeping.
 - [File](io.md): File system operations.
 - [System](system.md): System-level interactions (exit, getenv, etc.).
+- [Args](args.md): Command-line arguments.
 - [Collections](collections.md): Built-in List and Map types.
 - [I/O](io.md): Console input and output.
 

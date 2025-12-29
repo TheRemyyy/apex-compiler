@@ -1013,7 +1013,7 @@ impl TypeChecker {
         if let Expr::Field { object, field } = callee {
             // Special handling for static calls (e.g. File.read, Time.now)
             if let Expr::Ident(name) = &object.node {
-                if matches!(name.as_str(), "File" | "Time" | "System" | "Math" | "Str") {
+                if matches!(name.as_str(), "File" | "Time" | "System" | "Math" | "Str" | "Args") {
                     let builtin_name = format!("{}__{}", name, field);
                     if let Some(ret) = self.check_builtin_call(&builtin_name, args, span.clone()) {
                         return ret;
@@ -1329,6 +1329,21 @@ impl TypeChecker {
             "Math__e" => {
                 self.check_arg_count(name, args, 0, span);
                 Some(ResolvedType::Float)
+            }
+            // Args Functions
+            "Args__count" => {
+                self.check_arg_count(name, args, 0, span);
+                Some(ResolvedType::Integer)
+            }
+            "Args__get" => {
+                self.check_arg_count(name, args, 1, span.clone());
+                if !args.is_empty() {
+                    let t = self.check_expr(&args[0].node, args[0].span.clone());
+                    if !matches!(t, ResolvedType::Integer) {
+                        self.error("Args.get() requires Integer index".to_string(), span.clone());
+                    }
+                }
+                Some(ResolvedType::String)
             }
             _ => None,
         }

@@ -531,12 +531,11 @@ impl<'ctx> Codegen<'ctx> {
 
         // Main function always returns i32 for C runtime compatibility
         let fn_type = if func.name == "main" {
-            // Main doesn't get an env_ptr in standard C entry
-            let main_params: Vec<BasicMetadataTypeEnum> = func
-                .params
-                .iter()
-                .map(|p| self.llvm_type(&p.ty).into())
-                .collect();
+            // main(argc: i32, argv: i8**)
+            let main_params: Vec<BasicMetadataTypeEnum> = vec![
+                self.context.i32_type().into(),
+                self.context.ptr_type(AddressSpace::default()).into(),
+            ];
             self.context.i32_type().fn_type(&main_params, false)
         } else {
             match &func.return_type {
@@ -569,10 +568,51 @@ impl<'ctx> Codegen<'ctx> {
         self.variables.clear();
         self.loop_stack.clear();
 
+        // Special handling for main: store argc/argv in globals
+        if func.name == "main" {
+            let argc = function.get_nth_param(0).unwrap().into_int_value();
+            let argv = function.get_nth_param(1).unwrap().into_pointer_value();
+
+            let argc_global = match self.module.get_global("_apex_argc") {
+                Some(g) => g,
+                None => {
+                    let g = self
+                        .module
+                        .add_global(self.context.i32_type(), None, "_apex_argc");
+                    g.set_initializer(&self.context.i32_type().const_int(0, false));
+                    g
+                }
+            };
+            self.builder
+                .build_store(argc_global.as_pointer_value(), argc)
+                .unwrap();
+
+            let argv_global = match self.module.get_global("_apex_argv") {
+                Some(g) => g,
+                None => {
+                    let g = self.module.add_global(
+                        self.context.ptr_type(AddressSpace::default()),
+                        None,
+                        "_apex_argv",
+                    );
+                    g.set_initializer(
+                        &self.context.ptr_type(AddressSpace::default()).const_null(),
+                    );
+                    g
+                }
+            };
+            self.builder
+                .build_store(argv_global.as_pointer_value(), argv)
+                .unwrap();
+        }
+
         // Allocate parameters
-        // Param 0 is env_ptr
+        // Param 0 is argc for main, but for other functions 0 is env_ptr
+        // We skip argc/argv for main in the regular parameter allocation loop
+        // because main() in Apex is usually main(): None
+        let start_idx = if func.name == "main" { 2 } else { 1 };
         for (i, param) in func.params.iter().enumerate() {
-            let llvm_param = function.get_nth_param((i + 1) as u32).unwrap();
+            let llvm_param = function.get_nth_param((i + start_idx) as u32).unwrap();
             let alloca = self
                 .builder
                 .build_alloca(self.llvm_type(&param.ty), &param.name)
@@ -819,16 +859,38 @@ impl<'ctx> Codegen<'ctx> {
         iterable: &Spanned<Expr>,
         body: &Block,
     ) -> Result<()> {
-        // For now, treat as range-based loop: for (i in 0..10)
-        // Simplified: assume iterable is a range expression
         let func = self.current_function.unwrap();
-
         let ty = var_type.cloned().unwrap_or(Type::Integer);
         let var_alloca = self.builder.build_alloca(self.llvm_type(&ty), var).unwrap();
 
-        // Initialize to start value (simplified: 0)
-        let zero = self.context.i64_type().const_int(0, false);
-        self.builder.build_store(var_alloca, zero).unwrap();
+        // Default range values
+        let mut start_val = self.context.i64_type().const_int(0, false).into();
+        let mut end_val = self.context.i64_type().const_int(0, false).into();
+        let mut inclusive = false;
+
+        match &iterable.node {
+            Expr::Range {
+                start,
+                end,
+                inclusive: inc,
+            } => {
+                if let Some(s) = start {
+                    start_val = self.compile_expr(&s.node)?;
+                }
+                if let Some(e) = end {
+                    end_val = self.compile_expr(&e.node)?;
+                }
+                inclusive = *inc;
+            }
+            _ => {
+                // Treat as 0..N where N is the expression value
+                end_val = self.compile_expr(&iterable.node)?;
+            }
+        }
+
+        let end_val = end_val.into_int_value();
+        self.builder.build_store(var_alloca, start_val).unwrap();
+
         self.variables.insert(
             var.to_string(),
             Variable {
@@ -836,9 +898,6 @@ impl<'ctx> Codegen<'ctx> {
                 ty: ty.clone(),
             },
         );
-
-        // Get end value from iterable
-        let end_val = self.compile_expr(&iterable.node)?.into_int_value();
 
         let cond_bb = self.context.append_basic_block(func, "for.cond");
         let body_bb = self.context.append_basic_block(func, "for.body");
@@ -854,10 +913,17 @@ impl<'ctx> Codegen<'ctx> {
             .build_load(self.context.i64_type(), var_alloca, var)
             .unwrap()
             .into_int_value();
-        let cond = self
-            .builder
-            .build_int_compare(IntPredicate::SLT, current, end_val, "cmp")
-            .unwrap();
+
+        let cond = if inclusive {
+            self.builder
+                .build_int_compare(IntPredicate::SLE, current, end_val, "cmp")
+                .unwrap()
+        } else {
+            self.builder
+                .build_int_compare(IntPredicate::SLT, current, end_val, "cmp")
+                .unwrap()
+        };
+
         self.builder
             .build_conditional_branch(cond, body_bb, after_bb)
             .unwrap();
@@ -1647,7 +1713,7 @@ impl<'ctx> Codegen<'ctx> {
             if let Expr::Ident(name) = &object.node {
                 if matches!(
                     name.as_str(),
-                    "File" | "Time" | "System" | "Math" | "Str"
+                    "File" | "Time" | "System" | "Math" | "Str" | "Args"
                 ) {
                     let builtin_name = format!("{}__{}", name, field);
                     if let Some(result) = self.compile_stdlib_function(&builtin_name, args)? {
@@ -4220,8 +4286,67 @@ impl<'ctx> Codegen<'ctx> {
 
             "Str__upper" => {
                 let s = self.compile_expr(&args[0].node)?;
-                // Stub for now
-                Ok(Some(s))
+                let s_ptr = s.into_pointer_value();
+
+                let strlen_fn = self.get_or_declare_strlen();
+                let malloc_fn = self.get_or_declare_malloc();
+                let toupper_fn = self.get_or_declare_toupper();
+
+                // 1. Get length
+                let len_call = self.builder.build_call(strlen_fn, &[s_ptr.into()], "len").unwrap();
+                let len = self.extract_call_value(len_call).into_int_value();
+
+                // 2. Allocate new buffer (len + 1)
+                let one = self.context.i64_type().const_int(1, false);
+                let size = self.builder.build_int_add(len, one, "size").unwrap();
+                let buf_call = self.builder.build_call(malloc_fn, &[size.into()], "buf").unwrap();
+                let buf = self.extract_call_value(buf_call).into_pointer_value();
+
+                // 3. Loop through characters
+                let current_fn = self.current_function.unwrap();
+                let cond_bb = self.context.append_basic_block(current_fn, "upper.cond");
+                let body_bb = self.context.append_basic_block(current_fn, "upper.body");
+                let after_bb = self.context.append_basic_block(current_fn, "upper.after");
+
+                let index_ptr = self.builder.build_alloca(self.context.i64_type(), "i").unwrap();
+                self.builder.build_store(index_ptr, self.context.i64_type().const_int(0, false)).unwrap();
+
+                self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+                // Condition: i < len
+                self.builder.position_at_end(cond_bb);
+                let i = self.builder.build_load(self.context.i64_type(), index_ptr, "i").unwrap().into_int_value();
+                let cond = self.builder.build_int_compare(IntPredicate::SLT, i, len, "cmp").unwrap();
+                self.builder.build_conditional_branch(cond, body_bb, after_bb).unwrap();
+
+                // Body
+                self.builder.position_at_end(body_bb);
+                
+                // char = s[i]
+                let char_ptr = unsafe { self.builder.build_gep(self.context.i8_type(), s_ptr, &[i], "char_ptr").unwrap() };
+                let char_val = self.builder.build_load(self.context.i8_type(), char_ptr, "char").unwrap();
+                
+                // upper_char = toupper(char)
+                let char_i32 = self.builder.build_int_s_extend(char_val.into_int_value(), self.context.i32_type(), "char32").unwrap();
+                let upper_call = self.builder.build_call(toupper_fn, &[char_i32.into()], "upper_char32").unwrap();
+                let upper_char32 = self.extract_call_value(upper_call).into_int_value();
+                let upper_char = self.builder.build_int_truncate(upper_char32, self.context.i8_type(), "upper_char").unwrap();
+                
+                // buf[i] = upper_char
+                let dest_ptr = unsafe { self.builder.build_gep(self.context.i8_type(), buf, &[i], "dest_ptr").unwrap() };
+                self.builder.build_store(dest_ptr, upper_char).unwrap();
+
+                // i = i + 1
+                let next_i = self.builder.build_int_add(i, one, "next_i").unwrap();
+                self.builder.build_store(index_ptr, next_i).unwrap();
+                self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+                // After loop: null terminate
+                self.builder.position_at_end(after_bb);
+                let term_ptr = unsafe { self.builder.build_gep(self.context.i8_type(), buf, &[len], "term_ptr").unwrap() };
+                self.builder.build_store(term_ptr, self.context.i8_type().const_int(0, false)).unwrap();
+
+                Ok(Some(buf.into()))
             }
 
             // I/O functions
@@ -4775,6 +4900,52 @@ impl<'ctx> Codegen<'ctx> {
                     .into(),
             )),
 
+            // Args Functions
+            "Args__count" => {
+                let argc_global = self.module.get_global("_apex_argc").unwrap();
+                let argc = self
+                    .builder
+                    .build_load(self.context.i32_type(), argc_global.as_pointer_value(), "argc")
+                    .unwrap()
+                    .into_int_value();
+                let argc64 = self
+                    .builder
+                    .build_int_s_extend(argc, self.context.i64_type(), "argc64")
+                    .unwrap();
+                Ok(Some(argc64.into()))
+            }
+
+            "Args__get" => {
+                let index = self.compile_expr(&args[0].node)?.into_int_value();
+                let argv_global = self.module.get_global("_apex_argv").unwrap();
+                let argv = self
+                    .builder
+                    .build_load(
+                        self.context.ptr_type(AddressSpace::default()),
+                        argv_global.as_pointer_value(),
+                        "argv",
+                    )
+                    .unwrap()
+                    .into_pointer_value();
+
+                // index is i64, need to truncate to i32 for GEP if needed, but ptr is 64bit
+                let elem_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            self.context.ptr_type(AddressSpace::default()),
+                            argv,
+                            &[index],
+                            "arg_ptr",
+                        )
+                        .unwrap()
+                };
+                let arg_ptr = self
+                    .builder
+                    .build_load(self.context.ptr_type(AddressSpace::default()), elem_ptr, "arg")
+                    .unwrap();
+                Ok(Some(arg_ptr))
+            }
+
             // Not a stdlib function
             _ => Ok(None),
         }
@@ -4895,6 +5066,18 @@ impl<'ctx> Codegen<'ctx> {
             return f;
         }
         let fn_type = self.context.i32_type().fn_type(&[], false);
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn get_or_declare_toupper(&mut self) -> FunctionValue<'ctx> {
+        let name = "toupper";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let fn_type = self
+            .context
+            .i32_type()
+            .fn_type(&[self.context.i32_type().into()], false);
         self.module.add_function(name, fn_type, None)
     }
 
