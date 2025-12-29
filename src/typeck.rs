@@ -1013,7 +1013,10 @@ impl TypeChecker {
         if let Expr::Field { object, field } = callee {
             // Special handling for static calls (e.g. File.read, Time.now)
             if let Expr::Ident(name) = &object.node {
-                if matches!(name.as_str(), "File" | "Time" | "System" | "Math" | "Str" | "Args") {
+                if matches!(
+                    name.as_str(),
+                    "File" | "Time" | "System" | "Math" | "Str" | "Args"
+                ) {
                     let builtin_name = format!("{}__{}", name, field);
                     if let Some(ret) = self.check_builtin_call(&builtin_name, args, span.clone()) {
                         return ret;
@@ -1090,14 +1093,21 @@ impl TypeChecker {
                 }
             }
             "Math__min" | "Math__max" => {
-                let func_name = if name.contains("min") { "Math.min" } else { "Math.max" };
+                let func_name = if name.contains("min") {
+                    "Math.min"
+                } else {
+                    "Math.max"
+                };
                 self.check_arg_count(name, args, 2, span.clone());
                 if args.len() >= 2 {
                     let t1 = self.check_expr(&args[0].node, args[0].span.clone());
                     let t2 = self.check_expr(&args[1].node, args[1].span.clone());
                     if !self.types_compatible(&t1, &t2) {
                         self.error(
-                            format!("{}() arguments must have same type: {} vs {}", func_name, t1, t2),
+                            format!(
+                                "{}() arguments must have same type: {} vs {}",
+                                func_name, t1, t2
+                            ),
                             span,
                         );
                     }
@@ -1106,13 +1116,20 @@ impl TypeChecker {
                     Some(ResolvedType::Unknown)
                 }
             }
-            "Math__sqrt" | "Math__sin" | "Math__cos" | "Math__tan" | "Math__floor" | "Math__ceil" | "Math__round" | "Math__log" | "Math__log10"
-            | "Math__exp" => {
+            "Math__sqrt" | "Math__sin" | "Math__cos" | "Math__tan" | "Math__floor"
+            | "Math__ceil" | "Math__round" | "Math__log" | "Math__log10" | "Math__exp" => {
                 self.check_arg_count(name, args, 1, span.clone());
                 if !args.is_empty() {
                     let t = self.check_expr(&args[0].node, args[0].span.clone());
                     if !t.is_numeric() {
-                        self.error(format!("{}() requires numeric type, got {}", name.replace("__", "."), t), span);
+                        self.error(
+                            format!(
+                                "{}() requires numeric type, got {}",
+                                name.replace("__", "."),
+                                t
+                            ),
+                            span,
+                        );
                     }
                 }
                 Some(ResolvedType::Float)
@@ -1216,7 +1233,10 @@ impl TypeChecker {
                     let t1 = self.check_expr(&args[0].node, args[0].span.clone());
                     let t2 = self.check_expr(&args[1].node, args[1].span.clone());
                     if !matches!(t1, ResolvedType::String) || !matches!(t2, ResolvedType::String) {
-                        self.error("Str.contains() requires two String arguments".to_string(), span.clone());
+                        self.error(
+                            "Str.contains() requires two String arguments".to_string(),
+                            span.clone(),
+                        );
                     }
                 }
                 Some(ResolvedType::Boolean)
@@ -1227,7 +1247,14 @@ impl TypeChecker {
                     let t1 = self.check_expr(&args[0].node, args[0].span.clone());
                     let t2 = self.check_expr(&args[1].node, args[1].span.clone());
                     if !matches!(t1, ResolvedType::String) || !matches!(t2, ResolvedType::String) {
-                        self.error(format!("{}.{}() requires two String arguments", name.split("__").next().unwrap(), name.split("__").last().unwrap()), span.clone());
+                        self.error(
+                            format!(
+                                "{}.{}() requires two String arguments",
+                                name.split("__").next().unwrap(),
+                                name.split("__").last().unwrap()
+                            ),
+                            span.clone(),
+                        );
                     }
                 }
                 Some(ResolvedType::Boolean)
@@ -1305,7 +1332,10 @@ impl TypeChecker {
                 if !args.is_empty() {
                     let t = self.check_expr(&args[0].node, args[0].span.clone());
                     if !matches!(t, ResolvedType::String) {
-                        self.error("Time.now() requires String format".to_string(), span.clone());
+                        self.error(
+                            "Time.now() requires String format".to_string(),
+                            span.clone(),
+                        );
                     }
                 }
                 Some(ResolvedType::String)
@@ -1319,7 +1349,10 @@ impl TypeChecker {
                 if !args.is_empty() {
                     let t = self.check_expr(&args[0].node, args[0].span.clone());
                     if !matches!(t, ResolvedType::Integer) {
-                        self.error("Time.sleep() requires Integer milliseconds".to_string(), span);
+                        self.error(
+                            "Time.sleep() requires Integer milliseconds".to_string(),
+                            span,
+                        );
                     }
                 }
                 Some(ResolvedType::None)
@@ -1330,7 +1363,10 @@ impl TypeChecker {
                 if !args.is_empty() {
                     let t = self.check_expr(&args[0].node, args[0].span.clone());
                     if !matches!(t, ResolvedType::String) {
-                        self.error("System.getenv() requires String name".to_string(), span.clone());
+                        self.error(
+                            "System.getenv() requires String name".to_string(),
+                            span.clone(),
+                        );
                     }
                 }
                 Some(ResolvedType::String)
@@ -1340,7 +1376,10 @@ impl TypeChecker {
                 if !args.is_empty() {
                     let t = self.check_expr(&args[0].node, args[0].span.clone());
                     if !matches!(t, ResolvedType::String) {
-                        self.error("System.shell() requires String command".to_string(), span.clone());
+                        self.error(
+                            "System.shell() requires String command".to_string(),
+                            span.clone(),
+                        );
                     }
                 }
                 Some(ResolvedType::Integer)
@@ -1350,7 +1389,10 @@ impl TypeChecker {
                 if !args.is_empty() {
                     let t = self.check_expr(&args[0].node, args[0].span.clone());
                     if !matches!(t, ResolvedType::String) {
-                        self.error("System.exec() requires String command".to_string(), span.clone());
+                        self.error(
+                            "System.exec() requires String command".to_string(),
+                            span.clone(),
+                        );
                     }
                 }
                 Some(ResolvedType::String)
@@ -1382,7 +1424,10 @@ impl TypeChecker {
                 if !args.is_empty() {
                     let t = self.check_expr(&args[0].node, args[0].span.clone());
                     if !matches!(t, ResolvedType::Integer) {
-                        self.error("Args.get() requires Integer index".to_string(), span.clone());
+                        self.error(
+                            "Args.get() requires Integer index".to_string(),
+                            span.clone(),
+                        );
                     }
                 }
                 Some(ResolvedType::String)

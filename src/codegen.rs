@@ -595,9 +595,7 @@ impl<'ctx> Codegen<'ctx> {
                         None,
                         "_apex_argv",
                     );
-                    g.set_initializer(
-                        &self.context.ptr_type(AddressSpace::default()).const_null(),
-                    );
+                    g.set_initializer(&self.context.ptr_type(AddressSpace::default()).const_null());
                     g
                 }
             };
@@ -4349,8 +4347,7 @@ impl<'ctx> Codegen<'ctx> {
                             "bool_str",
                         )
                         .unwrap();
-                    return Ok(Some(res.into()));
-                }
+                                            return Ok(Some(res));                }
 
                 let sprintf = self.get_or_declare_sprintf();
                 let malloc = self.get_or_declare_malloc();
@@ -4647,7 +4644,11 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
                 let alloc_size = self
                     .builder
-                    .build_int_add(new_len, self.context.i64_type().const_int(1, false), "alloc")
+                    .build_int_add(
+                        new_len,
+                        self.context.i64_type().const_int(1, false),
+                        "alloc",
+                    )
                     .unwrap();
                 let buf_call = self
                     .builder
@@ -4750,10 +4751,18 @@ impl<'ctx> Codegen<'ctx> {
                     .build_int_compare(IntPredicate::UGE, s_len_val, suf_len_val, "can_end")
                     .unwrap();
 
-                let start_idx = self.builder.build_int_sub(s_len_val, suf_len_val, "").unwrap();
+                let start_idx = self
+                    .builder
+                    .build_int_sub(s_len_val, suf_len_val, "")
+                    .unwrap();
                 let s_suffix_ptr = unsafe {
                     self.builder
-                        .build_gep(self.context.i8_type(), s.into_pointer_value(), &[start_idx], "")
+                        .build_gep(
+                            self.context.i8_type(),
+                            s.into_pointer_value(),
+                            &[start_idx],
+                            "",
+                        )
                         .unwrap()
                 };
 
@@ -5100,36 +5109,80 @@ impl<'ctx> Codegen<'ctx> {
 
                 // 1. Get current time
                 let null = self.context.ptr_type(AddressSpace::default()).const_null();
-                let t_val = self.builder.build_call(time_fn, &[null.into()], "t").unwrap();
+                let t_val = self
+                    .builder
+                    .build_call(time_fn, &[null.into()], "t")
+                    .unwrap();
                 let t_raw = self.extract_call_value(t_val);
 
                 // 2. Alloca for time_t (i64)
-                let t_ptr = self.builder.build_alloca(self.context.i64_type(), "t_ptr").unwrap();
+                let t_ptr = self
+                    .builder
+                    .build_alloca(self.context.i64_type(), "t_ptr")
+                    .unwrap();
                 self.builder.build_store(t_ptr, t_raw).unwrap();
 
                 // 3. Get local time struct pointer
-                let tm_ptr_val = self.builder.build_call(localtime_fn, &[t_ptr.into()], "tm").unwrap();
+                let tm_ptr_val = self
+                    .builder
+                    .build_call(localtime_fn, &[t_ptr.into()], "tm")
+                    .unwrap();
                 let tm_ptr = self.extract_call_value(tm_ptr_val).into_pointer_value();
 
                 // 4. Allocate buffer for string (64 bytes should be enough for time)
                 let buf_size = self.context.i64_type().const_int(64, false);
-                let buf_ptr_val = self.builder.build_call(malloc, &[buf_size.into()], "buf").unwrap();
+                let buf_ptr_val = self
+                    .builder
+                    .build_call(malloc, &[buf_size.into()], "buf")
+                    .unwrap();
                 let buf_ptr = self.extract_call_value(buf_ptr_val).into_pointer_value();
 
                 // 5. If format is empty string, use default "%H:%M:%S"
                 let strlen_fn = self.get_or_declare_strlen();
-                let is_empty = self.builder.build_call(strlen_fn, &[format.into()], "len").unwrap();
+                let is_empty = self
+                    .builder
+                    .build_call(strlen_fn, &[format.into()], "len")
+                    .unwrap();
                 let is_empty_val = self.extract_call_value(is_empty).into_int_value();
-                let is_zero = self.builder.build_int_compare(IntPredicate::EQ, is_empty_val, self.context.i64_type().const_int(0, false), "is_zero").unwrap();
-                
+                let is_zero = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        is_empty_val,
+                        self.context.i64_type().const_int(0, false),
+                        "is_zero",
+                    )
+                    .unwrap();
+
                 let default_fmt = self.context.const_string(b"%H:%M:%S", true);
-                let default_fmt_global = self.module.add_global(default_fmt.get_type(), None, "default_time_fmt");
+                let default_fmt_global =
+                    self.module
+                        .add_global(default_fmt.get_type(), None, "default_time_fmt");
                 default_fmt_global.set_initializer(&default_fmt);
-                
-                let actual_fmt = self.builder.build_select(is_zero, default_fmt_global.as_pointer_value(), format.into_pointer_value(), "fmt").unwrap();
+
+                let actual_fmt = self
+                    .builder
+                    .build_select(
+                        is_zero,
+                        default_fmt_global.as_pointer_value(),
+                        format.into_pointer_value(),
+                        "fmt",
+                    )
+                    .unwrap();
 
                 // 6. Call strftime(buf, 64, format, tm)
-                self.builder.build_call(strftime_fn, &[buf_ptr.into(), buf_size.into(), actual_fmt.into(), tm_ptr.into()], "res").unwrap();
+                self.builder
+                    .build_call(
+                        strftime_fn,
+                        &[
+                            buf_ptr.into(),
+                            buf_size.into(),
+                            actual_fmt.into(),
+                            tm_ptr.into(),
+                        ],
+                        "res",
+                    )
+                    .unwrap();
 
                 Ok(Some(buf_ptr.into()))
             }
@@ -5243,17 +5296,26 @@ impl<'ctx> Codegen<'ctx> {
                 let mode_global = self.module.add_global(mode.get_type(), None, "mode_pop_r");
                 mode_global.set_initializer(&mode);
 
-                let pipe_val = self.builder.build_call(popen_fn, &[cmd.into(), mode_global.as_pointer_value().into()], "pipe").unwrap();
+                let pipe_val = self
+                    .builder
+                    .build_call(
+                        popen_fn,
+                        &[cmd.into(), mode_global.as_pointer_value().into()],
+                        "pipe",
+                    )
+                    .unwrap();
                 let pipe_ptr = self.extract_call_value(pipe_val).into_pointer_value();
 
                 let is_null = self.builder.build_is_null(pipe_ptr, "is_null").unwrap();
-                
+
                 let current_fn = self.current_function.unwrap();
                 let success_bb = self.context.append_basic_block(current_fn, "exec.ok");
                 let fail_bb = self.context.append_basic_block(current_fn, "exec.fail");
                 let merge_bb = self.context.append_basic_block(current_fn, "exec.merge");
 
-                self.builder.build_conditional_branch(is_null, fail_bb, success_bb).unwrap();
+                self.builder
+                    .build_conditional_branch(is_null, fail_bb, success_bb)
+                    .unwrap();
 
                 // Fail - return empty string
                 self.builder.position_at_end(fail_bb);
@@ -5263,23 +5325,44 @@ impl<'ctx> Codegen<'ctx> {
                 // Success - Read from pipe
                 self.builder.position_at_end(success_bb);
                 let buf_size = self.context.i64_type().const_int(4096, false); // Cap at 4KB for simplicity
-                let buf_call = self.builder.build_call(malloc, &[buf_size.into()], "buf").unwrap();
+                let buf_call = self
+                    .builder
+                    .build_call(malloc, &[buf_size.into()], "buf")
+                    .unwrap();
                 let buf = self.extract_call_value(buf_call).into_pointer_value();
 
                 let one = self.context.i64_type().const_int(1, false);
-                let read_len_call = self.builder.build_call(fread_fn, &[buf.into(), one.into(), buf_size.into(), pipe_ptr.into()], "read_len").unwrap();
+                let read_len_call = self
+                    .builder
+                    .build_call(
+                        fread_fn,
+                        &[buf.into(), one.into(), buf_size.into(), pipe_ptr.into()],
+                        "read_len",
+                    )
+                    .unwrap();
                 let read_len = self.extract_call_value(read_len_call).into_int_value();
 
                 // Null terminate at read_len
-                let term_ptr = unsafe { self.builder.build_gep(self.context.i8_type(), buf, &[read_len], "term_ptr").unwrap() };
-                self.builder.build_store(term_ptr, self.context.i8_type().const_int(0, false)).unwrap();
+                let term_ptr = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), buf, &[read_len], "term_ptr")
+                        .unwrap()
+                };
+                self.builder
+                    .build_store(term_ptr, self.context.i8_type().const_int(0, false))
+                    .unwrap();
 
-                self.builder.build_call(pclose_fn, &[pipe_ptr.into()], "").unwrap();
+                self.builder
+                    .build_call(pclose_fn, &[pipe_ptr.into()], "")
+                    .unwrap();
                 self.builder.build_unconditional_branch(merge_bb).unwrap();
 
                 // Merge
                 self.builder.position_at_end(merge_bb);
-                let phi = self.builder.build_phi(self.context.ptr_type(AddressSpace::default()), "res").unwrap();
+                let phi = self
+                    .builder
+                    .build_phi(self.context.ptr_type(AddressSpace::default()), "res")
+                    .unwrap();
                 phi.add_incoming(&[(&empty_str, fail_bb), (&buf, success_bb)]);
                 Ok(Some(phi.as_basic_value()))
             }
@@ -5321,7 +5404,11 @@ impl<'ctx> Codegen<'ctx> {
                 let argc_global = self.module.get_global("_apex_argc").unwrap();
                 let argc = self
                     .builder
-                    .build_load(self.context.i32_type(), argc_global.as_pointer_value(), "argc")
+                    .build_load(
+                        self.context.i32_type(),
+                        argc_global.as_pointer_value(),
+                        "argc",
+                    )
                     .unwrap()
                     .into_int_value();
                 let argc64 = self
@@ -5357,7 +5444,11 @@ impl<'ctx> Codegen<'ctx> {
                 };
                 let arg_ptr = self
                     .builder
-                    .build_load(self.context.ptr_type(AddressSpace::default()), elem_ptr, "arg")
+                    .build_load(
+                        self.context.ptr_type(AddressSpace::default()),
+                        elem_ptr,
+                        "arg",
+                    )
                     .unwrap();
                 Ok(Some(arg_ptr))
             }
@@ -6258,6 +6349,7 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     /// Extract class name from a Type (handles Named, Ref, MutRef, etc.)
+    #[allow(clippy::only_used_in_recursion)]
     fn type_to_class_name(&self, ty: &Type) -> Option<String> {
         match ty {
             Type::Named(name) => Some(name.clone()),

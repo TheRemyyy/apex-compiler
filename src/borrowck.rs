@@ -487,7 +487,6 @@ impl BorrowChecker {
                         }
                     }
 
-
                     // Method call - ideally we'd know the type of object
                     // For now, look for any method with this name across all classes
                     // (heuristic until we have full type info in borrowck)
