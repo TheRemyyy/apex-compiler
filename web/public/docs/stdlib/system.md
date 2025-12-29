@@ -41,6 +41,15 @@ currentDir: String = System.cwd();
 println("Working in: {currentDir}");
 ```
 
+### `System.os(): String`
+
+Returns the name of the operating system ("windows", "macos", "linux", or "unknown").
+
+```apex
+os: String = System.os();
+println("Running on {os}");
+```
+
 ### `System.exit(code: Integer): None`
 
 Terminates the program immediately with the specified exit code. `0` usually indicates success, while any other value indicates an error.

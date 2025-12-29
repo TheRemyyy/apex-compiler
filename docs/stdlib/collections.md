@@ -19,6 +19,14 @@ list: List<Integer> = List<Integer>();
 list.push(42);
 ```
 
+#### `pop(): T`
+
+Removes and returns the last element from the list.
+
+```apex
+last: Integer = list.pop();
+```
+
 #### `get(index: Integer): T`
 
 Returns the element at the specified index. Panics if index is out of bounds.

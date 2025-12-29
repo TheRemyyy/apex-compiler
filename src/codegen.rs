@@ -3233,6 +3233,81 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
                 Ok(length)
             }
+            "pop" => {
+                // Get current length
+                let i32_type = self.context.i32_type();
+                let zero = i32_type.const_int(0, false);
+                let length_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(1, false)],
+                            "len_ptr",
+                        )
+                        .unwrap()
+                };
+                let length = self
+                    .builder
+                    .build_load(self.context.i64_type(), length_ptr, "len")
+                    .unwrap()
+                    .into_int_value();
+
+                // new_length = length - 1
+                let new_length = self
+                    .builder
+                    .build_int_sub(
+                        length,
+                        self.context.i64_type().const_int(1, false),
+                        "new_len",
+                    )
+                    .unwrap();
+
+                // Update length
+                self.builder.build_store(length_ptr, new_length).unwrap();
+
+                // Get data pointer
+                let data_ptr_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(2, false)],
+                            "data_ptr_ptr",
+                        )
+                        .unwrap()
+                };
+                let data_ptr = self
+                    .builder
+                    .build_load(
+                        self.context.ptr_type(AddressSpace::default()),
+                        data_ptr_ptr,
+                        "data",
+                    )
+                    .unwrap()
+                    .into_pointer_value();
+
+                // Get value at new_length (the old last element)
+                let offset = self
+                    .builder
+                    .build_int_mul(
+                        new_length,
+                        self.context.i64_type().const_int(8, false),
+                        "offset",
+                    )
+                    .unwrap();
+                let elem_ptr = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), data_ptr, &[offset], "elem_ptr")
+                        .unwrap()
+                };
+
+                let val = self
+                    .builder
+                    .build_load(self.context.i64_type(), elem_ptr, "val")
+                    .unwrap();
+                Ok(val)
+            }
             "set" => {
                 // Get data pointer
                 let i32_type = self.context.i32_type();
@@ -4533,6 +4608,86 @@ impl<'ctx> Codegen<'ctx> {
                 let found = self.builder.build_not(is_null, "found").unwrap();
                 Ok(Some(found.into()))
             }
+            "Str__startsWith" => {
+                let s = self.compile_expr(&args[0].node)?;
+                let pre = self.compile_expr(&args[1].node)?;
+                let strlen = self.get_or_declare_strlen();
+                let strncmp = self.get_or_declare_strncmp();
+
+                let pre_len = self
+                    .builder
+                    .build_call(strlen, &[pre.into()], "pre_len")
+                    .unwrap();
+                let res = self
+                    .builder
+                    .build_call(
+                        strncmp,
+                        &[
+                            s.into(),
+                            pre.into(),
+                            self.extract_call_value(pre_len).into_int_value().into(),
+                        ],
+                        "cmp",
+                    )
+                    .unwrap();
+                let is_zero = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        self.extract_call_value(res).into_int_value(),
+                        self.context.i32_type().const_int(0, false),
+                        "is_zero",
+                    )
+                    .unwrap();
+                Ok(Some(is_zero.into()))
+            }
+            "Str__endsWith" => {
+                let s = self.compile_expr(&args[0].node)?;
+                let suf = self.compile_expr(&args[1].node)?;
+                let strlen = self.get_or_declare_strlen();
+                let strcmp = self.get_or_declare_strcmp();
+
+                let s_len = self
+                    .builder
+                    .build_call(strlen, &[s.into()], "s_len")
+                    .unwrap();
+                let suf_len = self
+                    .builder
+                    .build_call(strlen, &[suf.into()], "suf_len")
+                    .unwrap();
+
+                let s_len_val = self.extract_call_value(s_len).into_int_value();
+                let suf_len_val = self.extract_call_value(suf_len).into_int_value();
+
+                let can_end = self
+                    .builder
+                    .build_int_compare(IntPredicate::UGE, s_len_val, suf_len_val, "can_end")
+                    .unwrap();
+
+                let start_idx = self.builder.build_int_sub(s_len_val, suf_len_val, "").unwrap();
+                let s_suffix_ptr = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), s.into_pointer_value(), &[start_idx], "")
+                        .unwrap()
+                };
+
+                let res = self
+                    .builder
+                    .build_call(strcmp, &[s_suffix_ptr.into(), suf.into()], "cmp")
+                    .unwrap();
+                let is_zero = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        self.extract_call_value(res).into_int_value(),
+                        self.context.i32_type().const_int(0, false),
+                        "is_zero",
+                    )
+                    .unwrap();
+
+                let final_res = self.builder.build_and(can_end, is_zero, "").unwrap();
+                Ok(Some(final_res.into()))
+            }
 
             // I/O functions
             "read_line" => {
@@ -5057,6 +5212,23 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
                 Ok(Some(buf.into()))
             }
+            "System__os" => {
+                let os = if cfg!(target_os = "windows") {
+                    "windows"
+                } else if cfg!(target_os = "macos") {
+                    "macos"
+                } else if cfg!(target_os = "linux") {
+                    "linux"
+                } else {
+                    "unknown"
+                };
+                let str_val = self.context.const_string(os.as_bytes(), true);
+                let name = format!("str.os.{}", self.str_counter);
+                self.str_counter += 1;
+                let global = self.module.add_global(str_val.get_type(), None, &name);
+                global.set_initializer(&str_val);
+                Ok(Some(global.as_pointer_value().into()))
+            }
 
             // Args Functions
             "Args__count" => {
@@ -5460,6 +5632,22 @@ impl<'ctx> Codegen<'ctx> {
             &[
                 self.context.ptr_type(AddressSpace::default()).into(),
                 self.context.ptr_type(AddressSpace::default()).into(),
+            ],
+            false,
+        );
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn get_or_declare_strncmp(&mut self) -> FunctionValue<'ctx> {
+        let name = "strncmp";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let fn_type = self.context.i32_type().fn_type(
+            &[
+                self.context.ptr_type(AddressSpace::default()).into(),
+                self.context.ptr_type(AddressSpace::default()).into(),
+                self.context.i64_type().into(),
             ],
             false,
         );

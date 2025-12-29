@@ -15,17 +15,22 @@
   - `Str.lower(s)`: Convert to lowercase.
   - `Str.trim(s)`: Remove leading/trailing whitespace.
   - `Str.contains(s, sub)`: Check if string contains substring.
+  - `Str.startsWith(s, pre)`: Check if string starts with prefix.
+  - `Str.endsWith(s, suf)`: Check if string ends with suffix.
 - **System Module Improvements**:
   - `System.getenv(name)`: Get environment variables.
   - `System.shell(cmd)`: Run shell command (exit code).
   - `System.exec(cmd)`: Run shell command and capture stdout.
   - `System.cwd()`: Get current working directory.
+  - `System.os()`: Get operating system name.
   - `System.exit(code)`: Terminate program with exit code.
 - **Math Module Improvements**: Added `Math.pi()`, `Math.e()`, and `Math.random()`.
 - **Time Module**: Added native support for time-related operations.
   - `Time.now(format)`: Returns formatted local time.
   - `Time.unix()`: Returns raw Unix timestamp.
   - `Time.sleep(ms)`: Suspends program execution.
+- **List Improvements**:
+  - `List.pop()`: Remove and return the last element.
 - **New Examples**: Added `19_time.apex`, `20_system.apex`, `21_conversions.apex`, `22_args.apex`, `23_str_utils.apex`.
 
 ### ♻️ Changed
