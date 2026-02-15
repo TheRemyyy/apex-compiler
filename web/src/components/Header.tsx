@@ -1,12 +1,12 @@
-﻿import { useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 export function Header() {
     const [isMenuOpen, setIsMenuOpen] = useState(false);
 
     return (
-        <header className="fixed top-0 left-0 w-full h-14 bg-[#050505] border-b border-[#222] z-50">
-            <div className="flex items-center justify-between px-6 h-full">
+        <header className="header-side-padding fixed top-0 left-0 w-full h-14 bg-[#050505] border-b border-[#222] z-50 box-border">
+            <div className="flex items-center justify-between w-full h-full">
                 <div className="flex items-center gap-4">
                     <Link to="/" className="text-lg font-bold text-white tracking-tight flex items-center gap-2" onClick={() => setIsMenuOpen(false)}>
                         Apex
