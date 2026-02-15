@@ -24,30 +24,6 @@ html {
   scroll-behavior: smooth;
 }
 
-/* Navbar side padding - zaručeně viditelný od okrajů */
-.header-side-padding {
-  padding-left: 4rem;
-  padding-right: 4rem;
-}
-@media (min-width: 768px) {
-  .header-side-padding {
-    padding-left: 6rem;
-    padding-right: 6rem;
-  }
-}
-@media (min-width: 1024px) {
-  .header-side-padding {
-    padding-left: 8rem;
-    padding-right: 8rem;
-  }
-}
-@media (min-width: 1280px) {
-  .header-side-padding {
-    padding-left: 10rem;
-    padding-right: 10rem;
-  }
-}
-
 /* Remove default focus outline for all buttons */
 button:focus,
 button:focus-visible {
