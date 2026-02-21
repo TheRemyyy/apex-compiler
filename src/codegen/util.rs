@@ -1,23 +1,20 @@
 //! Utility functions for codegen: C library declarations and helper methods
+#![allow(dead_code)]
 
 use crate::ast::{
     BinOp, Expr, Literal, MatchArm, Parameter, Pattern, Spanned, Stmt, StringPart, Type, UnaryOp,
 };
-use inkwell::attributes::{Attribute, AttributeLoc};
-use inkwell::basic_block::BasicBlock;
-use inkwell::module::Module;
+
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
-use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType};
-use inkwell::values::{
-    BasicMetadataValueEnum, BasicValueEnum, FunctionValue, PointerValue, ValueKind,
-};
-use inkwell::{AddressSpace, FloatPredicate, IntPredicate, OptimizationLevel};
-use std::collections::HashMap;
+use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
+use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue, ValueKind};
+use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
+
 use std::path::Path;
 
-use crate::codegen::core::{ClassInfo, Codegen, CodegenError, LoopContext, Result, Variable};
+use crate::codegen::core::{Codegen, CodegenError, Result, Variable};
 
 impl<'ctx> Codegen<'ctx> {
     // === C Library Definitions ===

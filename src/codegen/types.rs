@@ -1,13 +1,12 @@
 //! Type-specific codegen helpers for collections, Option, and Result types
+#![allow(dead_code)]
 
-use crate::ast::{
-    Expr, Literal, MatchArm, Parameter, Pattern, Span, Spanned, Stmt, StringPart, Type,
-};
+use crate::ast::{Expr, Spanned, Type};
 use inkwell::types::BasicType;
-use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, PointerValue, ValueKind};
+use inkwell::values::{BasicValueEnum, PointerValue, ValueKind};
 use inkwell::{AddressSpace, IntPredicate};
 
-use crate::codegen::core::{ClassInfo, Codegen, CodegenError, LoopContext, Result, Variable};
+use crate::codegen::core::{Codegen, CodegenError, Result};
 
 impl<'ctx> Codegen<'ctx> {
     // === Set<T> methods ===

@@ -9,4 +9,4 @@ pub mod core;
 pub mod types;
 pub mod util;
 
-pub use core::{Codegen, CodegenError};
+pub use core::Codegen;
