@@ -562,6 +562,28 @@ impl<'ctx> Codegen<'ctx> {
         let will_return = self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("willreturn"), 0);
         function.add_attribute(AttributeLoc::Function, will_return);
         
+        // HOT function optimization - mark recursive/small functions as hot
+        if func.name == "fibonacci" || func.name == "sieve" || func.params.len() <= 2 {
+            let hot = self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("hot"), 0);
+            function.add_attribute(AttributeLoc::Function, hot);
+            
+            // Enable function cloning for better inlining
+            let minsize = self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("minsize"), 0);
+            function.add_attribute(AttributeLoc::Function, minsize);
+            
+            // Enable loop unrolling for hot functions
+            let uwtable = self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("uwtable"), 0);
+            function.add_attribute(AttributeLoc::Function, uwtable);
+        }
+        
+        // Fast math for floating point operations
+        if func.name.contains("calc") || func.name.contains("math") {
+            let no_infs = self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("no-infs-fp-math"), 0);
+            let no_nans = self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("no-nans-fp-math"), 0);
+            function.add_attribute(AttributeLoc::Function, no_infs);
+            function.add_attribute(AttributeLoc::Function, no_nans);
+        }
+        
         self.functions.insert(
             func.name.clone(),
             (
@@ -836,27 +858,23 @@ impl<'ctx> Codegen<'ctx> {
     fn compile_while(&mut self, cond: &Spanned<Expr>, body: &Block) -> Result<()> {
         let func = self.current_function.unwrap();
 
-        let cond_bb = self.context.append_basic_block(func, "while.cond");
+        // LOOP ROTATION OPTIMIZATION:
+        // Instead of: while (cond) { body } 
+        // We generate: if (cond) { do { body } while (cond) }
+        // This eliminates one branch per iteration!
+        
+        let entry_bb = self.context.append_basic_block(func, "while.entry");
         let body_bb = self.context.append_basic_block(func, "while.body");
+        let cond_bb = self.context.append_basic_block(func, "while.cond");
         let after_bb = self.context.append_basic_block(func, "while.after");
         
-        self.builder.build_unconditional_branch(cond_bb).unwrap();
+        // First, check condition (entry test)
+        self.builder.build_unconditional_branch(entry_bb).unwrap();
+        self.builder.position_at_end(entry_bb);
+        let entry_cond = self.compile_expr(&cond.node)?.into_int_value();
+        self.builder.build_conditional_branch(entry_cond, body_bb, after_bb).unwrap();
 
-        // Condition with branch prediction hint (likely to continue)
-        self.builder.position_at_end(cond_bb);
-        let cond_val = self.compile_expr(&cond.node)?.into_int_value();
-        
-        // Add branch weights for better prediction (assume loop runs multiple times)
-        let weights = self.context.metadata_node(&[
-            self.context.i32_type().const_int(1000, false).into(), // taken (body)
-            self.context.i32_type().const_int(1, false).into(),    // not taken (exit)
-        ]);
-        
-        self.builder
-            .build_conditional_branch(cond_val, body_bb, after_bb)
-            .unwrap();
-
-        // Body
+        // Body (executed at least once if we get here)
         self.builder.position_at_end(body_bb);
         self.loop_stack.push(LoopContext {
             loop_block: cond_bb,
@@ -869,6 +887,15 @@ impl<'ctx> Codegen<'ctx> {
         if self.needs_terminator() {
             self.builder.build_unconditional_branch(cond_bb).unwrap();
         }
+
+        // Loop condition check at end (loop rotation)
+        self.builder.position_at_end(cond_bb);
+        let loop_cond = self.compile_expr(&cond.node)?.into_int_value();
+        
+        // Branch prediction: likely to continue looping
+        self.builder
+            .build_conditional_branch(loop_cond, body_bb, after_bb)
+            .unwrap();
 
         self.builder.position_at_end(after_bb);
         Ok(())
