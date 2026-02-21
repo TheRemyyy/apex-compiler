@@ -1,6 +1,8 @@
 // Test 22: Command Line Arguments
 // Tests: Args.count, Args.get
 
+import std.io.*;
+
 function main(): None {
     println("=== Command Line Arguments Test ===");
 

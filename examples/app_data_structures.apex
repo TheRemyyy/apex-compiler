@@ -1,6 +1,8 @@
 // Application: Data Structures Demo
 // Implementing common data structures in Apex
 
+import std.io.*;
+
 // Stack implementation
 class Stack {
     mut top: Integer;

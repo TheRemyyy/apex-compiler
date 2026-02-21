@@ -1,6 +1,8 @@
 // Application: Todo List Manager
 // A task management app demonstrating Apex features
 
+import std.io.*;
+
 // Todo item class
 class TodoItem {
     id: Integer;

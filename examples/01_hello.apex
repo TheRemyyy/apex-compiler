@@ -1,6 +1,8 @@
 // Test 01: Basic Hello World and Printing
 // Tests: println, print, string literals, basic function
 
+import std.io.*;
+
 function main(): None {
     // Simple hello world
     println("Hello, World!");

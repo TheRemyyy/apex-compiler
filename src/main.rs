@@ -8,6 +8,7 @@ mod lexer;
 mod namespace;
 mod parser;
 mod project;
+mod stdlib;
 mod typeck;
 
 use clap::{Parser as ClapParser, Subcommand};
@@ -564,6 +565,18 @@ fn compile_source(
 
     // Type check
     if do_check {
+        // Import check
+        let namespace = extract_namespace(&program);
+        let imports = extract_imports(&program);
+        let mut import_checker = ImportChecker::new(HashMap::new(), namespace, imports);
+        if let Err(errors) = import_checker.check_program(&program) {
+            eprintln!("{} Import errors:", "error".red().bold());
+            for err in errors {
+                eprintln!("  → {}", err.format());
+            }
+            return Err("Import check failed".to_string());
+        }
+
         let mut type_checker = TypeChecker::new(source.to_string());
         if let Err(errors) = type_checker.check(&program) {
             return Err(typeck::format_errors(&errors, source, filename));
@@ -676,6 +689,18 @@ fn check_file(file: Option<&Path>) -> Result<(), String> {
         .parse_program()
         .map_err(|e| format_parse_error(&e, &source, filename))?;
 
+    // Run import checker
+    let namespace = extract_namespace(&program);
+    let imports = extract_imports(&program);
+    let mut import_checker = ImportChecker::new(HashMap::new(), namespace, imports);
+    if let Err(errors) = import_checker.check_program(&program) {
+        eprintln!("{} Import errors:", "error".red().bold());
+        for err in errors {
+            eprintln!("  → {}", err.format());
+        }
+        return Err("Import check failed".to_string());
+    }
+
     let mut type_checker = TypeChecker::new(source.clone());
     if let Err(errors) = type_checker.check(&program) {
         return Err(typeck::format_errors(&errors, &source, filename));
@@ -688,6 +713,26 @@ fn check_file(file: Option<&Path>) -> Result<(), String> {
 
     println!("{}", "No errors found.".green());
     Ok(())
+}
+
+/// Extract namespace from a program
+fn extract_namespace(program: &ast::Program) -> String {
+    program
+        .package
+        .clone()
+        .unwrap_or_else(|| "global".to_string())
+}
+
+/// Extract imports from a program
+fn extract_imports(program: &ast::Program) -> Vec<ast::ImportDecl> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|d| match &d.node {
+            ast::Decl::Import(import) => Some(import.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Show project information

@@ -1,6 +1,8 @@
 // Test 17: Comprehensive Feature Test
 // Tests all major Apex features in one file
 
+import std.io.*;
+
 // === Module ===
 module Utils {
     function double(x: Integer): Integer {

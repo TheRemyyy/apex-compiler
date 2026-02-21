@@ -1,6 +1,8 @@
 // Test 13: Error Handling and Try Operator
 // Tests: Option, Result, try operator (?), require, error propagation
 
+import std.io.*;
+
 // Function that may fail - returns Option
 function findElement(index: Integer): Option<Integer> {
     // Simulated array lookup

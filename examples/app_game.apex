@@ -1,6 +1,8 @@
 // Application: Number Guessing Game
 // A simple game demonstrating Apex features
 
+import std.io.*;
+
 // Player class
 class Player {
     name: String;

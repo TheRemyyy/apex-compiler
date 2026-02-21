@@ -1,6 +1,9 @@
 // Test 20: System Functions (Updated)
 // Tests: System.getenv, System.shell, System.exec, System.cwd
 
+import std.io.*;
+import std.system.*;
+
 function main(): None {
     println("=== System Tests ===");
 

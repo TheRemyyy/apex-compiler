@@ -1,6 +1,8 @@
 // Test 16: Pattern Matching
 // Tests: match statement, patterns, destructuring, guards
 
+import std.io.*;
+
 function testBasicMatch(): None {
     println("=== Basic Match Tests ===");
 

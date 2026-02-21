@@ -1,6 +1,8 @@
 // Application: Banking System
 // A comprehensive banking app demonstrating Apex features
 
+import std.io.*;
+
 // Account types
 class BankAccount {
     accountNumber: String;

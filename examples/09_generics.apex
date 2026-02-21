@@ -1,6 +1,8 @@
 // Test 09: Generic Types
 // Tests: Option<T>, Result<T, E>, List<T>, Map<K, V>, Set<T>
 
+import std.io.*;
+
 function testOption(): None {
     println("=== Option<T> Tests ===");
 

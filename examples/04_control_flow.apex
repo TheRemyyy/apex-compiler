@@ -1,6 +1,8 @@
 // Test 04: Control Flow
 // Tests: if/else, while, for, break, continue
 
+import std.io.*;
+
 function main(): None {
     println("=== If/Else Tests ===");
 

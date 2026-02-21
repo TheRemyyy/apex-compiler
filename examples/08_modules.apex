@@ -1,6 +1,9 @@
 // Test 08: Modules
 // Tests: module definition, namespacing, module functions, module classes
 
+import std.io.*;
+import std.math.*;
+
 // Math utilities module
 module Math {
     function square(x: Integer): Integer {

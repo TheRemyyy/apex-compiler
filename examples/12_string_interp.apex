@@ -1,6 +1,8 @@
 // Test 12: String Interpolation
 // Tests: string interpolation with {}, expressions in strings, formatting
 
+import std.io.*;
+
 function main(): None {
     println("=== String Interpolation Tests ===");
 

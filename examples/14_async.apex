@@ -1,6 +1,8 @@
 // Test 14: Async/Await
 // Tests: async functions, await, Task<T>, async blocks
 
+import std.io.*;
+
 // Async function returning Task<T>
 async function fetchData(): Task<String> {
     // Simulated async operation

@@ -1,6 +1,9 @@
 // Test 18: File I/O
 // Tests: File.write, File.read, File.exists, File.delete
 
+import std.io.*;
+import std.fs.*;
+
 function main(): None {
     println("=== File I/O Tests ===");
 

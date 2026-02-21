@@ -1,6 +1,8 @@
 // Test 03: Math and Arithmetic Operations
 // Tests: +, -, *, /, %, comparisons, unary operators, built-in math functions
 
+import std.io.*;
+
 function main(): None {
     // Basic arithmetic with integers
     a: Integer = 10;

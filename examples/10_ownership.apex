@@ -1,6 +1,8 @@
 // Test 10: Ownership and Borrowing
 // Tests: ownership, borrow, borrow mut, references, move semantics
 
+import std.io.*;
+
 // Class to test ownership
 class Data {
     value: Integer;

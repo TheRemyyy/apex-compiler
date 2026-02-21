@@ -1,6 +1,8 @@
 // Test 07: Interfaces
 // Tests: interface definition, method signatures, default implementations, implements
 
+import std.io.*;
+
 // Basic interface
 interface Printable {
     function print(): None;

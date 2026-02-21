@@ -1,6 +1,8 @@
 // Test 06: Enums
 // Tests: enum definition, variants, associated data, pattern matching with enums
 
+import std.io.*;
+
 // Simple enum (like C-style)
 enum Direction {
     North,

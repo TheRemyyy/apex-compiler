@@ -1,6 +1,8 @@
 // Test 15: Standard Library Functions
 // Tests: all built-in functions in Apex
 
+import std.io.*;
+
 function testPrintFunctions(): None {
     println("=== Print Functions ===");
 

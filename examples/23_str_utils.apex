@@ -1,6 +1,9 @@
 // Test 23: String Utility Functions
 // Tests: Str.upper, Str.lower, Str.trim, Str.contains, Str.len
 
+import std.io.*;
+import std.string.*;
+
 function main(): None {
     println("=== Str Utility Tests ===");
 

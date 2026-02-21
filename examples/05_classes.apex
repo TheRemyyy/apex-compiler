@@ -1,6 +1,8 @@
 // Test 05: Classes
 // Tests: class, constructor, destructor, fields, methods, visibility, this
 
+import std.io.*;
+
 // Simple class with fields only
 class Point {
     x: Integer;

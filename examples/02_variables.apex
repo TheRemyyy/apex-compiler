@@ -1,6 +1,8 @@
 // Test 02: Variables and Types
 // Tests: let, mut, Integer, Float, Boolean, String, Char, type annotations
 
+import std.io.*;
+
 function main(): None {
     // Integer variables
     x: Integer = 42;

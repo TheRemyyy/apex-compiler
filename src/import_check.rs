@@ -1,6 +1,7 @@
 //! Import checker - verifies that all used functions are imported
 
 use crate::ast::*;
+use crate::stdlib::StdLib;
 use std::collections::{HashMap, HashSet};
 
 /// Error when using function without importing it
@@ -34,6 +35,8 @@ pub struct ImportChecker {
     /// All imports (for wildcard resolution)
     #[allow(dead_code)]
     wildcard_imports: Vec<String>, // e.g., ["utils.math", "utils.strings"]
+    /// Standard library registry
+    stdlib: StdLib,
     errors: Vec<ImportError>,
 }
 
@@ -74,6 +77,7 @@ impl ImportChecker {
             current_namespace,
             imported_functions,
             wildcard_imports,
+            stdlib: StdLib::new(),
             errors: Vec::new(),
         }
     }
@@ -96,8 +100,27 @@ impl ImportChecker {
                     span,
                 });
             }
+            return;
         }
-        // If not in function_namespaces, it might be a builtin (like println) - OK
+
+        // Check if it's a stdlib function that needs to be imported
+        if let Some(ns) = self.stdlib.get_namespace(name) {
+            // "builtin" namespace means no import needed
+            if ns == "builtin" {
+                return;
+            }
+
+            // Check if imported (either specific or wildcard)
+            if !self.imported_functions.contains(name) && !self.wildcard_imports.contains(ns) {
+                self.errors.push(ImportError {
+                    function_name: name.to_string(),
+                    defined_in: ns.clone(),
+                    used_in: self.current_namespace.clone(),
+                    span,
+                });
+            }
+        }
+        // If not in function_namespaces or stdlib, it might be a builtin (like println) - OK
     }
 
     /// Check an expression for function calls

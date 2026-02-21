@@ -1,6 +1,9 @@
 // Application: Notes Manager
 // Demonstrates File I/O + Interactive CLI
 
+import std.io.*;
+import std.fs.*;
+
 class NoteManager {
     filename: String;
 

@@ -1,6 +1,9 @@
 // Test 19: Time Functions (Updated)
 // Tests: Time.now (formatted), Time.unix (raw), Time.sleep
 
+import std.io.*;
+import std.time.*;
+
 function main(): None {
     println("=== Time Tests ===");
 

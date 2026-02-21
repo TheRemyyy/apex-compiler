@@ -1,6 +1,8 @@
 // Test 11: Lambdas and Closures
 // Tests: lambda expressions, closures, function types, higher-order functions
 
+import std.io.*;
+
 // Function that takes a function as parameter
 function applyTwice(x: Integer, f: (Integer) -> Integer): Integer {
     return f(f(x));

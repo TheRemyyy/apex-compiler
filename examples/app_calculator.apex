@@ -1,6 +1,8 @@
 // Application: Scientific Calculator
 // A comprehensive calculator demonstrating Apex features
 
+import std.io.*;
+
 // Calculator class with operations
 class Calculator {
     mut lastResult: Float;
