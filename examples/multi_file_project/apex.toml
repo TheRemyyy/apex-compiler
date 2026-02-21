@@ -1,0 +1,10 @@
+name = "multi_file_demo"
+version = "1.0.0"
+entry = "src/main.apex"
+files = [
+    "src/math_utils.apex",
+    "src/string_utils.apex",
+    "src/main.apex"
+]
+output = "multi_file_demo"
+opt_level = "3"

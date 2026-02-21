@@ -1,5 +1,45 @@
 # Changelog
 
+## [Unreleased] - Multi-File Support
+
+### ✨ New Features
+
+- **Multi-File Project Support**: Apex now supports organizing code into projects with multiple source files.
+  - Project configuration via `apex.toml`
+  - New CLI commands: `apex new`, `apex build`, `apex run`, `apex info`
+  - Automatic merging and compilation of multiple source files
+  - Entry point configuration for main function location
+  
+- **Project Commands**:
+  - `apex new <name>` - Create a new project with standard structure
+  - `apex build` - Build current project
+  - `apex run` - Build and run current project  
+  - `apex info` - Display project information
+  - `apex check [file]` - Check project or specific file
+
+### 📁 Configuration
+
+- **apex.toml Format**:
+  ```toml
+  name = "my_project"
+  version = "1.0.0"
+  entry = "src/main.apex"
+  files = ["src/utils.apex", "src/main.apex"]
+  output = "my_project"
+  opt_level = "3"
+  ```
+
+### 📚 Documentation
+
+- Added comprehensive multi-file project documentation
+- New example: `examples/multi_file_project/`
+- Updated test suite to include multi-file project testing
+
+### 🐛 Fixed
+
+- Single-file mode still works when no `apex.toml` is present
+- Backward compatible with existing Apex code
+
 ## [1.2.0] - 2026-02-21
 
 ### 🚀 Performance & Optimization

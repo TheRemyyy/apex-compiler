@@ -1,0 +1,43 @@
+// Multi-file project example
+// Demonstrates using functions from other modules
+
+function main(): None {
+    println("=== Multi-File Project Demo ===");
+    println("");
+    
+    // Using math_utils functions
+    println("Math Utilities:");
+    println("---------------");
+    
+    fact5: Integer = factorial(5);
+    println("factorial(5) = " + to_string(fact5));
+    
+    pow2_10: Float = power(2.0, 10);
+    println("power(2.0, 10) = " + to_string(pow2_10));
+    
+    is17_prime: Boolean = is_prime(17);
+    println("is_prime(17) = " + to_string(is17_prime));
+    
+    is20_prime: Boolean = is_prime(20);
+    println("is_prime(20) = " + to_string(is20_prime));
+    
+    println("");
+    
+    // Using string_utils functions
+    println("String Utilities:");
+    println("-----------------");
+    
+    stars: String = repeat("*", 10);
+    println("repeat('*', 10) = " + stars);
+    
+    greeting: String = greet("Apex");
+    println(greeting);
+    
+    padded: String = pad_left("42", 5, "0");
+    println("pad_left('42', 5, '0') = " + padded);
+    
+    println("");
+    println("=== Demo Complete ===");
+    
+    return None;
+}
