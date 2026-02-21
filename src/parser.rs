@@ -125,13 +125,28 @@ impl<'src> Parser<'src> {
     // === Parsing Methods ===
 
     pub fn parse_program(&mut self) -> ParseResult<Program> {
+        let mut package = None;
         let mut declarations = Vec::new();
+
+        // Parse optional package declaration at start
+        if self.check(&Token::Package) {
+            self.advance();
+            
+            // Parse qualified package name
+            let mut pkg_parts = vec![self.parse_ident()?];
+            while self.check(&Token::Dot) {
+                self.advance();
+                pkg_parts.push(self.parse_ident()?);
+            }
+            package = Some(pkg_parts.join("."));
+            self.eat(&Token::Semi)?;
+        }
 
         while !self.is_at_end() {
             declarations.push(self.parse_declaration()?);
         }
 
-        Ok(Program { declarations })
+        Ok(Program { package, declarations })
     }
 
     fn parse_declaration(&mut self) -> ParseResult<Spanned<Decl>> {
@@ -144,6 +159,13 @@ impl<'src> Parser<'src> {
             Some(Token::Interface) => Decl::Interface(self.parse_interface()?),
             Some(Token::Module) => Decl::Module(self.parse_module()?),
             Some(Token::Import) => Decl::Import(self.parse_import()?),
+            Some(Token::Package) => {
+                // Package is handled at program level, skip here
+                return Err(ParseError::new(
+                    "Package declaration must be at the beginning of the file".to_string(),
+                    self.current_span(),
+                ));
+            }
             _ => {
                 return Err(ParseError::new(
                     format!("Expected declaration, found {:?}", self.current()),
@@ -582,10 +604,27 @@ impl<'src> Parser<'src> {
 
     fn parse_import(&mut self) -> ParseResult<ImportDecl> {
         self.eat(&Token::Import)?;
-        let path = self.parse_ident()?;
+        
+        // Parse qualified path: utils.math.* or utils.math.factorial
+        let mut path_parts = vec![self.parse_ident()?];
+        
+        // Handle dots for qualified names
+        while self.check(&Token::Dot) {
+            self.advance();
+            
+            // Check for wildcard
+            if self.check(&Token::Star) {
+                self.advance();
+                path_parts.push("*".to_string());
+                break;
+            }
+            
+            path_parts.push(self.parse_ident()?);
+        }
+        
         self.eat(&Token::Semi)?;
 
-        Ok(ImportDecl { path })
+        Ok(ImportDecl { path: path_parts.join(".") })
     }
 
     fn parse_params(&mut self) -> ParseResult<Vec<Parameter>> {

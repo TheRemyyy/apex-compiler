@@ -4,6 +4,7 @@ mod ast;
 mod borrowck;
 mod codegen;
 mod lexer;
+mod namespace;
 mod parser;
 mod project;
 mod typeck;
@@ -247,6 +248,7 @@ fn build_project(release: bool, emit_llvm: bool, do_check: bool) -> Result<(), S
     // For now, merge all files into a single program
     // In the future, we could do proper module compilation
     let mut combined_source = String::new();
+    let mut is_first_file = true;
     
     for file in &files {
         let source = fs::read_to_string(file)
@@ -257,8 +259,21 @@ fn build_project(release: bool, emit_llvm: bool, do_check: bool) -> Result<(), S
         
         // Add file marker for error messages
         combined_source.push_str(&format!("// FILE: {}\n", file.display()));
-        combined_source.push_str(&source);
-        combined_source.push('\n');
+        
+        // Process source: remove package declarations from non-entry files
+        for line in source.lines() {
+            let trimmed = line.trim();
+            
+            // Skip package declarations from non-entry files
+            if trimmed.starts_with("package ") && !is_first_file {
+                continue;
+            }
+            
+            combined_source.push_str(line);
+            combined_source.push('\n');
+        }
+        
+        is_first_file = false;
     }
     
     // Compile combined source

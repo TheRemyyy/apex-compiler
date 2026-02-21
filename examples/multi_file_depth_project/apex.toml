@@ -1,0 +1,10 @@
+name = "java_style_demo"
+version = "1.0.0"
+entry = "src/main.apex"
+files = [
+    "src/utils/math.apex",
+    "src/utils/strings.apex",
+    "src/main.apex"
+]
+output = "java_style_demo"
+opt_level = "3"

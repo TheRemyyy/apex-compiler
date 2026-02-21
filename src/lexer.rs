@@ -40,6 +40,10 @@ pub enum Token<'src> {
     Mut,
     #[token("let")]
     Let,
+    #[token("import")]
+    Import,
+    #[token("package")]
+    Package,
 
     #[token("true")]
     True,
@@ -63,8 +67,6 @@ pub enum Token<'src> {
     Async,
     #[token("await")]
     Await,
-    #[token("import")]
-    Import,
     #[token("module")]
     Module,
     #[token("extends")]

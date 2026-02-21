@@ -163,6 +163,7 @@ pub fn find_project_root(start_dir: &Path) -> Option<PathBuf> {
 }
 
 /// Check if path is inside a project
+#[allow(dead_code)]
 pub fn is_in_project(path: &Path) -> bool {
     find_project_root(path).is_some()
 }

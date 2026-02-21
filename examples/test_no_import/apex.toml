@@ -1,0 +1,8 @@
+name = "test_no_import"
+version = "1.0.0"
+entry = "src/main.apex"
+files = [
+    "src/utils.apex",
+    "src/main.apex"
+]
+output = "test_no_import"

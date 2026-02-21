@@ -57,6 +57,8 @@ pub struct GenericParam {
 /// Complete program
 #[derive(Debug, Clone)]
 pub struct Program {
+    /// Package/namespace for this file (e.g., "utils.math")
+    pub package: Option<String>,
     pub declarations: Vec<Spanned<Decl>>,
 }
 

@@ -31,6 +31,8 @@ Apex is a modern systems programming language that combines the safety of Rust w
 - **🧩 Generics** — Full generic programming support with type parameters and constraints
 - **🛠️ Modern Tooling** — Fast compilation, helpful error messages, and integrated toolchain
 - **🚀 LLVM Backend** — Leverages LLVM for world-class optimization and cross-platform support
+- **📁 Multi-File Projects** — Organize code with `apex.toml` project files
+- **📦 Java-Style Namespaces** — Simple package/import system (no `mod.rs` needed)
 
 ## Documentation
 
@@ -70,6 +72,47 @@ cargo build --release
 ```
 
 Add `target/release` to your PATH.
+
+## 📁 Quick Start: Multi-File Project
+
+```bash
+# Create new project
+apex new my_project
+cd my_project
+
+# Project structure:
+# ├── apex.toml
+# └── src/
+#     ├── utils.apex    # package utils;
+#     └── main.apex     # package main;
+
+# Build and run
+apex run
+```
+
+### Java-Style Namespaces
+
+```apex
+// src/utils/math.apex
+package utils.math;
+
+function factorial(n: Integer): Integer {
+    if (n <= 1) { return 1; }
+    return n * factorial(n - 1);
+}
+
+// src/main.apex
+package main;
+
+import utils.math.*;           // Wildcard import
+import utils.math.factorial;   // Specific import
+
+function main(): None {
+    result: Integer = factorial(5);
+    println("5! = " + to_string(result));
+    return None;
+}
+```
 
 ## 🤝 Contributing
 

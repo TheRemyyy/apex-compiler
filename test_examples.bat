@@ -6,7 +6,7 @@ echo      Apex Compiler Test Runner
 echo ========================================
 
 echo.
-echo [1/3] Building Compiler...
+echo [1/4] Building Compiler...
 cargo build --release
 if %ERRORLEVEL% NEQ 0 (
     echo Build failed!
@@ -27,7 +27,7 @@ set PASS_COUNT=0
 
 REM Test single-file examples
 echo.
-echo [2/3] Running Single-File Examples...
+echo [2/4] Running Single-File Examples...
 echo.
 
 for %%f in (examples\*.apex) do (
@@ -45,9 +45,9 @@ for %%f in (examples\*.apex) do (
     )
 )
 
-REM Test multi-file project
+REM Test multi-file project (original)
 echo.
-echo [3/3] Testing Multi-File Project...
+echo [3/4] Testing Multi-File Project (Basic)...
 echo.
 
 if exist "examples\multi_file_project\apex.toml" (
@@ -67,6 +67,52 @@ if exist "examples\multi_file_project\apex.toml" (
     cd ..\..
 ) else (
     echo Multi-file project not found, skipping...
+)
+
+REM Test multi-file project with Java-style namespaces
+echo.
+echo [4/4] Testing Java-Style Namespace Project...
+echo.
+
+if exist "examples\multi_file_depth_project\apex.toml" (
+    echo ----------------------------------------
+    echo Testing examples\multi_file_depth_project...
+    
+    cd examples\multi_file_depth_project
+    ..\..\%COMPILER% run
+    
+    if !ERRORLEVEL! EQU 0 (
+        echo [PASS] multi_file_depth_project (Java-style namespaces)
+        set /a PASS_COUNT+=1
+    ) else (
+        echo [FAIL] multi_file_depth_project
+        set /a FAIL_COUNT+=1
+    )
+    cd ..\..
+) else (
+    echo Java-style namespace project not found, skipping...
+)
+
+REM Test no-import project
+echo.
+echo [5/5] Testing No-Import Project (Global Scope)...
+echo.
+
+if exist "examples\test_no_import\apex.toml" (
+    echo ----------------------------------------
+    echo Testing examples\test_no_import...
+    
+    cd examples\test_no_import
+    ..\..\%COMPILER% run
+    
+    if !ERRORLEVEL! EQU 0 (
+        echo [PASS] test_no_import (global scope without imports)
+        set /a PASS_COUNT+=1
+    ) else (
+        echo [FAIL] test_no_import
+        set /a FAIL_COUNT+=1
+    )
+    cd ..\..
 )
 
 echo.
