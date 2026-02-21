@@ -68,10 +68,21 @@ jobs:
 
       - name: Check and run all examples
         run: |
+          # Single-file examples
           for file in examples/*.apex; do
             echo "Checking $file..."
             cargo run --release -- check "$file"
             echo "Running $file..."
             cargo run --release -- run "$file"
+          done
+          
+          # Multi-file projects
+          for project in examples/multi_file_project examples/multi_file_depth_project examples/test_no_import; do
+            if [ -d "$project" ]; then
+              echo "Testing project $project..."
+              cd "$project"
+              ../../target/release/apex-compiler run
+              cd ../..
+            fi
           done
 
