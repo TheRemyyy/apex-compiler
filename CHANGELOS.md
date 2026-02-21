@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased] - Multi-File Support
+## [1.3.0] - Multi-File & Namespace System - 2026-02-21
+
+### 🚀 Major Release: Complete Project System
+
+This release introduces a complete multi-file project system with Java-style namespaces and mandatory imports.
 
 ### ✨ New Features
 
@@ -35,10 +39,27 @@
 - New example: `examples/multi_file_project/`
 - Updated test suite to include multi-file project testing
 
-### 🐛 Fixed
+### 🔧 Technical
 
-- Single-file mode still works when no `apex.toml` is present
-- Backward compatible with existing Apex code
+- Added `namespace.rs` - Namespace resolution system
+- Added `import_check.rs` - Import validation with helpful error messages
+- Added `project.rs` - Project configuration management
+- Updated lexer with `Package`, `Import`, `Star` tokens
+- Updated parser for package/import syntax
+- CI workflow tests all 32 examples including multi-file projects
+- Full clippy compliance, cargo fmt applied
+
+### 🐛 Behavior Changes
+
+- **BREAKING**: Functions from other files are **NOT** automatically available
+- Must use `import namespace.function;` or `import namespace.*;`
+- Same-namespace functions work without imports (local scope)
+- Functions without package declaration are in `global` namespace
+
+### 📊 Stats
+- 32/32 tests passing
+- 3 new example projects demonstrating features
+- Zero clippy warnings
 
 ## [1.2.0] - 2026-02-21
 
