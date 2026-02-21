@@ -9,6 +9,7 @@ pub struct ImportError {
     pub function_name: String,
     pub defined_in: String,
     pub used_in: String,
+    #[allow(dead_code)]
     pub span: Span,
 }
 
@@ -17,11 +18,7 @@ impl ImportError {
         format!(
             "Function '{}' is defined in '{}' but not imported in '{}'\n  \
              Hint: Add 'import {}.{};' to the top of your file",
-            self.function_name,
-            self.defined_in,
-            self.used_in,
-            self.defined_in,
-            self.function_name
+            self.function_name, self.defined_in, self.used_in, self.defined_in, self.function_name
         )
     }
 }
@@ -35,6 +32,7 @@ pub struct ImportChecker {
     /// Imported functions in current file (just the name, e.g., "factorial")
     imported_functions: HashSet<String>,
     /// All imports (for wildcard resolution)
+    #[allow(dead_code)]
     wildcard_imports: Vec<String>, // e.g., ["utils.math", "utils.strings"]
     errors: Vec<ImportError>,
 }
@@ -47,15 +45,15 @@ impl ImportChecker {
     ) -> Self {
         let mut imported_functions = HashSet::new();
         let mut wildcard_imports = Vec::new();
-        
+
         for import in imports {
             let path = import.path;
-            
+
             if path.ends_with(".*") {
                 // Wildcard import: utils.math.*
                 let ns = path.trim_end_matches(".*");
                 wildcard_imports.push(ns.to_string());
-                
+
                 // Add all functions from this namespace
                 for (func, func_ns) in &function_namespaces {
                     if func_ns == ns {
@@ -70,7 +68,7 @@ impl ImportChecker {
                 }
             }
         }
-        
+
         Self {
             function_namespaces,
             current_namespace,
@@ -79,7 +77,7 @@ impl ImportChecker {
             errors: Vec::new(),
         }
     }
-    
+
     /// Check if a function call is valid (imported or local)
     pub fn check_function_call(&mut self, name: &str, span: Span) {
         // Skip if it's a local function (defined in current file)
@@ -88,7 +86,7 @@ impl ImportChecker {
                 // Local function - OK
                 return;
             }
-            
+
             // Check if imported
             if !self.imported_functions.contains(name) {
                 self.errors.push(ImportError {
@@ -101,7 +99,7 @@ impl ImportChecker {
         }
         // If not in function_namespaces, it might be a builtin (like println) - OK
     }
-    
+
     /// Check an expression for function calls
     fn check_expr(&mut self, expr: &Expr) {
         match expr {
@@ -113,7 +111,7 @@ impl ImportChecker {
                     // Check callee expression recursively
                     self.check_expr(&callee.node);
                 }
-                
+
                 // Check arguments
                 for arg in args {
                     self.check_expr(&arg.node);
@@ -140,8 +138,6 @@ impl ImportChecker {
                 }
             }
 
-
-
             Expr::Match { expr, arms } => {
                 self.check_expr(&expr.node);
                 for arm in arms {
@@ -161,7 +157,7 @@ impl ImportChecker {
             _ => {} // Literals, identifiers (non-call), etc.
         }
     }
-    
+
     /// Check a statement for function calls
     fn check_stmt(&mut self, stmt: &Stmt) {
         match stmt {
@@ -174,7 +170,11 @@ impl ImportChecker {
             Stmt::Return(Some(expr)) => {
                 self.check_expr(&expr.node);
             }
-            Stmt::If { condition, then_block, else_block } => {
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
                 self.check_expr(&condition.node);
                 for stmt in then_block {
                     self.check_stmt(&stmt.node);
@@ -208,20 +208,17 @@ impl ImportChecker {
             _ => {} // Break, Continue, Return(None), etc.
         }
     }
-    
+
     /// Check entire program for import violations
     pub fn check_program(&mut self, program: &Program) -> Result<(), Vec<ImportError>> {
         for decl in &program.declarations {
-            match &decl.node {
-                Decl::Function(func) => {
-                    for stmt in &func.body {
-                        self.check_stmt(&stmt.node);
-                    }
+            if let Decl::Function(func) = &decl.node {
+                for stmt in &func.body {
+                    self.check_stmt(&stmt.node);
                 }
-                _ => {} // Classes, etc. - TODO
             }
         }
-        
+
         if self.errors.is_empty() {
             Ok(())
         } else {
@@ -231,14 +228,15 @@ impl ImportChecker {
 }
 
 /// Extract all function definitions from a program with their namespace
+#[allow(dead_code)]
 pub fn extract_function_namespaces(program: &Program, namespace: &str) -> HashMap<String, String> {
     let mut result = HashMap::new();
-    
+
     for decl in &program.declarations {
         if let Decl::Function(func) = &decl.node {
             result.insert(func.name.clone(), namespace.to_string());
         }
     }
-    
+
     result
 }

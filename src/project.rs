@@ -62,26 +62,25 @@ impl Default for ProjectConfig {
 impl ProjectConfig {
     /// Load project config from apex.toml
     pub fn load(path: &Path) -> Result<Self, String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read project file: {}", e))?;
-        
-        let config: ProjectConfig = toml::from_str(&content)
-            .map_err(|e| format!("Failed to parse project file: {}", e))?;
-        
+        let content =
+            fs::read_to_string(path).map_err(|e| format!("Failed to read project file: {}", e))?;
+
+        let config: ProjectConfig =
+            toml::from_str(&content).map_err(|e| format!("Failed to parse project file: {}", e))?;
+
         Ok(config)
     }
-    
+
     /// Save project config to apex.toml
     pub fn save(&self, path: &Path) -> Result<(), String> {
         let content = toml::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize project: {}", e))?;
-        
-        fs::write(path, content)
-            .map_err(|e| format!("Failed to write project file: {}", e))?;
-        
+
+        fs::write(path, content).map_err(|e| format!("Failed to write project file: {}", e))?;
+
         Ok(())
     }
-    
+
     /// Create default project config
     pub fn new(name: &str) -> Self {
         Self {
@@ -96,20 +95,17 @@ impl ProjectConfig {
             target: None,
         }
     }
-    
+
     /// Get all source files as absolute paths
     pub fn get_source_files(&self, project_root: &Path) -> Vec<PathBuf> {
-        self.files
-            .iter()
-            .map(|f| project_root.join(f))
-            .collect()
+        self.files.iter().map(|f| project_root.join(f)).collect()
     }
-    
+
     /// Get entry point as absolute path
     pub fn get_entry_path(&self, project_root: &Path) -> PathBuf {
         project_root.join(&self.entry)
     }
-    
+
     /// Validate project configuration
     pub fn validate(&self, project_root: &Path) -> Result<(), String> {
         // Check entry point exists
@@ -121,7 +117,7 @@ impl ProjectConfig {
                 entry_path.display()
             ));
         }
-        
+
         // Check all source files exist
         for file in &self.files {
             let file_path = project_root.join(file);
@@ -133,7 +129,7 @@ impl ProjectConfig {
                 ));
             }
         }
-        
+
         // Check entry is in files list
         if !self.files.contains(&self.entry) {
             return Err(format!(
@@ -141,7 +137,7 @@ impl ProjectConfig {
                 self.entry
             ));
         }
-        
+
         Ok(())
     }
 }
@@ -149,16 +145,16 @@ impl ProjectConfig {
 /// Find project root by looking for apex.toml
 pub fn find_project_root(start_dir: &Path) -> Option<PathBuf> {
     let mut current = Some(start_dir);
-    
+
     while let Some(dir) = current {
         let config_path = dir.join("apex.toml");
         if config_path.exists() {
             return Some(dir.to_path_buf());
         }
-        
+
         current = dir.parent();
     }
-    
+
     None
 }
 

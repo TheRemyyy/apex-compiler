@@ -131,7 +131,7 @@ impl<'src> Parser<'src> {
         // Parse optional package declaration at start
         if self.check(&Token::Package) {
             self.advance();
-            
+
             // Parse qualified package name
             let mut pkg_parts = vec![self.parse_ident()?];
             while self.check(&Token::Dot) {
@@ -146,7 +146,10 @@ impl<'src> Parser<'src> {
             declarations.push(self.parse_declaration()?);
         }
 
-        Ok(Program { package, declarations })
+        Ok(Program {
+            package,
+            declarations,
+        })
     }
 
     fn parse_declaration(&mut self) -> ParseResult<Spanned<Decl>> {
@@ -604,27 +607,29 @@ impl<'src> Parser<'src> {
 
     fn parse_import(&mut self) -> ParseResult<ImportDecl> {
         self.eat(&Token::Import)?;
-        
+
         // Parse qualified path: utils.math.* or utils.math.factorial
         let mut path_parts = vec![self.parse_ident()?];
-        
+
         // Handle dots for qualified names
         while self.check(&Token::Dot) {
             self.advance();
-            
+
             // Check for wildcard
             if self.check(&Token::Star) {
                 self.advance();
                 path_parts.push("*".to_string());
                 break;
             }
-            
+
             path_parts.push(self.parse_ident()?);
         }
-        
+
         self.eat(&Token::Semi)?;
 
-        Ok(ImportDecl { path: path_parts.join(".") })
+        Ok(ImportDecl {
+            path: path_parts.join("."),
+        })
     }
 
     fn parse_params(&mut self) -> ParseResult<Vec<Parameter>> {
