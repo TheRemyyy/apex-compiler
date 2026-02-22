@@ -25,14 +25,14 @@ Apex is a modern systems programming language that combines the safety of Rust w
 
 - **🔒 Memory Safety** - Ownership system prevents races, null pointers, and use-after-free bugs at compile time
 - **⚡ Zero-Cost Abstractions** - High-level features compile down to machine code with no runtime penalty
-- **🎯 Strong Static Typing** — Comprehensive type system with generics, traits, and algebraic data types
-- **🔄 Async/Await** — First-class support for asynchronous programming with Task types
-- **📦 Pattern Matching** — Exhaustive pattern matching for control flow and destructuring
-- **🧩 Generics** — Full generic programming support with type parameters and constraints
-- **🛠️ Modern Tooling** — Fast compilation, helpful error messages, and integrated toolchain
-- **🚀 LLVM Backend** — Leverages LLVM for world-class optimization and cross-platform support
-- **📁 Multi-File Projects** — Organize code with `apex.toml` project files
-- **📦 Java-Style Namespaces** — Simple package/import system (no `mod.rs` needed)
+- **🎯 Strong Static Typing** - Comprehensive type system with generics, traits, and algebraic data types
+- **🔄 Async/Await** - First-class support for asynchronous programming with Task types
+- **📦 Pattern Matching** - Exhaustive pattern matching for control flow and destructuring
+- **🧩 Generics** - Full generic programming support with type parameters and constraints
+- **🛠️ Modern Tooling** - Fast compilation, helpful error messages, and integrated toolchain
+- **🚀 LLVM Backend** - Leverages LLVM for world-class optimization and cross-platform support
+- **📁 Multi-File Projects** - Organize code with `apex.toml` project files
+- **📦 Java-Style Namespaces** - Simple package/import system (no `mod.rs` needed)
 
 ## Documentation
 
