@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.3.2] - Range Types - 2026-02-22
+
 ### ✨ New Features
 
 - **Range Type**: Full iterator-based range type for numeric sequences
@@ -55,6 +57,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added `lsp.rs` module with tower-lsp integration
 - Added fuzzy string matching for error suggestions
 - Updated `import_check.rs` with suggestion engine
+
+### 📊 Stats
+- 34/34 tests passing
+- Zero clippy warnings
 
 ## [1.3.1] - Import System Fixes - 2026-02-22
 
