@@ -12,59 +12,59 @@ renderer.heading = (text: string, depth: number) => {
 
 marked.use({ renderer });
 
-// Navigation structure matches file system
+// Navigation structure - URL paths (without .md)
 const NAV_ITEMS = [
-    { title: 'Overview', path: '/docs/overview.md' },
+    { title: 'Overview', path: '/docs/overview' },
     {
         title: 'Getting Started', items: [
-            { title: 'Installation', path: '/docs/getting_started/installation.md' },
-            { title: 'Quick Start', path: '/docs/getting_started/quick_start.md' },
-            { title: 'Editor Setup', path: '/docs/getting_started/editor_setup.md' },
+            { title: 'Installation', path: '/docs/getting_started/installation' },
+            { title: 'Quick Start', path: '/docs/getting_started/quick_start' },
+            { title: 'Editor Setup', path: '/docs/getting_started/editor_setup' },
         ]
     },
     {
         title: 'Basics', items: [
-            { title: 'Syntax', path: '/docs/basics/syntax.md' },
-            { title: 'Variables', path: '/docs/basics/variables.md' },
-            { title: 'Types', path: '/docs/basics/types.md' },
-            { title: 'Control Flow', path: '/docs/basics/control_flow.md' },
+            { title: 'Syntax', path: '/docs/basics/syntax' },
+            { title: 'Variables', path: '/docs/basics/variables' },
+            { title: 'Types', path: '/docs/basics/types' },
+            { title: 'Control Flow', path: '/docs/basics/control_flow' },
         ]
     },
     {
         title: 'Features', items: [
-            { title: 'Functions', path: '/docs/features/functions.md' },
-            { title: 'Classes', path: '/docs/features/classes.md' },
-            { title: 'Interfaces', path: '/docs/features/interfaces.md' },
-            { title: 'Enums', path: '/docs/features/enums.md' },
-            { title: 'Ranges', path: '/docs/features/ranges.md' },
-            { title: 'Modules', path: '/docs/features/modules.md' },
+            { title: 'Functions', path: '/docs/features/functions' },
+            { title: 'Classes', path: '/docs/features/classes' },
+            { title: 'Interfaces', path: '/docs/features/interfaces' },
+            { title: 'Enums', path: '/docs/features/enums' },
+            { title: 'Ranges', path: '/docs/features/ranges' },
+            { title: 'Modules', path: '/docs/features/modules' },
         ]
     },
     {
         title: 'Standard Library', items: [
-            { title: 'Overview', path: '/docs/stdlib/overview.md' },
-            { title: 'Math', path: '/docs/stdlib/math.md' },
-            { title: 'Str', path: '/docs/stdlib/string.md' },
-            { title: 'Time', path: '/docs/stdlib/time.md' },
-            { title: 'Args', path: '/docs/stdlib/args.md' },
-            { title: 'Collections', path: '/docs/stdlib/collections.md' },
-            { title: 'I/O', path: '/docs/stdlib/io.md' },
-            { title: 'System', path: '/docs/stdlib/system.md' },
+            { title: 'Overview', path: '/docs/stdlib/overview' },
+            { title: 'Math', path: '/docs/stdlib/math' },
+            { title: 'Str', path: '/docs/stdlib/string' },
+            { title: 'Time', path: '/docs/stdlib/time' },
+            { title: 'Args', path: '/docs/stdlib/args' },
+            { title: 'Collections', path: '/docs/stdlib/collections' },
+            { title: 'I/O', path: '/docs/stdlib/io' },
+            { title: 'System', path: '/docs/stdlib/system' },
         ]
     },
     {
         title: 'Advanced', items: [
-            { title: 'Ownership', path: '/docs/advanced/ownership.md' },
-            { title: 'Generics', path: '/docs/advanced/generics.md' },
-            { title: 'Async/Await', path: '/docs/advanced/async.md' },
-            { title: 'Error Handling', path: '/docs/advanced/error_handling.md' },
-            { title: 'Memory Management', path: '/docs/advanced/memory_management.md' },        
+            { title: 'Ownership', path: '/docs/advanced/ownership' },
+            { title: 'Generics', path: '/docs/advanced/generics' },
+            { title: 'Async/Await', path: '/docs/advanced/async' },
+            { title: 'Error Handling', path: '/docs/advanced/error_handling' },
+            { title: 'Memory Management', path: '/docs/advanced/memory_management' },        
         ]
     },
     {
         title: 'Compiler', items: [
-            { title: 'CLI', path: '/docs/compiler/cli.md' },
-            { title: 'Architecture', path: '/docs/compiler/architecture.md' },
+            { title: 'CLI', path: '/docs/compiler/cli' },
+            { title: 'Architecture', path: '/docs/compiler/architecture' },
         ]
     }
 ];
@@ -118,8 +118,11 @@ export function Docs() {
     const [loading, setLoading] = useState(true);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-    // Normalize path
-    const normalizedPath = location.pathname === '/docs' || location.pathname === '/docs/' ? '/docs/overview.md' : location.pathname;
+    // Normalize path (without .md)
+    const normalizedPath = location.pathname === '/docs' || location.pathname === '/docs/' ? '/docs/overview' : location.pathname;
+    
+    // Fetch path (with .md extension)
+    const fetchPath = normalizedPath + '.md';
 
     // Calculate Next/Prev
     const currentIndex = FLATTENED_DOCS.findIndex(item => item.path === normalizedPath);        
@@ -130,7 +133,7 @@ export function Docs() {
         setIsSidebarOpen(false);
         if (!content) setLoading(true);
 
-        fetch(normalizedPath)
+        fetch(fetchPath)
             .then(res => {
                 if (!res.ok) throw new Error('Not found');
                 return res.text();
