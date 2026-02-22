@@ -21,6 +21,8 @@ colored = "2"
 # Project configuration
 toml = "0.8"
 serde = { version = "1.0", features = ["derive"] }
+tower-lsp = { version = "0.20.0", features = ["proposed"] }
+tokio = { version = "1.49.0", features = ["full"] }
 
 [profile.release]
 opt-level = 3

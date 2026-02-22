@@ -5,6 +5,7 @@ mod borrowck;
 mod codegen;
 mod import_check;
 mod lexer;
+mod lsp;
 mod namespace;
 mod parser;
 mod project;
@@ -104,6 +105,8 @@ enum Commands {
         /// Input file
         file: PathBuf,
     },
+    /// Start LSP server
+    Lsp,
 }
 
 fn main() {
@@ -138,6 +141,12 @@ fn main() {
         Commands::Info => show_project_info(),
         Commands::Lex { file } => lex_file(&file),
         Commands::Parse { file } => parse_file(&file),
+        Commands::Lsp => {
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(lsp::run_lsp_server());
+            Ok(())
+        }
     };
 
     if let Err(e) = result {

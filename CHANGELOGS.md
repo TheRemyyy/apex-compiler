@@ -4,6 +4,27 @@ All notable changes to the Apex Programming Language Compiler will be documented
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### ✨ New Features
+
+- **LSP (Language Server Protocol)**: Apex now has a built-in LSP server for IDE integration
+  - New CLI command: `apex lsp` - Start the language server
+  - Autocomplete support for keywords, types, and functions
+  - Hover documentation for language keywords
+  - Go to definition support (prepared)
+
+- **Improved Error Messages**: Better developer experience with helpful error messages
+  - "Did you mean?" suggestions for typos using Levenshtein distance
+  - Contextual hints for missing imports
+  - Color-coded error output with source location
+
+### 🔧 Technical
+
+- Added `lsp.rs` module with tower-lsp integration
+- Added fuzzy string matching for error suggestions
+- Updated `import_check.rs` with suggestion engine
+
 ## [1.3.1] - Import System Fixes - 2026-02-22
 
 ### 🐛 Bug Fixes

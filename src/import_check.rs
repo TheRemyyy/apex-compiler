@@ -10,18 +10,79 @@ pub struct ImportError {
     pub function_name: String,
     pub defined_in: String,
     pub used_in: String,
-    #[allow(dead_code)]
     pub span: Span,
+    pub suggestion: Option<String>,
 }
 
 impl ImportError {
     pub fn format(&self) -> String {
-        format!(
+        let mut result = format!(
             "Function '{}' is defined in '{}' but not imported in '{}'\n  \
              Hint: Add 'import {}.{};' to the top of your file",
-            self.function_name, self.defined_in, self.used_in, self.defined_in, self.function_name
-        )
+            self.function_name, 
+            self.defined_in, 
+            self.used_in, 
+            self.defined_in, 
+            self.function_name
+        );
+        
+        if let Some(suggestion) = &self.suggestion {
+            result.push_str(&format!("\n  Or did you mean: '{}'?", suggestion));
+        }
+        
+        result
     }
+}
+
+/// Calculate Levenshtein distance between two strings
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let len_a = a.chars().count();
+    let len_b = b.chars().count();
+    
+    if len_a == 0 { return len_b; }
+    if len_b == 0 { return len_a; }
+    
+    let mut matrix = vec![vec![0; len_b + 1]; len_a + 1];
+    
+    for i in 0..=len_a {
+        matrix[i][0] = i;
+    }
+    for j in 0..=len_b {
+        matrix[0][j] = j;
+    }
+    
+    for (i, ca) in a.chars().enumerate() {
+        for (j, cb) in b.chars().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            matrix[i + 1][j + 1] = (matrix[i][j + 1] + 1)
+                .min(matrix[i + 1][j] + 1)
+                .min(matrix[i][j] + cost);
+        }
+    }
+    
+    matrix[len_a][len_b]
+}
+
+/// Find the closest matching string from candidates
+fn did_you_mean(name: &str, candidates: &[String]) -> Option<String> {
+    let mut best_match: Option<(String, usize)> = None;
+    
+    for candidate in candidates {
+        let distance = levenshtein_distance(name, candidate);
+        // Only suggest if distance is reasonable (<= 3 and less than half the length)
+        let threshold = (name.len() / 2).max(3);
+        if distance <= threshold {
+            if let Some((_, best_distance)) = &best_match {
+                if distance < *best_distance {
+                    best_match = Some((candidate.clone(), distance));
+                }
+            } else {
+                best_match = Some((candidate.clone(), distance));
+            }
+        }
+    }
+    
+    best_match.map(|(s, _)| s)
 }
 
 /// Tracks which functions are defined in which files/namespaces
@@ -37,6 +98,9 @@ pub struct ImportChecker {
     wildcard_imports: Vec<String>, // e.g., ["utils.math", "utils.strings"]
     /// Standard library registry
     stdlib: StdLib,
+    /// Available function names for suggestions
+    available_functions: Vec<String>,
+    /// Collected errors
     errors: Vec<ImportError>,
 }
 
@@ -80,12 +144,18 @@ impl ImportChecker {
             }
         }
 
+        // Collect available function names for suggestions
+        let mut available_functions: Vec<String> = function_namespaces.keys().cloned().collect();
+        let stdlib = StdLib::new();
+        available_functions.extend(stdlib.get_functions().keys().cloned());
+
         Self {
             function_namespaces,
             current_namespace,
             imported_functions,
             wildcard_imports,
             stdlib: StdLib::new(),
+            available_functions,
             errors: Vec::new(),
         }
     }
@@ -101,11 +171,15 @@ impl ImportChecker {
 
             // Check if imported
             if !self.imported_functions.contains(name) {
+                // Try to find a similar function name
+                let suggestion = did_you_mean(name, &self.available_functions);
+                
                 self.errors.push(ImportError {
                     function_name: name.to_string(),
                     defined_in: ns.clone(),
                     used_in: self.current_namespace.clone(),
                     span,
+                    suggestion,
                 });
             }
             return;
@@ -120,11 +194,15 @@ impl ImportChecker {
 
             // Check if imported (either specific or wildcard)
             if !self.imported_functions.contains(name) && !self.wildcard_imports.contains(ns) {
+                // Try to find a similar function name
+                let suggestion = did_you_mean(name, &self.available_functions);
+                
                 self.errors.push(ImportError {
                     function_name: name.to_string(),
                     defined_in: ns.clone(),
                     used_in: self.current_namespace.clone(),
                     span,
+                    suggestion,
                 });
             }
         }
