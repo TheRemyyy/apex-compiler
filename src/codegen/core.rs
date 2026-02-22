@@ -88,6 +88,36 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
+    /// Check if a function name is a stdlib function
+    pub fn is_stdlib_function(name: &str) -> bool {
+        matches!(
+            name,
+            // Math functions
+            "Math__abs" | "Math__min" | "Math__max" | "Math__sqrt" | "Math__pow" |
+            "Math__sin" | "Math__cos" | "Math__tan" | "Math__floor" | "Math__ceil" |
+            "Math__round" | "Math__log" | "Math__log10" | "Math__exp" | "Math__pi" |
+            "Math__e" | "Math__random" |
+            // Type conversions
+            "to_int" | "to_float" | "to_string" |
+            // String functions
+            "Str__len" | "Str__compare" | "Str__concat" | "Str__upper" | "Str__lower" |
+            "Str__trim" | "Str__contains" | "Str__startsWith" | "Str__endsWith" |
+            // I/O functions
+            "read_line" |
+            // System functions
+            "System__exit" | "exit" | "System__cwd" | "System__os" | "System__shell" |
+            "System__exec" | "System__getenv" |
+            // Time functions
+            "Time__now" | "Time__unix" | "Time__sleep" |
+            // File functions
+            "File__read" | "File__write" | "File__exists" | "File__delete" |
+            // Args functions
+            "Args__get" | "Args__len" |
+            // Assertion functions
+            "assert" | "assert_eq" | "assert_ne" | "assert_true" | "assert_false" | "fail"
+        )
+    }
+
     /// Compile program
     pub fn compile(&mut self, program: &Program) -> Result<()> {
         // First pass: declare all classes and functions
@@ -740,7 +770,25 @@ impl<'ctx> Codegen<'ctx> {
                             }
                         } else {
                             let val = self.compile_expr(&expr.node)?;
-                            self.builder.build_return(Some(&val)).unwrap();
+                            // Main function must return i32 for C compatibility
+                            let ret_val = if is_main && val.is_int_value() {
+                                let int_val = val.into_int_value();
+                                if int_val.get_type().get_bit_width() != 32 {
+                                    self.builder
+                                        .build_int_truncate(
+                                            int_val,
+                                            self.context.i32_type(),
+                                            "ret_cast",
+                                        )
+                                        .unwrap()
+                                        .into()
+                                } else {
+                                    val
+                                }
+                            } else {
+                                val
+                            };
+                            self.builder.build_return(Some(&ret_val)).unwrap();
                         }
                     }
                     None => {
@@ -1712,8 +1760,13 @@ impl<'ctx> Codegen<'ctx> {
             }
 
             // Standard library functions
-            if let Some(result) = self.compile_stdlib_function(name, args)? {
-                return Ok(result);
+            if Self::is_stdlib_function(name) {
+                if let Some(result) = self.compile_stdlib_function(name, args)? {
+                    return Ok(result);
+                } else {
+                    // Void stdlib function - return dummy value
+                    return Ok(self.context.i8_type().const_int(0, false).into());
+                }
             }
         }
 
@@ -3234,7 +3287,7 @@ impl<'ctx> Codegen<'ctx> {
 
                 Ok(Some(buffer.into()))
             }
-            "System__exit" => {
+            "System__exit" | "exit" => {
                 let code = self.compile_expr(&args[0].node)?;
                 let exit_fn = self.get_or_declare_exit();
                 let code_i32 = self
@@ -3244,7 +3297,7 @@ impl<'ctx> Codegen<'ctx> {
                 self.builder
                     .build_call(exit_fn, &[code_i32.into()], "")
                     .unwrap();
-                Ok(Some(self.context.i8_type().const_int(0, false).into()))
+                Ok(None) // void function
             }
 
             // File I/O
@@ -3864,6 +3917,379 @@ impl<'ctx> Codegen<'ctx> {
                     )
                     .unwrap();
                 Ok(Some(arg_ptr))
+            }
+
+            // Assertion functions for testing
+            "assert" => {
+                // assert(condition: Boolean): None - panics if condition is false
+                let condition = self.compile_expr(&args[0].node)?;
+                let condition_bool = if condition.is_int_value() {
+                    let int_val = condition.into_int_value();
+                    // Handle both i1 (bool) and i64 (integer) types
+                    if int_val.get_type().get_bit_width() == 1 {
+                        // Already i1 (boolean)
+                        int_val
+                    } else {
+                        // Convert i64 to i1 (boolean)
+                        self.builder
+                            .build_int_compare(
+                                IntPredicate::NE,
+                                int_val,
+                                self.context.i64_type().const_int(0, false),
+                                "bool_cond",
+                            )
+                            .unwrap()
+                    }
+                } else {
+                    return Err(CodegenError::new("assert requires boolean condition"));
+                };
+
+                let current_fn = self.current_function.unwrap();
+                let panic_bb = self.context.append_basic_block(current_fn, "assert_panic");
+                let ok_bb = self.context.append_basic_block(current_fn, "assert_ok");
+
+                self.builder
+                    .build_conditional_branch(condition_bool, ok_bb, panic_bb)
+                    .unwrap();
+
+                // Panic block
+                self.builder.position_at_end(panic_bb);
+                let printf = self.get_or_declare_printf();
+                let panic_msg = self
+                    .builder
+                    .build_global_string_ptr("Assertion failed!\\n", "assert_fail")
+                    .unwrap();
+                self.builder
+                    .build_call(printf, &[panic_msg.as_pointer_value().into()], "")
+                    .unwrap();
+                let exit_fn = self.get_or_declare_exit();
+                self.builder
+                    .build_call(
+                        exit_fn,
+                        &[self.context.i32_type().const_int(1, false).into()],
+                        "",
+                    )
+                    .unwrap();
+                self.builder.build_unreachable().unwrap();
+
+                // OK block
+                self.builder.position_at_end(ok_bb);
+                Ok(None) // void function
+            }
+
+            "assert_eq" => {
+                // assert_eq(a: T, b: T): None - panics if a != b
+                let a = self.compile_expr(&args[0].node)?;
+                let b = self.compile_expr(&args[1].node)?;
+
+                let equal = if a.is_int_value() && b.is_int_value() {
+                    self.builder
+                        .build_int_compare(
+                            IntPredicate::EQ,
+                            a.into_int_value(),
+                            b.into_int_value(),
+                            "eq_cmp",
+                        )
+                        .unwrap()
+                } else if a.is_float_value() && b.is_float_value() {
+                    self.builder
+                        .build_float_compare(
+                            FloatPredicate::OEQ,
+                            a.into_float_value(),
+                            b.into_float_value(),
+                            "eq_cmp",
+                        )
+                        .unwrap()
+                } else {
+                    // String comparison
+                    let strcmp = self.get_or_declare_strcmp();
+                    let res = self
+                        .builder
+                        .build_call(strcmp, &[a.into(), b.into()], "cmp")
+                        .unwrap();
+                    let cmp_val = self.extract_call_value(res).into_int_value();
+                    self.builder
+                        .build_int_compare(
+                            IntPredicate::EQ,
+                            cmp_val,
+                            self.context.i32_type().const_int(0, false),
+                            "eq_cmp",
+                        )
+                        .unwrap()
+                };
+
+                let current_fn = self.current_function.unwrap();
+                let panic_bb = self
+                    .context
+                    .append_basic_block(current_fn, "assert_eq_panic");
+                let ok_bb = self.context.append_basic_block(current_fn, "assert_eq_ok");
+
+                self.builder
+                    .build_conditional_branch(equal, ok_bb, panic_bb)
+                    .unwrap();
+
+                // Panic block
+                self.builder.position_at_end(panic_bb);
+                let printf = self.get_or_declare_printf();
+                let panic_msg = self
+                    .builder
+                    .build_global_string_ptr(
+                        "Assertion failed: values are not equal!\\n",
+                        "assert_eq_fail",
+                    )
+                    .unwrap();
+                self.builder
+                    .build_call(printf, &[panic_msg.as_pointer_value().into()], "")
+                    .unwrap();
+                let exit_fn = self.get_or_declare_exit();
+                self.builder
+                    .build_call(
+                        exit_fn,
+                        &[self.context.i32_type().const_int(1, false).into()],
+                        "",
+                    )
+                    .unwrap();
+                self.builder.build_unreachable().unwrap();
+
+                // OK block
+                self.builder.position_at_end(ok_bb);
+                Ok(None) // void function
+            }
+
+            "assert_ne" => {
+                // assert_ne(a: T, b: T): None - panics if a == b
+                let a = self.compile_expr(&args[0].node)?;
+                let b = self.compile_expr(&args[1].node)?;
+
+                let not_equal = if a.is_int_value() && b.is_int_value() {
+                    self.builder
+                        .build_int_compare(
+                            IntPredicate::NE,
+                            a.into_int_value(),
+                            b.into_int_value(),
+                            "ne_cmp",
+                        )
+                        .unwrap()
+                } else if a.is_float_value() && b.is_float_value() {
+                    self.builder
+                        .build_float_compare(
+                            FloatPredicate::ONE,
+                            a.into_float_value(),
+                            b.into_float_value(),
+                            "ne_cmp",
+                        )
+                        .unwrap()
+                } else {
+                    let strcmp = self.get_or_declare_strcmp();
+                    let res = self
+                        .builder
+                        .build_call(strcmp, &[a.into(), b.into()], "cmp")
+                        .unwrap();
+                    let cmp_val = self.extract_call_value(res).into_int_value();
+                    self.builder
+                        .build_int_compare(
+                            IntPredicate::NE,
+                            cmp_val,
+                            self.context.i32_type().const_int(0, false),
+                            "ne_cmp",
+                        )
+                        .unwrap()
+                };
+
+                let current_fn = self.current_function.unwrap();
+                let panic_bb = self
+                    .context
+                    .append_basic_block(current_fn, "assert_ne_panic");
+                let ok_bb = self.context.append_basic_block(current_fn, "assert_ne_ok");
+
+                self.builder
+                    .build_conditional_branch(not_equal, ok_bb, panic_bb)
+                    .unwrap();
+
+                // Panic block
+                self.builder.position_at_end(panic_bb);
+                let printf = self.get_or_declare_printf();
+                let panic_msg = self
+                    .builder
+                    .build_global_string_ptr(
+                        "Assertion failed: values should not be equal!\\n",
+                        "assert_ne_fail",
+                    )
+                    .unwrap();
+                self.builder
+                    .build_call(printf, &[panic_msg.as_pointer_value().into()], "")
+                    .unwrap();
+                let exit_fn = self.get_or_declare_exit();
+                self.builder
+                    .build_call(
+                        exit_fn,
+                        &[self.context.i32_type().const_int(1, false).into()],
+                        "",
+                    )
+                    .unwrap();
+                self.builder.build_unreachable().unwrap();
+
+                // OK block
+                self.builder.position_at_end(ok_bb);
+                Ok(None) // void function
+            }
+
+            "assert_true" => {
+                // assert_true(condition: Boolean): None - panics if condition is false
+                let condition = self.compile_expr(&args[0].node)?;
+                let condition_bool = if condition.is_int_value() {
+                    let int_val = condition.into_int_value();
+                    // Handle both i1 (bool) and i64 (integer) types
+                    if int_val.get_type().get_bit_width() == 1 {
+                        int_val
+                    } else {
+                        self.builder
+                            .build_int_compare(
+                                IntPredicate::NE,
+                                int_val,
+                                self.context.i64_type().const_int(0, false),
+                                "bool_cond",
+                            )
+                            .unwrap()
+                    }
+                } else {
+                    return Err(CodegenError::new("assert_true requires boolean condition"));
+                };
+
+                let current_fn = self.current_function.unwrap();
+                let panic_bb = self
+                    .context
+                    .append_basic_block(current_fn, "assert_true_panic");
+                let ok_bb = self
+                    .context
+                    .append_basic_block(current_fn, "assert_true_ok");
+
+                self.builder
+                    .build_conditional_branch(condition_bool, ok_bb, panic_bb)
+                    .unwrap();
+
+                // Panic block
+                self.builder.position_at_end(panic_bb);
+                let printf = self.get_or_declare_printf();
+                let panic_msg = self
+                    .builder
+                    .build_global_string_ptr(
+                        "Assertion failed: expected true!\\n",
+                        "assert_true_fail",
+                    )
+                    .unwrap();
+                self.builder
+                    .build_call(printf, &[panic_msg.as_pointer_value().into()], "")
+                    .unwrap();
+                let exit_fn = self.get_or_declare_exit();
+                self.builder
+                    .build_call(
+                        exit_fn,
+                        &[self.context.i32_type().const_int(1, false).into()],
+                        "",
+                    )
+                    .unwrap();
+                self.builder.build_unreachable().unwrap();
+
+                // OK block
+                self.builder.position_at_end(ok_bb);
+                Ok(None) // void function
+            }
+
+            "assert_false" => {
+                // assert_false(condition: Boolean): None - panics if condition is true
+                let condition = self.compile_expr(&args[0].node)?;
+                let condition_bool = if condition.is_int_value() {
+                    let int_val = condition.into_int_value();
+                    // Handle both i1 (bool) and i64 (integer) types
+                    if int_val.get_type().get_bit_width() == 1 {
+                        int_val
+                    } else {
+                        self.builder
+                            .build_int_compare(
+                                IntPredicate::NE,
+                                int_val,
+                                self.context.i64_type().const_int(0, false),
+                                "bool_cond",
+                            )
+                            .unwrap()
+                    }
+                } else {
+                    return Err(CodegenError::new("assert_false requires boolean condition"));
+                };
+
+                let current_fn = self.current_function.unwrap();
+                let panic_bb = self
+                    .context
+                    .append_basic_block(current_fn, "assert_false_panic");
+                let ok_bb = self
+                    .context
+                    .append_basic_block(current_fn, "assert_false_ok");
+
+                self.builder
+                    .build_conditional_branch(condition_bool, panic_bb, ok_bb)
+                    .unwrap();
+
+                // Panic block
+                self.builder.position_at_end(panic_bb);
+                let printf = self.get_or_declare_printf();
+                let panic_msg = self
+                    .builder
+                    .build_global_string_ptr(
+                        "Assertion failed: expected false!\\n",
+                        "assert_false_fail",
+                    )
+                    .unwrap();
+                self.builder
+                    .build_call(printf, &[panic_msg.as_pointer_value().into()], "")
+                    .unwrap();
+                let exit_fn = self.get_or_declare_exit();
+                self.builder
+                    .build_call(
+                        exit_fn,
+                        &[self.context.i32_type().const_int(1, false).into()],
+                        "",
+                    )
+                    .unwrap();
+                self.builder.build_unreachable().unwrap();
+
+                // OK block
+                self.builder.position_at_end(ok_bb);
+                Ok(None) // void function (unreachable)
+            }
+
+            "fail" => {
+                // fail(message: String): None - unconditionally panics
+                let printf = self.get_or_declare_printf();
+                let panic_msg = self
+                    .builder
+                    .build_global_string_ptr("Test failed: ", "fail_prefix")
+                    .unwrap();
+                self.builder
+                    .build_call(printf, &[panic_msg.as_pointer_value().into()], "")
+                    .unwrap();
+
+                if !args.is_empty() {
+                    let msg = self.compile_expr(&args[0].node)?;
+                    self.builder.build_call(printf, &[msg.into()], "").unwrap();
+                }
+
+                let newline = self.builder.build_global_string_ptr("\\n", "nl").unwrap();
+                self.builder
+                    .build_call(printf, &[newline.as_pointer_value().into()], "")
+                    .unwrap();
+
+                let exit_fn = self.get_or_declare_exit();
+                self.builder
+                    .build_call(
+                        exit_fn,
+                        &[self.context.i32_type().const_int(1, false).into()],
+                        "",
+                    )
+                    .unwrap();
+                self.builder.build_unreachable().unwrap();
+
+                Ok(Some(self.context.i64_type().const_int(0, false).into()))
             }
 
             // Not a stdlib function

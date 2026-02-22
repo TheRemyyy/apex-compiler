@@ -1,56 +1,109 @@
-// Test 24: Function Attributes/Annotations
-// Tests: @Test, @Ignore attributes for testing framework
-// Note: This demonstrates the syntax. Full test runner coming soon.
+// Test 24: Function Attributes/Annotations & Assert Functions
+// Tests: @Test, @Ignore, @Before, @After, @BeforeAll, @AfterAll
+// Tests: assert, assert_eq, assert_ne, assert_true, assert_false
 
 import std.io.*;
+import std.string.*;
 
-// A test function marked with @Test attribute
-@Test
-function testAddition(): Integer {
-    return 2 + 2;
+@BeforeAll
+function initTests(): None {
+    println("=== Initializing Test Suite ===");
+    return None;
 }
 
-// Another test function
-@Test
-function testStringConcat(): String {
-    return "Hello, " + "World!";
+@Before
+function setup(): None {
+    println("  [Setup]");
+    return None;
 }
 
-// Ignored test with reason
-@Test
-@Ignore("Not implemented yet")
-function testDivision(): Integer {
-    // This test is skipped during test run
-    return 10 / 2;
+@After
+function teardown(): None {
+    println("  [Teardown]");
+    return None;
 }
 
-// Ignored test without reason
+@Test
+function testAddition(): None {
+    result: Integer = 2 + 2;
+    assert_eq(result, 4);
+    return None;
+}
+
+@Test
+function testSubtraction(): None {
+    result: Integer = 10 - 3;
+    assert_eq(result, 7);
+    return None;
+}
+
+@Test
+function testMultiplication(): None {
+    result: Integer = 6 * 7;
+    assert_eq(result, 42);
+    return None;
+}
+
+@Test
+function testDivision(): None {
+    result: Integer = 20 / 4;
+    assert_eq(result, 5);
+    return None;
+}
+
+@Test
+function testBooleanLogic(): None {
+    assert_true(true);
+    assert_false(false);
+    return None;
+}
+
+@Test
+function testStringEquality(): None {
+    // Note: String comparison uses ownership, so we compare directly
+    assert_eq("Hello", "Hello");
+    assert_ne("Hello", "World");
+    return None;
+}
+
+@Test
+function testIntegerComparisons(): None {
+    assert_eq(5, 5);
+    assert_ne(5, 10);
+    return None;
+}
+
+@Test
+@Ignore("This test is intentionally ignored for demo")
+function testIgnored(): None {
+    // This test should not run
+    fail("This should not be called!");
+    return None;
+}
+
 @Test
 @Ignore
-function testFeatureX(): Boolean {
-    // This test is also skipped
-    return true;
+function testIgnoredNoReason(): None {
+    // This test should also not run
+    fail("This should not be called!");
+    return None;
 }
 
-// Normal function without attributes
+@Test
+function testAssertCondition(): None {
+    x: Integer = 10;
+    assert(x > 5);
+    assert(x < 20);
+    return None;
+}
+
+@AfterAll
+function cleanupTests(): None {
+    println("=== Test Suite Complete ===");
+    return None;
+}
+
+// Normal function without attributes - not a test
 function helperFunction(): Integer {
     return 42;
-}
-
-function main(): None {
-    println("Test Attributes Demo");
-    println("====================");
-    
-    // For now, we call the test functions manually
-    // In the future, 'apex test' will discover and run @Test functions automatically
-    
-    println("Running testAddition: " + to_string(testAddition()));
-    println("Running testStringConcat: " + testStringConcat());
-    println("Running helperFunction: " + to_string(helperFunction()));
-    
-    println("");
-    println("Note: @Test and @Ignore attributes are parsed but not yet enforced.");
-    println("Future versions will include 'apex test' command for automated testing.");
-    
-    return None;
 }

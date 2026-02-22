@@ -1,27 +1,115 @@
-# Compiler CLI Reference
+# CLI Reference
 
-The `apex-compiler` command-line interface.
+The `apex` command-line interface.
 
 ## Usage
 
 ```bash
-apex-compiler <command> [arguments] [flags]
+apex <command> [arguments] [flags]
 ```
 
 ## Commands
 
 | Command | Description | Example |
 | :--- | :--- | :--- |
-| `check` | Checks code for errors without compiling. Checks types, borrows, etc. | `apex-compiler check main.apex` |
-| `compile` | Compiles the source file into a native executable. | `apex-compiler compile main.apex` |
-| `run` | Compiles and immediately executes the program. | `apex-compiler run main.apex` |
-| `lex` | **Debug:** Outputs the stream of tokens from the lexer. | `apex-compiler lex main.apex` |
-| `parse` | **Debug:** Outputs the Abstract Syntax Tree (AST). | `apex-compiler parse main.apex` |
+| `new <name>` | Creates a new Apex project. | `apex new my_project` |
+| `build` | Builds the current project. | `apex build` |
+| `run` | Builds and runs the current project or a single file. | `apex run` or `apex run file.apex` |
+| `test` | Discovers and runs @Test functions. | `apex test` or `apex test --path test.apex` |
+| `check` | Checks code for errors without compiling. | `apex check` |
+| `info` | Shows project information. | `apex info` |
+| `lex` | **Debug:** Outputs the stream of tokens. | `apex lex main.apex` |
+| `parse` | **Debug:** Outputs the AST. | `apex parse main.apex` |
+| `lsp` | Starts the LSP server for IDE integration. | `apex lsp` |
+| `compile` | Compiles a single file (legacy mode). | `apex compile file.apex` |
 
-## Flags
+## Global Flags
 
 | Flag | Abbreviation | Description |
 | :--- | :--- | :--- |
-| `--output <path>` | `-o` | Specifies the output filename for the executable. |
-| `--emit-llvm` | | Emits the LLVM IR (`.ll` file) instead of a binary. Useful for debugging codegen. |
-| `--no-check` | | Skips the type checking and borrow checking phases. **Warning: Unsafe.** |
+| `--help` | `-h` | Shows help information. |
+| `--version` | `-V` | Shows version information. |
+
+## Build & Run Flags
+
+| Flag | Abbreviation | Description |
+| :--- | :--- | :--- |
+| `--release` | `-r` | Builds with optimizations enabled. |
+| `--emit-llvm` | | Emits the LLVM IR (`.ll` file) instead of a binary. |
+| `--no-check` | | Skips type checking. **Warning: Unsafe.** |
+
+## Test Command
+
+The `test` command discovers and runs functions marked with `@Test`:
+
+```bash
+# Run all tests in current project
+apex test
+
+# Run tests in a specific file
+apex test --path tests/math_test.apex
+
+# List tests without running
+apex test --list
+
+# Filter tests by name
+apex test --filter "math"
+```
+
+### Test Options
+
+| Option | Abbreviation | Description |
+| :--- | :--- | :--- |
+| `--path <file>` | `-p` | Path to test file or directory. |
+| `--list` | `-l` | Lists tests without running them. |
+| `--filter <pattern>` | `-f` | Filters tests by name pattern. |
+
+## Examples
+
+### Creating a New Project
+
+```bash
+apex new my_project
+cd my_project
+apex run
+```
+
+### Building a Release Binary
+
+```bash
+apex build --release
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+apex test
+
+# Run with verbose output
+apex test --list
+apex test --filter "math"
+```
+
+### Checking Code
+
+```bash
+# Check current project
+apex check
+
+# Check specific file
+apex check --path src/utils.apex
+```
+
+### Debug Output
+
+```bash
+# Show tokens
+apex lex main.apex
+
+# Show AST
+apex parse main.apex
+
+# Show LLVM IR
+apex build --emit-llvm
+```

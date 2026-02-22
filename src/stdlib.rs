@@ -72,10 +72,21 @@ impl StdLib {
         functions.insert("Str__startsWith".to_string(), "std.string".to_string());
         functions.insert("Str__endsWith".to_string(), "std.string".to_string());
 
+        // std.assert - Assertion functions for testing (builtin - no import needed)
+        functions.insert("assert".to_string(), "builtin".to_string());
+        functions.insert("assert_eq".to_string(), "builtin".to_string());
+        functions.insert("assert_ne".to_string(), "builtin".to_string());
+        functions.insert("assert_true".to_string(), "builtin".to_string());
+        functions.insert("assert_false".to_string(), "builtin".to_string());
+        functions.insert("assert_null".to_string(), "builtin".to_string());
+        functions.insert("assert_not_null".to_string(), "builtin".to_string());
+        functions.insert("fail".to_string(), "builtin".to_string());
+
         // Builtin functions that DON'T require import
         // These are language primitives
         functions.insert("to_string".to_string(), "builtin".to_string());
         functions.insert("length".to_string(), "builtin".to_string());
+        functions.insert("exit".to_string(), "builtin".to_string());
 
         Self { functions }
     }

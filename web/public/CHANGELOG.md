@@ -1,5 +1,157 @@
 # Changelog
 
+All notable changes to the Apex Programming Language Compiler will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
+## [Unreleased]
+
+### ✨ New Features
+
+- **Testing Framework**: Full testing framework with attributes and assertions
+  - `@Test` attribute to mark test functions
+  - `@Ignore` attribute to skip tests (with optional reason: `@Ignore("not ready")`)
+  - `@Before`, `@After` for setup/teardown around each test
+  - `@BeforeAll`, `@AfterAll` for suite-level setup/teardown
+  - New CLI command: `apex test` - Discover and run all @Test functions
+  - Assertion functions: `assert()`, `assert_eq()`, `assert_ne()`, `assert_true()`, `assert_false()`, `fail()`
+  - New example: `examples/24_test_attributes.apex`
+
+- **LSP (Language Server Protocol)**: Apex now has a built-in LSP server for IDE integration
+  - New CLI command: `apex lsp` - Start the language server
+  - Autocomplete support for keywords, types, and functions
+  - Hover documentation for language keywords
+  - Go to definition support (prepared)
+
+- **Improved Error Messages**: Better developer experience with helpful error messages
+  - "Did you mean?" suggestions for typos using Levenshtein distance
+  - Contextual hints for missing imports
+  - Color-coded error output with source location
+
+### 🔧 Technical
+
+- Added `test_runner.rs` module for test discovery and execution
+- Added `Attribute` enum to AST for function annotations
+- Added `@` token to lexer
+- Updated parser to parse attributes before function declarations
+- Added parser unit tests for attribute parsing
+- Added assert functions to codegen with proper LLVM generation
+- Added `lsp.rs` module with tower-lsp integration
+- Added fuzzy string matching for error suggestions
+- Updated `import_check.rs` with suggestion engine
+
+## [1.3.1] - Import System Fixes - 2026-02-22
+
+### 🐛 Bug Fixes
+
+- **Wildcard Imports for Stdlib**: Fixed wildcard imports (`import std.io.*;`) not properly importing stdlib functions like `println`, `print`.
+- **Duplicate Import Check**: Fixed duplicate import validation in multi-file projects where imports were checked twice (once during analysis, once during compilation).
+- **Examples Updated**: Added missing `import std.io.*;` and `import std.string.*;` statements to multi-file project examples.
+
+### 🔧 Technical
+
+- `import_check.rs`: Added stdlib function resolution for wildcard imports
+- `main.rs`: Skip redundant import check during compilation phase (already done in analysis phase)
+- All examples now properly import required modules
+- Full `cargo fmt` and `cargo clippy` compliance
+
+### 📊 Stats
+- 32/32 tests passing
+- Zero clippy warnings
+
+## [1.3.0] - Multi-File & Namespace System - 2026-02-21
+
+### 🚀 Major Release: Complete Project System
+
+This release introduces a complete multi-file project system with Java-style namespaces and mandatory imports.
+
+### ✨ New Features
+
+- **Multi-File Project Support**: Apex now supports organizing code into projects with multiple source files.
+  - Project configuration via `apex.toml`
+  - New CLI commands: `apex new`, `apex build`, `apex run`, `apex info`
+  - Automatic merging and compilation of multiple source files
+  - Entry point configuration for main function location
+  
+- **Project Commands**:
+  - `apex new <name>` - Create a new project with standard structure
+  - `apex build` - Build current project
+  - `apex run` - Build and run current project  
+  - `apex info` - Display project information
+  - `apex check [file]` - Check project or specific file
+
+### 📁 Configuration
+
+- **apex.toml Format**:
+  ```toml
+  name = "my_project"
+  version = "1.0.0"
+  entry = "src/main.apex"
+  files = ["src/utils.apex", "src/main.apex"]
+  output = "my_project"
+  opt_level = "3"
+  ```
+
+### 📚 Documentation
+
+- Added comprehensive multi-file project documentation
+- New example: `examples/multi_file_project/`
+- Updated test suite to include multi-file project testing
+
+### 🔧 Technical
+
+- Added `namespace.rs` - Namespace resolution system
+- Added `import_check.rs` - Import validation with helpful error messages
+- Added `project.rs` - Project configuration management
+- Updated lexer with `Package`, `Import`, `Star` tokens
+- Updated parser for package/import syntax
+- CI workflow tests all 32 examples including multi-file projects
+- Full clippy compliance, cargo fmt applied
+
+### 🐛 Behavior Changes
+
+- **BREAKING**: Functions from other files are **NOT** automatically available
+- Must use `import namespace.function;` or `import namespace.*;`
+- Same-namespace functions work without imports (local scope)
+- Functions without package declaration are in `global` namespace
+
+### 📊 Stats
+- 32/32 tests passing
+- 3 new example projects demonstrating features
+- Zero clippy warnings
+
+## [1.2.0] - 2026-02-21
+
+### 🚀 Performance & Optimization
+
+- **LLVM Aggressive Optimizations**: Switched from `OptimizationLevel::Default` to `OptimizationLevel::Aggressive` for maximum performance.
+- **Native CPU Targeting**: Changed from generic CPU to `native` with `+avx2,+fma` features for host-specific optimizations.
+- **Function Attributes**: Added optimization attributes:
+  - `alwaysinline` for small functions (≤3 params)
+  - `nounwind` for exception-free code
+  - `willreturn` for functions guaranteed to return
+- **Tail Call Optimization**: Enabled `set_tail_call(true)` on all function calls.
+- **Loop Rotation**: Implemented loop rotation optimization for better branch prediction and reduced branching overhead.
+
+### 📊 Benchmarks
+
+- **Fibonacci(35)**: ~0.12s (comparable to C/Rust)
+- **Prime Sieve**: ~0.08s (faster than C/Rust!)
+- **Overall Speedup**: 3x faster than original implementation
+
+### 🏗️ Code Refactoring
+
+- **Modular Architecture**: Split monolithic `codegen.rs` (6666 lines) into focused modules:
+  - `codegen/core.rs` (3876 lines): Main codegen logic
+  - `codegen/types.rs` (1590 lines): Built-in type implementations
+  - `codegen/util.rs` (1223 lines): Utilities and C library bindings
+- **Cleaner Imports**: Removed all unused imports, clippy-clean with `-D warnings`.
+
+### 🐛 Fixed
+
+- **LLVM Attribute Errors**: Removed problematic attributes (`uwtable`, `call_convention`) causing Clang failures.
+- **Code Formatting**: Applied `cargo fmt` across entire codebase.
+
 ## [1.1.4] - 2025-12-29
 
 ### ✨ Added

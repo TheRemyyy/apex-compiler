@@ -10,6 +10,7 @@ mod namespace;
 mod parser;
 mod project;
 mod stdlib;
+mod test_runner;
 mod typeck;
 
 use clap::{Parser as ClapParser, Subcommand};
@@ -26,6 +27,7 @@ use crate::codegen::Codegen;
 use crate::import_check::ImportChecker;
 use crate::parser::Parser;
 use crate::project::{find_project_root, ProjectConfig};
+use crate::test_runner::{discover_tests, generate_test_runner_with_source, print_discovery};
 use crate::typeck::TypeChecker;
 
 #[derive(ClapParser)]
@@ -107,6 +109,18 @@ enum Commands {
     },
     /// Start LSP server
     Lsp,
+    /// Run tests
+    Test {
+        /// Input file or directory (default: project test files)
+        #[arg(short, long)]
+        path: Option<PathBuf>,
+        /// List tests without running them
+        #[arg(short, long)]
+        list: bool,
+        /// Filter tests by name pattern
+        #[arg(short, long)]
+        filter: Option<String>,
+    },
 }
 
 fn main() {
@@ -146,6 +160,9 @@ fn main() {
                 .unwrap()
                 .block_on(lsp::run_lsp_server());
             Ok(())
+        }
+        Commands::Test { path, list, filter } => {
+            run_tests(path.as_deref(), list, filter.as_deref())
         }
     };
 
@@ -858,4 +875,167 @@ fn format_parse_error(error: &parser::ParseError, source: &str, filename: &str) 
     }
 
     output
+}
+
+/// Run tests for a file or project
+fn run_tests(
+    test_path: Option<&Path>,
+    list_only: bool,
+    filter: Option<&str>,
+) -> Result<(), String> {
+    // Determine which file(s) to test
+    let test_files = if let Some(path) = test_path {
+        if path.is_file() {
+            vec![path.to_path_buf()]
+        } else {
+            // Look for test files in directory
+            find_test_files(path)?
+        }
+    } else {
+        // Default: look for test files in current project
+        let current_dir = std::env::current_dir().map_err(|e| e.to_string())?;
+        find_test_files(&current_dir)?
+    };
+
+    if test_files.is_empty() {
+        println!("{}", "No test files found.".yellow());
+        println!("Create test files with functions marked with @Test attribute.");
+        return Ok(());
+    }
+
+    // Process each test file
+    let mut all_tests_found = false;
+
+    for test_file in &test_files {
+        let source = fs::read_to_string(test_file)
+            .map_err(|e| format!("Failed to read test file: {}", e))?;
+
+        // Parse the test file
+        let tokens = lexer::tokenize(&source).map_err(|e| format!("Lexer error: {}", e))?;
+        let mut parser = Parser::new(tokens);
+        let program = parser
+            .parse_program()
+            .map_err(|e| format!("Parse error: {}", e.message))?;
+
+        // Discover tests
+        let discovery = discover_tests(&program);
+
+        if discovery.total_tests == 0 {
+            continue;
+        }
+
+        all_tests_found = true;
+
+        // Apply filter if specified
+        let filtered_suites: Vec<_> = if let Some(pattern) = filter {
+            discovery
+                .suites
+                .into_iter()
+                .map(|mut suite| {
+                    suite.tests.retain(|t| t.name.contains(pattern));
+                    suite
+                })
+                .filter(|s| !s.tests.is_empty())
+                .collect()
+        } else {
+            discovery.suites
+        };
+
+        if filtered_suites.is_empty() {
+            println!(
+                "{}: No tests matching filter '{}'",
+                test_file.display(),
+                filter.unwrap_or("")
+            );
+            continue;
+        }
+
+        let filtered_discovery = test_runner::TestDiscovery {
+            suites: filtered_suites,
+            total_tests: discovery.total_tests,
+            ignored_tests: discovery.ignored_tests,
+        };
+
+        // List or run tests
+        if list_only {
+            println!("\n{}", test_file.display().to_string().cyan().bold());
+            print_discovery(&filtered_discovery);
+        } else {
+            // Generate and run test runner - include original source + test runner main
+            let runner_code = generate_test_runner_with_source(&filtered_discovery, &source);
+
+            // Create temporary file for test runner
+            let runner_path = test_file.with_extension("test_runner.apex");
+            fs::write(&runner_path, &runner_code)
+                .map_err(|e| format!("Failed to write test runner: {}", e))?;
+
+            // Compile and run the test runner
+            let exe_path = test_file.with_extension("test_runner.exe");
+            let result = compile_and_run_test(&runner_path, &exe_path);
+
+            // Clean up temporary files
+            let _ = fs::remove_file(&runner_path);
+            let _ = fs::remove_file(&exe_path);
+
+            result?;
+        }
+    }
+
+    if !all_tests_found {
+        println!("{}", "No tests found in any test files.".yellow());
+        println!("Mark functions with @Test to create tests:");
+        println!("  {} function myTest(): None {{ ... }}", "@Test".cyan());
+    }
+
+    Ok(())
+}
+
+/// Find test files in a directory
+fn find_test_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut test_files = Vec::new();
+
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().map(|e| e == "apex").unwrap_or(false) {
+                // Check if file name suggests it's a test file
+                let file_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                if file_name.contains("test") || file_name.contains("spec") {
+                    test_files.push(path);
+                }
+            }
+        }
+    }
+
+    Ok(test_files)
+}
+
+/// Compile and run a test file
+fn compile_and_run_test(source_path: &Path, exe_path: &Path) -> Result<(), String> {
+    use std::process::Command;
+
+    // Compile the test runner
+    let source = fs::read_to_string(source_path)
+        .map_err(|e| format!("Failed to read test runner: {}", e))?;
+
+    compile_source(&source, source_path, exe_path, false, true)?;
+
+    // Run the compiled test
+    println!("\n{}", "Running tests...".cyan().bold());
+    println!();
+
+    let output = Command::new(exe_path)
+        .output()
+        .map_err(|e| format!("Failed to run tests: {}", e))?;
+
+    // Print output
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+
+    // Check exit code
+    if !output.status.success() {
+        return Err("Tests failed".to_string());
+    }
+
+    Ok(())
 }

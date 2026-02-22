@@ -1259,12 +1259,12 @@ impl TypeChecker {
                 }
                 Some(ResolvedType::Boolean)
             }
-            "System__exit" => {
+            "System__exit" | "exit" => {
                 self.check_arg_count(name, args, 1, span.clone());
                 if !args.is_empty() {
                     let t = self.check_expr(&args[0].node, args[0].span.clone());
                     if !matches!(t, ResolvedType::Integer) {
-                        self.error("System.exit() requires Integer code".to_string(), span);
+                        self.error("exit() requires Integer code".to_string(), span);
                     }
                 }
                 Some(ResolvedType::None)
@@ -1431,6 +1431,73 @@ impl TypeChecker {
                     }
                 }
                 Some(ResolvedType::String)
+            }
+            // Assertion functions for testing
+            "assert" => {
+                // assert(condition: Boolean): None
+                self.check_arg_count(name, args, 1, span.clone());
+                if !args.is_empty() {
+                    let t = self.check_expr(&args[0].node, args[0].span.clone());
+                    if !matches!(t, ResolvedType::Boolean | ResolvedType::Integer) {
+                        self.error(
+                            "assert() requires boolean condition".to_string(),
+                            span.clone(),
+                        );
+                    }
+                }
+                Some(ResolvedType::None)
+            }
+            "assert_eq" | "assert_ne" => {
+                // assert_eq(a: T, b: T): None
+                // assert_ne(a: T, b: T): None
+                self.check_arg_count(name, args, 2, span.clone());
+                if args.len() >= 2 {
+                    let t1 = self.check_expr(&args[0].node, args[0].span.clone());
+                    let t2 = self.check_expr(&args[1].node, args[1].span.clone());
+                    if !self.types_compatible(&t1, &t2) {
+                        self.error(
+                            format!(
+                                "{}() arguments must have compatible types: {} vs {}",
+                                name, t1, t2
+                            ),
+                            span,
+                        );
+                    }
+                }
+                Some(ResolvedType::None)
+            }
+            "assert_true" => {
+                // assert_true(condition: Boolean): None
+                self.check_arg_count(name, args, 1, span.clone());
+                if !args.is_empty() {
+                    let t = self.check_expr(&args[0].node, args[0].span.clone());
+                    if !matches!(t, ResolvedType::Boolean | ResolvedType::Integer) {
+                        self.error("assert_true() requires boolean".to_string(), span.clone());
+                    }
+                }
+                Some(ResolvedType::None)
+            }
+            "assert_false" => {
+                // assert_false(condition: Boolean): None
+                self.check_arg_count(name, args, 1, span.clone());
+                if !args.is_empty() {
+                    let t = self.check_expr(&args[0].node, args[0].span.clone());
+                    if !matches!(t, ResolvedType::Boolean | ResolvedType::Integer) {
+                        self.error("assert_false() requires boolean".to_string(), span.clone());
+                    }
+                }
+                Some(ResolvedType::None)
+            }
+            "fail" => {
+                // fail(message: String): None - unconditionally fails
+                if !args.is_empty() {
+                    self.check_arg_count(name, args, 1, span.clone());
+                    let t = self.check_expr(&args[0].node, args[0].span.clone());
+                    if !matches!(t, ResolvedType::String) {
+                        self.error("fail() requires String message".to_string(), span.clone());
+                    }
+                }
+                Some(ResolvedType::None)
             }
             _ => None,
         }
