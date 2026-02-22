@@ -214,7 +214,7 @@ pub fn generate_test_runner_with_source(
     // For simplicity, we include the whole source but filter out any existing main()
     let filtered_source = filter_out_main_function(original_source);
     code.push_str(&filtered_source);
-    code.push_str("\n");
+    code.push('\n');
 
     // Add the test runner main
     code.push_str("// Test runner entry point\n");
