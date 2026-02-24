@@ -41,7 +41,7 @@ export function Header() {
             </div>
 
             {isMenuOpen && (
-                <div className="fixed left-0 top-16 z-40 flex h-[calc(100dvh-4rem)] w-full flex-col gap-5 border-t border-zinc-800 bg-[#0a0a0a] p-6 md:hidden">
+                <div className="fixed left-0 top-16 z-40 flex w-full flex-col gap-5 border-b border-zinc-800 bg-[#0a0a0a] p-6 shadow-2xl md:hidden">
                     <Link to="/docs/overview" className="text-base font-medium text-zinc-200 hover:text-white" onClick={() => setIsMenuOpen(false)}>
                         Documentation
                     </Link>
