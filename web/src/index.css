@@ -30,6 +30,7 @@ body {
   min-width: 320px;
   background: var(--bg);
   color: var(--text);
+  overflow-x: hidden;
 }
 
 /* Remove default focus outline for all buttons */

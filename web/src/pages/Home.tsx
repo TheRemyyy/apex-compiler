@@ -63,8 +63,8 @@ export function Home() {
                             <p className="text-sm font-medium text-zinc-200">Range Iterator</p>
                             <span className="rounded-md bg-zinc-800 px-2 py-1 text-xs font-medium text-zinc-300">v1.3.2</span>
                         </div>
-                        <div className="rounded-xl border border-zinc-700 bg-[#0d0d0d] p-5">
-                            <pre className="overflow-x-auto text-sm leading-7 text-zinc-300">
+                        <div className="rounded-xl border border-zinc-700 bg-[#0d0d0d] p-5 overflow-hidden">
+                            <pre className="overflow-x-auto text-sm leading-7 text-zinc-300 max-w-full">
                                 <code>
                                     <div>import std.io.*;</div>
                                     <div></div>
