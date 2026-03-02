@@ -22,7 +22,7 @@ You can compile and run your program in a few different ways:
 The `run` command handles compilation and execution automatically:
 
 ```bash
-apex-compiler run hello.apex
+apex run hello.apex
 ```
 
 #### 2. Separate Compilation
@@ -30,7 +30,7 @@ apex-compiler run hello.apex
 To compile to a native executable:
 
 ```bash
-apex-compiler compile hello.apex
+apex compile hello.apex
 ```
 
 This produces an executable named `hello` (or `hello.exe` on Windows). Run it as usual:
@@ -45,7 +45,7 @@ This produces an executable named `hello` (or `hello.exe` on Windows). Run it as
 To check for errors without compiling (faster for development):
 
 ```bash
-apex-compiler check hello.apex
+apex check hello.apex
 ```
 
 ## Your First Real Program
@@ -77,7 +77,7 @@ function main(): None {
 Run it:
 
 ```bash
-apex-compiler run program.apex
+apex run program.apex
 ```
 
 ## Next Steps

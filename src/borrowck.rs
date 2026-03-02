@@ -160,7 +160,18 @@ impl BorrowChecker {
             }
             Decl::Module(module) => {
                 for inner in &module.declarations {
-                    self.collect_sig(&inner.node);
+                    match &inner.node {
+                        Decl::Function(func) => {
+                            self.functions.insert(
+                                format!("{}__{}", module.name, func.name),
+                                func.params.iter().map(|p| p.mode).collect(),
+                            );
+                            // Keep unprefixed for backward compatibility.
+                            self.functions
+                                .insert(func.name.clone(), func.params.iter().map(|p| p.mode).collect());
+                        }
+                        _ => self.collect_sig(&inner.node),
+                    }
                 }
             }
             _ => {}
@@ -484,6 +495,12 @@ impl BorrowChecker {
                             "File" | "Time" | "System" | "Math" | "Str" | "Args"
                         ) {
                             param_modes = vec![ParamMode::Borrow; args.len()];
+                        }
+
+                        // Module dot syntax: Module.func(...) resolves to Module__func
+                        let mangled = format!("{}__{}", name, field);
+                        if let Some(modes) = self.functions.get(&mangled) {
+                            param_modes = modes.clone();
                         }
                     }
 

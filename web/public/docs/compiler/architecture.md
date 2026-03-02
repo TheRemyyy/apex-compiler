@@ -8,7 +8,7 @@ This document describes the internal architecture of the Apex compiler.
 2. **Parsing** (`parser.rs`): Recursive descent parser that builds an Abstract Syntax Tree (AST) from tokens.
 3. **Type Checking** (`typeck.rs`): Traverses the AST to validate types, resolve names, and ensure type safety.
 4. **Borrow Checking** (`borrowck.rs`): Analyses ownership and lifetimes to ensure memory safety without GC.
-5. **Code Generation** (`codegen.rs`): Lowers the AST into LLVM IR (Intermediate Representation).
+5. **Code Generation** (`codegen/core.rs`, `codegen/types.rs`, `codegen/util.rs`): Lowers the AST into LLVM IR (Intermediate Representation).
 6. **Linking**: LLVM IR is compiled to an object file and linked (using `clang`/`cc`) to produce the final executable.
 
 ## Directory Structure
@@ -19,7 +19,10 @@ This document describes the internal architecture of the Apex compiler.
 - `src/parser.rs`: Parser implementation.
 - `src/typeck.rs`: Type checker implementation.
 - `src/borrowck.rs`: Borrow checker implementation.
-- `src/codegen.rs`: LLVM IR generation using `inkwell` or similar bindings.
+- `src/codegen/mod.rs`: Codegen module entry.
+- `src/codegen/core.rs`: Core IR generation and lowering.
+- `src/codegen/types.rs`: Built-in collection/Option/Result/Range codegen helpers.
+- `src/codegen/util.rs`: C runtime bindings and utility helpers.
 
 ## Contributing
 

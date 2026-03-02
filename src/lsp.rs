@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 
 use crate::ast::{Decl, Program};
 use crate::lexer;
-use crate::parser::Parser;
+use crate::parser::{ParseError, Parser};
 
 /// Document state tracked by the LSP server
 #[derive(Debug, Clone)]
@@ -42,18 +42,176 @@ impl Backend {
 
     /// Parse a document and store the AST
     async fn parse_document(&self, uri: &Url) {
-        let mut docs = self.documents.write().await;
-        if let Some(doc) = docs.get_mut(uri) {
-            match lexer::tokenize(&doc.text) {
-                Ok(tokens) => {
-                    let mut parser = Parser::new(tokens);
-                    doc.parsed = parser.parse_program().ok();
-                }
-                Err(_) => {
-                    doc.parsed = None;
+        let (text, version) = {
+            let docs = self.documents.read().await;
+            if let Some(doc) = docs.get(uri) {
+                (doc.text.clone(), doc.version)
+            } else {
+                return;
+            }
+        };
+
+        let mut diagnostics = Vec::new();
+        let parsed = match lexer::tokenize(&text) {
+            Ok(tokens) => {
+                let mut parser = Parser::new(tokens);
+                match parser.parse_program() {
+                    Ok(program) => Some(program),
+                    Err(err) => {
+                        diagnostics.push(self.parse_error_to_diagnostic(&text, &err));
+                        None
+                    }
                 }
             }
+            Err(msg) => {
+                diagnostics.push(self.lexer_error_to_diagnostic(&text, &msg));
+                None
+            }
+        };
+
+        {
+            let mut docs = self.documents.write().await;
+            if let Some(doc) = docs.get_mut(uri) {
+                doc.parsed = parsed;
+            }
         }
+
+        self.client
+            .publish_diagnostics(uri.clone(), diagnostics, Some(version))
+            .await;
+    }
+
+    fn parse_error_to_diagnostic(&self, text: &str, err: &ParseError) -> Diagnostic {
+        Diagnostic {
+            range: self.span_to_range(text, err.span.clone()),
+            severity: Some(DiagnosticSeverity::ERROR),
+            code: None,
+            code_description: None,
+            source: Some("apex-parser".to_string()),
+            message: err.message.clone(),
+            related_information: None,
+            tags: None,
+            data: None,
+        }
+    }
+
+    fn lexer_error_to_diagnostic(&self, text: &str, msg: &str) -> Diagnostic {
+        // Expected shape: "Unknown token at <offset>: '<snippet>'"
+        let offset = msg
+            .split("Unknown token at ")
+            .nth(1)
+            .and_then(|s| s.split(':').next())
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        Diagnostic {
+            range: self.span_to_range(text, offset..(offset + 1)),
+            severity: Some(DiagnosticSeverity::ERROR),
+            code: None,
+            code_description: None,
+            source: Some("apex-lexer".to_string()),
+            message: msg.to_string(),
+            related_information: None,
+            tags: None,
+            data: None,
+        }
+    }
+
+    fn span_to_range(&self, text: &str, span: std::ops::Range<usize>) -> Range {
+        Range {
+            start: self.offset_to_position(text, span.start),
+            end: self.offset_to_position(text, span.end),
+        }
+    }
+
+    fn offset_to_position(&self, text: &str, target: usize) -> Position {
+        let mut line = 0u32;
+        let mut col = 0u32;
+        let mut last_idx = 0usize;
+
+        for (idx, ch) in text.char_indices() {
+            if idx >= target {
+                break;
+            }
+            last_idx = idx;
+            if ch == '\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+
+        if target > last_idx && target <= text.len() {
+            // No-op: col is already best-effort for UTF-8 char boundaries.
+        }
+
+        Position::new(line, col)
+    }
+
+    fn word_at_position(&self, text: &str, pos: Position) -> Option<String> {
+        let line = text.lines().nth(pos.line as usize)?;
+        let chars: Vec<char> = line.chars().collect();
+        if chars.is_empty() {
+            return None;
+        }
+        let mut idx = (pos.character as usize).min(chars.len().saturating_sub(1));
+        if !chars[idx].is_alphanumeric() && chars[idx] != '_' && idx > 0 {
+            idx -= 1;
+        }
+        if !chars[idx].is_alphanumeric() && chars[idx] != '_' {
+            return None;
+        }
+
+        let mut start = idx;
+        while start > 0 && (chars[start - 1].is_alphanumeric() || chars[start - 1] == '_') {
+            start -= 1;
+        }
+        let mut end = idx;
+        while end + 1 < chars.len() && (chars[end + 1].is_alphanumeric() || chars[end + 1] == '_')
+        {
+            end += 1;
+        }
+        Some(chars[start..=end].iter().collect())
+    }
+
+    fn definition_locations(&self, uri: &Url, text: &str, program: &Program, symbol: &str) -> Vec<Location> {
+        let mut out = Vec::new();
+        for decl in &program.declarations {
+            match &decl.node {
+                Decl::Function(func) if func.name == symbol => {
+                    out.push(Location::new(uri.clone(), self.span_to_range(text, decl.span.clone())));
+                }
+                Decl::Class(class) if class.name == symbol => {
+                    out.push(Location::new(uri.clone(), self.span_to_range(text, decl.span.clone())));
+                }
+                Decl::Enum(en) if en.name == symbol => {
+                    out.push(Location::new(uri.clone(), self.span_to_range(text, decl.span.clone())));
+                }
+                Decl::Interface(inter) if inter.name == symbol => {
+                    out.push(Location::new(uri.clone(), self.span_to_range(text, decl.span.clone())));
+                }
+                Decl::Module(module) => {
+                    if module.name == symbol {
+                        out.push(Location::new(
+                            uri.clone(),
+                            self.span_to_range(text, decl.span.clone()),
+                        ));
+                    }
+                    for inner in &module.declarations {
+                        if let Decl::Function(func) = &inner.node {
+                            if func.name == symbol {
+                                out.push(Location::new(
+                                    uri.clone(),
+                                    self.span_to_range(text, inner.span.clone()),
+                                ));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
     }
 
     /// Get completion items for a position
@@ -278,14 +436,17 @@ impl LanguageServer for Backend {
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         let uri = params.text_document_position_params.text_document.uri;
-        let _pos = params.text_document_position_params.position;
+        let pos = params.text_document_position_params.position;
 
         let docs = self.documents.read().await;
         if let Some(doc) = docs.get(&uri) {
-            if let Some(_program) = &doc.parsed {
-                // TODO: Implement goto definition
-                // Need to track symbol positions in AST
-                return Ok(None);
+            if let Some(program) = &doc.parsed {
+                if let Some(symbol) = self.word_at_position(&doc.text, pos) {
+                    let locations = self.definition_locations(&uri, &doc.text, program, &symbol);
+                    if !locations.is_empty() {
+                        return Ok(Some(GotoDefinitionResponse::Array(locations)));
+                    }
+                }
             }
         }
 

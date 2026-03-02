@@ -4,6 +4,26 @@ All notable changes to the Apex Programming Language Compiler will be documented
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.3.3] - Compiler/LSP/Docs Sync - 2026-03-02
+
+### ✨ Added
+
+- Module dot syntax support in semantic/codegen paths (`Module.function(...)`) while keeping `Module__function(...)` compatibility.
+- Enum metadata and constructor support for `Enum.Variant(...)` in codegen/type checking.
+- LSP diagnostics publication on open/change (lexer/parser errors) and baseline go-to-definition symbol lookup.
+
+### ♻️ Changed
+
+- Match code generation expanded to support enum-style variant dispatch and payload binding flows.
+- Map codegen methods (`set`, `insert`, `get`, `contains`) moved from placeholder behavior to functional linear-lookup behavior with update semantics.
+- Project build pipeline now combines parsed AST declarations directly instead of text-merging source strings.
+- Full docs mirror maintained under `web/public/docs/` from `docs/`.
+
+### 🐛 Fixed
+
+- Namespace collision handling now fails early with clear function+namespace diagnostics.
+- Documentation consistency updates (`apex` CLI usage, module syntax notes, compiler architecture file map).
+
 ## [1.3.2] - Range Types - 2026-02-22
 
 ### ✨ New Features

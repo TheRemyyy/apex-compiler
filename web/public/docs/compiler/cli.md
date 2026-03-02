@@ -98,7 +98,7 @@ apex test --filter "math"
 apex check
 
 # Check specific file
-apex check --path src/utils.apex
+apex check src/utils.apex
 ```
 
 ### Debug Output

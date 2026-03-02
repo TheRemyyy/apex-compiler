@@ -10,7 +10,7 @@ use inkwell::module::Module;
 
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType};
 use inkwell::values::{
-    BasicMetadataValueEnum, BasicValueEnum, FunctionValue, PointerValue, ValueKind,
+    BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue, ValueKind,
 };
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 use std::collections::HashMap;
@@ -47,6 +47,20 @@ pub struct ClassInfo<'ctx> {
     pub field_types: HashMap<String, Type>,
 }
 
+/// Enum variant metadata
+#[derive(Debug, Clone)]
+pub struct EnumVariantInfo {
+    pub tag: u8,
+    pub fields: Vec<Type>,
+}
+
+/// Enum metadata used by codegen and pattern matching
+pub struct EnumInfo<'ctx> {
+    pub struct_type: StructType<'ctx>,
+    pub payload_slots: usize,
+    pub variants: HashMap<String, EnumVariantInfo>,
+}
+
 /// Loop context for break/continue
 pub struct LoopContext<'ctx> {
     pub loop_block: BasicBlock<'ctx>,
@@ -61,6 +75,8 @@ pub struct Codegen<'ctx> {
     pub variables: HashMap<String, Variable<'ctx>>,
     pub functions: HashMap<String, (FunctionValue<'ctx>, Type)>,
     pub classes: HashMap<String, ClassInfo<'ctx>>,
+    pub enums: HashMap<String, EnumInfo<'ctx>>,
+    pub enum_variant_to_enum: HashMap<String, String>,
     pub current_function: Option<FunctionValue<'ctx>>,
     pub current_return_type: Option<Type>,
     pub loop_stack: Vec<LoopContext<'ctx>>,
@@ -80,6 +96,8 @@ impl<'ctx> Codegen<'ctx> {
             variables: HashMap::new(),
             functions: HashMap::new(),
             classes: HashMap::new(),
+            enums: HashMap::new(),
+            enum_variant_to_enum: HashMap::new(),
             current_function: None,
             current_return_type: None,
             loop_stack: Vec::new(),
@@ -122,6 +140,13 @@ impl<'ctx> Codegen<'ctx> {
 
     /// Compile program
     pub fn compile(&mut self, program: &Program) -> Result<()> {
+        // First pass (0): declare all enums first so Named(Enum) resolves correctly.
+        for decl in &program.declarations {
+            if let Decl::Enum(en) = &decl.node {
+                self.declare_enum(en)?;
+            }
+        }
+
         // First pass: declare all classes and functions
         for decl in &program.declarations {
             match &decl.node {
@@ -129,7 +154,7 @@ impl<'ctx> Codegen<'ctx> {
                 Decl::Function(func) => {
                     self.declare_function(func)?;
                 }
-                Decl::Enum(_) => {}      // TODO
+                Decl::Enum(_) => {}
                 Decl::Interface(_) => {} // Interfaces don't generate code
                 Decl::Module(module) => self.declare_module(module)?,
                 Decl::Import(_) => {} // Handled at file level
@@ -141,12 +166,53 @@ impl<'ctx> Codegen<'ctx> {
             match &decl.node {
                 Decl::Function(func) => self.compile_function(func)?,
                 Decl::Class(class) => self.compile_class(class)?,
-                Decl::Enum(_) => {}      // TODO
+                Decl::Enum(_) => {}
                 Decl::Interface(_) => {} // Interfaces don't generate code
                 Decl::Module(module) => self.compile_module(module)?,
                 Decl::Import(_) => {} // Handled at file level
             }
         }
+
+        Ok(())
+    }
+
+    pub fn declare_enum(&mut self, en: &EnumDecl) -> Result<()> {
+        let payload_slots = en
+            .variants
+            .iter()
+            .map(|v| v.fields.len())
+            .max()
+            .unwrap_or(0);
+
+        // Runtime representation:
+        // { tag: i8, payload_0: i64, payload_1: i64, ... }
+        let mut fields: Vec<BasicTypeEnum<'ctx>> = vec![self.context.i8_type().into()];
+        for _ in 0..payload_slots {
+            fields.push(self.context.i64_type().into());
+        }
+        let struct_type = self.context.struct_type(&fields, false);
+
+        let mut variants = HashMap::new();
+        for (i, variant) in en.variants.iter().enumerate() {
+            variants.insert(
+                variant.name.clone(),
+                EnumVariantInfo {
+                    tag: i as u8,
+                    fields: variant.fields.iter().map(|f| f.ty.clone()).collect(),
+                },
+            );
+            self.enum_variant_to_enum
+                .insert(variant.name.clone(), en.name.clone());
+        }
+
+        self.enums.insert(
+            en.name.clone(),
+            EnumInfo {
+                struct_type,
+                payload_slots,
+                variants,
+            },
+        );
 
         Ok(())
     }
@@ -164,6 +230,11 @@ impl<'ctx> Codegen<'ctx> {
                     let mut prefixed_class = class.clone();
                     prefixed_class.name = format!("{}__{}", module.name, class.name);
                     self.declare_class(&prefixed_class)?;
+                }
+                Decl::Enum(en) => {
+                    let mut prefixed_enum = en.clone();
+                    prefixed_enum.name = format!("{}__{}", module.name, en.name);
+                    self.declare_enum(&prefixed_enum)?;
                 }
                 _ => {}
             }
@@ -185,6 +256,7 @@ impl<'ctx> Codegen<'ctx> {
                     prefixed_class.name = format!("{}__{}", module.name, class.name);
                     self.compile_class(&prefixed_class)?;
                 }
+                Decl::Enum(_) => {}
                 _ => {}
             }
         }
@@ -201,7 +273,13 @@ impl<'ctx> Codegen<'ctx> {
             Type::String => self.context.ptr_type(AddressSpace::default()).into(),
             Type::Char => self.context.i8_type().into(),
             Type::None => self.context.i8_type().into(),
-            Type::Named(_name) => self.context.ptr_type(AddressSpace::default()).into(),
+            Type::Named(name) => {
+                if let Some(enum_info) = self.enums.get(name) {
+                    enum_info.struct_type.into()
+                } else {
+                    self.context.ptr_type(AddressSpace::default()).into()
+                }
+            }
             Type::Generic(_, _) => self.context.ptr_type(AddressSpace::default()).into(),
             Type::Function(_, _) => self
                 .context
@@ -1046,290 +1124,328 @@ impl<'ctx> Codegen<'ctx> {
         Ok(())
     }
 
+    fn encode_enum_payload(&self, value: BasicValueEnum<'ctx>, ty: &Type) -> Result<IntValue<'ctx>> {
+        let i64_type = self.context.i64_type();
+        let encoded = match ty {
+            Type::Integer => value.into_int_value(),
+            Type::Boolean => self
+                .builder
+                .build_int_z_extend(value.into_int_value(), i64_type, "bool_to_i64")
+                .unwrap(),
+            Type::Char => self
+                .builder
+                .build_int_z_extend(value.into_int_value(), i64_type, "char_to_i64")
+                .unwrap(),
+            Type::Float => self
+                .builder
+                .build_bit_cast(value.into_float_value(), i64_type, "float_bits")
+                .unwrap()
+                .into_int_value(),
+            Type::String | Type::Named(_) | Type::Ref(_) | Type::MutRef(_) => self
+                .builder
+                .build_ptr_to_int(
+                    value.into_pointer_value(),
+                    i64_type,
+                    "ptr_to_i64",
+                )
+                .unwrap(),
+            _ => {
+                return Err(CodegenError::new(
+                    "Unsupported enum payload type for codegen",
+                ));
+            }
+        };
+        Ok(encoded)
+    }
+
+    fn decode_enum_payload(&self, raw: IntValue<'ctx>, ty: &Type) -> Result<BasicValueEnum<'ctx>> {
+        let i64_type = self.context.i64_type();
+        let decoded = match ty {
+            Type::Integer => raw.into(),
+            Type::Boolean => self
+                .builder
+                .build_int_truncate(raw, self.context.bool_type(), "i64_to_bool")
+                .unwrap()
+                .into(),
+            Type::Char => self
+                .builder
+                .build_int_truncate(raw, self.context.i8_type(), "i64_to_char")
+                .unwrap()
+                .into(),
+            Type::Float => self
+                .builder
+                .build_bit_cast(raw, self.context.f64_type(), "bits_to_float")
+                .unwrap(),
+            Type::String | Type::Named(_) | Type::Ref(_) | Type::MutRef(_) => self
+                .builder
+                .build_int_to_ptr(
+                    raw,
+                    self.context.ptr_type(AddressSpace::default()),
+                    "i64_to_ptr",
+                )
+                .unwrap()
+                .into(),
+            _ => {
+                return Err(CodegenError::new(
+                    "Unsupported enum payload type for codegen",
+                ));
+            }
+        };
+        let _ = i64_type; // keep layout assumptions explicit
+        Ok(decoded)
+    }
+
+    fn build_enum_value(
+        &mut self,
+        enum_name: &str,
+        variant_info: &EnumVariantInfo,
+        values: &[BasicValueEnum<'ctx>],
+    ) -> Result<BasicValueEnum<'ctx>> {
+        let enum_info = self
+            .enums
+            .get(enum_name)
+            .ok_or_else(|| CodegenError::new(format!("Unknown enum '{}'", enum_name)))?;
+        let mut value = enum_info.struct_type.get_undef();
+
+        value = self
+            .builder
+            .build_insert_value(
+                value,
+                self.context
+                    .i8_type()
+                    .const_int(variant_info.tag as u64, false),
+                0,
+                "enum_tag",
+            )
+            .unwrap()
+            .into_struct_value();
+
+        for (i, field_ty) in variant_info.fields.iter().enumerate() {
+            let encoded = self.encode_enum_payload(values[i], field_ty)?;
+            value = self
+                .builder
+                .build_insert_value(value, encoded, (i + 1) as u32, "enum_payload")
+                .unwrap()
+                .into_struct_value();
+        }
+
+        Ok(value.into())
+    }
+
     pub fn compile_match_stmt(&mut self, expr: &Spanned<Expr>, arms: &[MatchArm]) -> Result<()> {
         let val = self.compile_expr(&expr.node)?;
         let func = self.current_function.unwrap();
+        let merge_bb = self.context.append_basic_block(func, "match.merge");
 
-        // IMPORTANT: Do NOT create merge_bb here - we create it AFTER all arm blocks
-        // This ensures merge_bb is last in LLVM's block list
+        let match_ty = self.infer_expr_type(&expr.node, &[]);
+        let enum_match_name = match &match_ty {
+            Type::Named(name) if self.enums.contains_key(name) => Some(name.clone()),
+            _ => None,
+        };
 
-        // Track blocks that need to branch to merge (we'll patch them later)
-        let mut blocks_needing_merge: Vec<inkwell::basic_block::BasicBlock> = Vec::new();
+        let mut dispatch_bb = self.builder.get_insert_block().unwrap();
 
         for arm in arms {
             let arm_bb = self.context.append_basic_block(func, "match.arm");
+            let next_bb = self.context.append_basic_block(func, "match.next");
 
+            self.builder.position_at_end(dispatch_bb);
             match &arm.pattern {
-                Pattern::Wildcard => {
+                Pattern::Wildcard | Pattern::Ident(_) => {
                     self.builder.build_unconditional_branch(arm_bb).unwrap();
-                    self.builder.position_at_end(arm_bb);
-                    for stmt in &arm.body {
-                        self.compile_stmt(&stmt.node)?;
-                    }
-                    if self.needs_terminator() {
-                        blocks_needing_merge.push(self.builder.get_insert_block().unwrap());
-                    }
-                    let merge_bb = self.context.append_basic_block(func, "match.merge");
-                    for bb in blocks_needing_merge {
-                        self.builder.position_at_end(bb);
-                        if self.needs_terminator() {
-                            self.builder.build_unconditional_branch(merge_bb).unwrap();
-                        }
-                    }
-                    self.builder.position_at_end(merge_bb);
-                    return Ok(());
                 }
+                Pattern::Literal(lit) => {
+                    let pattern_val = self.compile_literal(lit)?;
+                    let cond = if val.is_int_value() && pattern_val.is_int_value() {
+                        self.builder
+                            .build_int_compare(
+                                IntPredicate::EQ,
+                                val.into_int_value(),
+                                pattern_val.into_int_value(),
+                                "match_lit_eq",
+                            )
+                            .unwrap()
+                    } else {
+                        self.context.bool_type().const_int(0, false)
+                    };
+                    self.builder
+                        .build_conditional_branch(cond, arm_bb, next_bb)
+                        .unwrap();
+                }
+                Pattern::Variant(variant_name, _) => {
+                    // Built-in Option / Result matching
+                    if matches!(variant_name.as_str(), "Some" | "None" | "Ok" | "Error") {
+                        let expected_tag = match variant_name.as_str() {
+                            "Some" | "Ok" => 1u64,
+                            _ => 0u64,
+                        };
+                        let tag = self
+                            .builder
+                            .build_extract_value(val.into_struct_value(), 0, "tag")
+                            .unwrap()
+                            .into_int_value();
+                        let cond = self
+                            .builder
+                            .build_int_compare(
+                                IntPredicate::EQ,
+                                tag,
+                                self.context.i8_type().const_int(expected_tag, false),
+                                "match_variant_eq",
+                            )
+                            .unwrap();
+                        self.builder
+                            .build_conditional_branch(cond, arm_bb, next_bb)
+                            .unwrap();
+                    } else if let Some(enum_name) = &enum_match_name {
+                        if let Some(enum_info) = self.enums.get(enum_name) {
+                            if let Some(variant_info) = enum_info.variants.get(variant_name) {
+                                let tag = self
+                                    .builder
+                                    .build_extract_value(val.into_struct_value(), 0, "tag")
+                                    .unwrap()
+                                    .into_int_value();
+                                let cond = self
+                                    .builder
+                                    .build_int_compare(
+                                        IntPredicate::EQ,
+                                        tag,
+                                        self.context
+                                            .i8_type()
+                                            .const_int(variant_info.tag as u64, false),
+                                        "match_enum_variant_eq",
+                                    )
+                                    .unwrap();
+                                self.builder
+                                    .build_conditional_branch(cond, arm_bb, next_bb)
+                                    .unwrap();
+                            } else {
+                                self.builder.build_unconditional_branch(next_bb).unwrap();
+                            }
+                        } else {
+                            self.builder.build_unconditional_branch(next_bb).unwrap();
+                        }
+                    } else {
+                        self.builder.build_unconditional_branch(next_bb).unwrap();
+                    }
+                }
+            }
 
+            self.builder.position_at_end(arm_bb);
+            match &arm.pattern {
                 Pattern::Ident(binding) => {
-                    self.builder.build_unconditional_branch(arm_bb).unwrap();
-                    self.builder.position_at_end(arm_bb);
                     let alloca = self.builder.build_alloca(val.get_type(), binding).unwrap();
                     self.builder.build_store(alloca, val).unwrap();
                     self.variables.insert(
                         binding.clone(),
                         Variable {
                             ptr: alloca,
-                            ty: Type::Integer,
+                            ty: match_ty.clone(),
                         },
                     );
-                    for stmt in &arm.body {
-                        self.compile_stmt(&stmt.node)?;
-                    }
-                    if self.needs_terminator() {
-                        blocks_needing_merge.push(self.builder.get_insert_block().unwrap());
-                    }
-                    let merge_bb = self.context.append_basic_block(func, "match.merge");
-                    for bb in blocks_needing_merge {
-                        self.builder.position_at_end(bb);
-                        if self.needs_terminator() {
-                            self.builder.build_unconditional_branch(merge_bb).unwrap();
-                        }
-                    }
-                    self.builder.position_at_end(merge_bb);
-                    return Ok(());
                 }
-
-                Pattern::Literal(lit) => {
-                    let next_bb = self.context.append_basic_block(func, "match.next");
-                    let pattern_val = self.compile_literal(lit)?;
-                    let cond = self
-                        .builder
-                        .build_int_compare(
-                            IntPredicate::EQ,
-                            val.into_int_value(),
-                            pattern_val.into_int_value(),
-                            "cmp",
-                        )
-                        .unwrap();
-                    self.builder
-                        .build_conditional_branch(cond, arm_bb, next_bb)
-                        .unwrap();
-                    self.builder.position_at_end(arm_bb);
-                    for stmt in &arm.body {
-                        self.compile_stmt(&stmt.node)?;
-                    }
-                    if self.needs_terminator() {
-                        blocks_needing_merge.push(self.builder.get_insert_block().unwrap());
-                    }
-                    self.builder.position_at_end(next_bb);
-                }
-
                 Pattern::Variant(variant_name, bindings) => {
-                    let next_bb = self.context.append_basic_block(func, "match.next");
-                    match variant_name.as_str() {
-                        "Some" => {
-                            let tag = self
-                                .builder
-                                .build_extract_value(val.into_struct_value(), 0, "tag")
-                                .unwrap();
-                            let cond = self
-                                .builder
-                                .build_int_compare(
-                                    IntPredicate::EQ,
-                                    tag.into_int_value(),
-                                    self.context.i8_type().const_int(1, false),
-                                    "is_some",
-                                )
-                                .unwrap();
-                            self.builder
-                                .build_conditional_branch(cond, arm_bb, next_bb)
-                                .unwrap();
-                            self.builder.position_at_end(arm_bb);
-                            if !bindings.is_empty() {
-                                let inner_val = self
-                                    .builder
-                                    .build_extract_value(val.into_struct_value(), 1, "inner")
-                                    .unwrap();
-                                let alloca = self
-                                    .builder
-                                    .build_alloca(inner_val.get_type(), &bindings[0])
-                                    .unwrap();
-                                self.builder.build_store(alloca, inner_val).unwrap();
-                                self.variables.insert(
-                                    bindings[0].clone(),
-                                    Variable {
-                                        ptr: alloca,
-                                        ty: Type::Integer,
-                                    },
-                                );
-                            }
-                            for stmt in &arm.body {
-                                self.compile_stmt(&stmt.node)?;
-                            }
-                            if self.needs_terminator() {
-                                blocks_needing_merge.push(self.builder.get_insert_block().unwrap());
-                            }
-                            self.builder.position_at_end(next_bb);
-                        }
-                        "None" => {
-                            let tag = self
-                                .builder
-                                .build_extract_value(val.into_struct_value(), 0, "tag")
-                                .unwrap();
-                            let cond = self
-                                .builder
-                                .build_int_compare(
-                                    IntPredicate::EQ,
-                                    tag.into_int_value(),
-                                    self.context.i8_type().const_int(0, false),
-                                    "is_none",
-                                )
-                                .unwrap();
-                            self.builder
-                                .build_conditional_branch(cond, arm_bb, next_bb)
-                                .unwrap();
-                            self.builder.position_at_end(arm_bb);
-                            for stmt in &arm.body {
-                                self.compile_stmt(&stmt.node)?;
-                            }
-                            if self.needs_terminator() {
-                                blocks_needing_merge.push(self.builder.get_insert_block().unwrap());
-                            }
-                            self.builder.position_at_end(next_bb);
-                        }
-                        "Ok" => {
-                            let tag = self
-                                .builder
-                                .build_extract_value(val.into_struct_value(), 0, "tag")
-                                .unwrap();
-                            let cond = self
-                                .builder
-                                .build_int_compare(
-                                    IntPredicate::EQ,
-                                    tag.into_int_value(),
-                                    self.context.i8_type().const_int(1, false),
-                                    "is_ok",
-                                )
-                                .unwrap();
-                            self.builder
-                                .build_conditional_branch(cond, arm_bb, next_bb)
-                                .unwrap();
-                            self.builder.position_at_end(arm_bb);
-                            if !bindings.is_empty() {
-                                let ok_val = self
-                                    .builder
-                                    .build_extract_value(val.into_struct_value(), 1, "ok")
-                                    .unwrap();
-                                let alloca = self
-                                    .builder
-                                    .build_alloca(ok_val.get_type(), &bindings[0])
-                                    .unwrap();
-                                self.builder.build_store(alloca, ok_val).unwrap();
-                                self.variables.insert(
-                                    bindings[0].clone(),
-                                    Variable {
-                                        ptr: alloca,
-                                        ty: Type::Integer,
-                                    },
-                                );
-                            }
-                            for stmt in &arm.body {
-                                self.compile_stmt(&stmt.node)?;
-                            }
-                            if self.needs_terminator() {
-                                blocks_needing_merge.push(self.builder.get_insert_block().unwrap());
-                            }
-                            self.builder.position_at_end(next_bb);
-                        }
-                        "Error" => {
-                            let tag = self
-                                .builder
-                                .build_extract_value(val.into_struct_value(), 0, "tag")
-                                .unwrap();
-                            let cond = self
-                                .builder
-                                .build_int_compare(
-                                    IntPredicate::EQ,
-                                    tag.into_int_value(),
-                                    self.context.i8_type().const_int(0, false),
-                                    "is_error",
-                                )
-                                .unwrap();
-                            self.builder
-                                .build_conditional_branch(cond, arm_bb, next_bb)
-                                .unwrap();
-                            self.builder.position_at_end(arm_bb);
-                            if !bindings.is_empty() {
-                                let err_val = self
-                                    .builder
-                                    .build_extract_value(val.into_struct_value(), 2, "err")
-                                    .unwrap();
-                                let alloca = self
-                                    .builder
-                                    .build_alloca(err_val.get_type(), &bindings[0])
-                                    .unwrap();
-                                self.builder.build_store(alloca, err_val).unwrap();
-                                self.variables.insert(
-                                    bindings[0].clone(),
-                                    Variable {
-                                        ptr: alloca,
-                                        ty: Type::String,
-                                    },
-                                );
-                            }
-                            for stmt in &arm.body {
-                                self.compile_stmt(&stmt.node)?;
-                            }
-                            if self.needs_terminator() {
-                                blocks_needing_merge.push(self.builder.get_insert_block().unwrap());
-                            }
-                            self.builder.position_at_end(next_bb);
-                        }
-                        _ => {
-                            self.builder.build_unconditional_branch(arm_bb).unwrap();
-                            self.builder.position_at_end(arm_bb);
-                            for stmt in &arm.body {
-                                self.compile_stmt(&stmt.node)?;
-                            }
-                            if self.needs_terminator() {
-                                blocks_needing_merge.push(self.builder.get_insert_block().unwrap());
-                            }
-                            let merge_bb = self.context.append_basic_block(func, "match.merge");
-                            for bb in blocks_needing_merge {
-                                self.builder.position_at_end(bb);
-                                if self.needs_terminator() {
-                                    self.builder.build_unconditional_branch(merge_bb).unwrap();
+                    if variant_name == "Some" && !bindings.is_empty() {
+                        let inner = self
+                            .builder
+                            .build_extract_value(val.into_struct_value(), 1, "some_inner")
+                            .unwrap();
+                        let alloca = self
+                            .builder
+                            .build_alloca(inner.get_type(), &bindings[0])
+                            .unwrap();
+                        self.builder.build_store(alloca, inner).unwrap();
+                        self.variables.insert(
+                            bindings[0].clone(),
+                            Variable {
+                                ptr: alloca,
+                                ty: Type::Integer,
+                            },
+                        );
+                    } else if variant_name == "Ok" && !bindings.is_empty() {
+                        let inner = self
+                            .builder
+                            .build_extract_value(val.into_struct_value(), 1, "ok_inner")
+                            .unwrap();
+                        let alloca = self
+                            .builder
+                            .build_alloca(inner.get_type(), &bindings[0])
+                            .unwrap();
+                        self.builder.build_store(alloca, inner).unwrap();
+                        self.variables.insert(
+                            bindings[0].clone(),
+                            Variable {
+                                ptr: alloca,
+                                ty: Type::Integer,
+                            },
+                        );
+                    } else if variant_name == "Error" && !bindings.is_empty() {
+                        let inner = self
+                            .builder
+                            .build_extract_value(val.into_struct_value(), 2, "err_inner")
+                            .unwrap();
+                        let alloca = self
+                            .builder
+                            .build_alloca(inner.get_type(), &bindings[0])
+                            .unwrap();
+                        self.builder.build_store(alloca, inner).unwrap();
+                        self.variables.insert(
+                            bindings[0].clone(),
+                            Variable {
+                                ptr: alloca,
+                                ty: Type::String,
+                            },
+                        );
+                    } else if let Some(enum_name) = &enum_match_name {
+                        if let Some(enum_info) = self.enums.get(enum_name) {
+                            if let Some(variant_info) = enum_info.variants.get(variant_name) {
+                                for (idx, binding) in bindings.iter().enumerate() {
+                                    if let Some(field_ty) = variant_info.fields.get(idx) {
+                                        let raw = self
+                                            .builder
+                                            .build_extract_value(
+                                                val.into_struct_value(),
+                                                (idx + 1) as u32,
+                                                "enum_payload_raw",
+                                            )
+                                            .unwrap()
+                                            .into_int_value();
+                                        let decoded = self.decode_enum_payload(raw, field_ty)?;
+                                        let alloca = self
+                                            .builder
+                                            .build_alloca(decoded.get_type(), binding)
+                                            .unwrap();
+                                        self.builder.build_store(alloca, decoded).unwrap();
+                                        self.variables.insert(
+                                            binding.clone(),
+                                            Variable {
+                                                ptr: alloca,
+                                                ty: field_ty.clone(),
+                                            },
+                                        );
+                                    }
                                 }
                             }
-                            self.builder.position_at_end(merge_bb);
-                            return Ok(());
                         }
                     }
                 }
+                _ => {}
             }
-        }
 
-        // Create merge_bb AFTER all arm blocks
-        let merge_bb = self.context.append_basic_block(func, "match.merge");
-        if self.needs_terminator() {
-            self.builder.build_unconditional_branch(merge_bb).unwrap();
-        }
-        for bb in blocks_needing_merge {
-            self.builder.position_at_end(bb);
+            for stmt in &arm.body {
+                self.compile_stmt(&stmt.node)?;
+            }
             if self.needs_terminator() {
                 self.builder.build_unconditional_branch(merge_bb).unwrap();
             }
+
+            dispatch_bb = next_bb;
+            self.builder.position_at_end(dispatch_bb);
         }
+
+        if self.needs_terminator() {
+            self.builder.build_unconditional_branch(merge_bb).unwrap();
+        }
+
         self.builder.position_at_end(merge_bb);
         Ok(())
     }
@@ -1809,6 +1925,54 @@ impl<'ctx> Codegen<'ctx> {
                         return self.create_result_error(val);
                     }
                     _ => {}
+                }
+            }
+        }
+
+        // Check for enum variant constructors and module-qualified functions.
+        if let Expr::Field { object, field } = callee {
+            if let Expr::Ident(owner_name) = &object.node {
+                // Enum constructor: `MyEnum.Variant(...)`
+                if let Some(enum_info) = self.enums.get(owner_name) {
+                    if let Some(variant_info) = enum_info.variants.get(field).cloned() {
+                        if args.len() != variant_info.fields.len() {
+                            return Err(CodegenError::new(format!(
+                                "Enum variant '{}.{}' expects {} argument(s), got {}",
+                                owner_name,
+                                field,
+                                variant_info.fields.len(),
+                                args.len()
+                            )));
+                        }
+                        let mut values = Vec::with_capacity(args.len());
+                        for arg in args {
+                            values.push(self.compile_expr(&arg.node)?);
+                        }
+                        return self.build_enum_value(owner_name, &variant_info, &values);
+                    }
+                }
+
+                // Module dot syntax: Module.func(...) -> Module__func(...)
+                let mangled = format!("{}__{}", owner_name, field);
+                if let Some((func, _)) = self.functions.get(&mangled).cloned() {
+                    let mut compiled_args: Vec<BasicValueEnum> = vec![
+                        self.context
+                            .ptr_type(AddressSpace::default())
+                            .const_null()
+                            .into(),
+                    ];
+                    for a in args {
+                        compiled_args.push(self.compile_expr(&a.node)?);
+                    }
+                    let args_meta: Vec<BasicMetadataValueEnum> =
+                        compiled_args.iter().map(|a| (*a).into()).collect();
+                    let call = self.builder.build_call(func, &args_meta, "call").unwrap();
+                    return match call.try_as_basic_value() {
+                        ValueKind::Basic(val) => Ok(val),
+                        ValueKind::Instruction(_) => {
+                            Ok(self.context.i8_type().const_int(0, false).into())
+                        }
+                    };
                 }
             }
         }

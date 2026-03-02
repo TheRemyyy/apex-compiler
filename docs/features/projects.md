@@ -103,7 +103,7 @@ Source Files:
 ## How It Works
 
 1. **File Merging**: All files listed in `files` are merged and compiled as a single unit
-2. **Global Scope**: Functions from all files are available globally (no imports needed)
+2. **Import Checking**: Cross-file calls are validated by the import checker. Use explicit `import` statements when calling functions from other namespaces/modules.
 3. **Entry Point**: The `entry` file must contain the `main()` function
 4. **Compilation**: Project is compiled to a single binary
 

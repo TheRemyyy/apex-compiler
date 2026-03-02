@@ -15,19 +15,11 @@ module Network {
 
 ## Usage
 
-Functions inside a module are accessed using double underscore `__` (temporary syntax for this version) or dot notation depending on implementation.
-
-*Based on `README.md`:*
-
-```apex
-result: Integer = Math__square(5); 
-```
-
-This suggests a specific mangling or access pattern currently. Please verify with `examples/08_modules.apex`.
-
-The official intended syntax for future releases is `Module.function()`.
+Functions inside a module can be accessed using dot notation.
+The compiler lowers `Module.function()` to an internal mangled symbol `Module__function`.
 
 ```apex
-// Future / Ideal Syntax
-Network.connect();
+result: Integer = Math.square(5);
 ```
+
+Backward compatibility: direct `Module__function()` calls are still accepted.

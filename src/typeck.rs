@@ -145,6 +145,13 @@ pub struct ClassInfo {
     pub span: Span,
 }
 
+/// Enum metadata used for type checking variant constructors and pattern matching
+#[derive(Debug, Clone)]
+pub struct EnumInfo {
+    pub variants: HashMap<String, Vec<ResolvedType>>,
+    pub span: Span,
+}
+
 /// Scope for symbol table
 #[derive(Debug)]
 struct Scope {
@@ -163,6 +170,10 @@ pub struct TypeChecker {
     functions: HashMap<String, FuncSig>,
     /// Class definitions
     classes: HashMap<String, ClassInfo>,
+    /// Enum definitions
+    enums: HashMap<String, EnumInfo>,
+    /// Reverse lookup: variant name -> enum name
+    enum_variant_to_enum: HashMap<String, String>,
     /// Type variable counter for inference
     type_var_counter: usize,
     /// Type variable substitutions
@@ -187,6 +198,8 @@ impl TypeChecker {
             current_scope: 0,
             functions: HashMap::new(),
             classes: HashMap::new(),
+            enums: HashMap::new(),
+            enum_variant_to_enum: HashMap::new(),
             type_var_counter: 0,
             substitutions: HashMap::new(),
             errors: Vec::new(),
@@ -281,6 +294,26 @@ impl TypeChecker {
                             fields,
                             methods,
                             constructor,
+                            span: decl.span.clone(),
+                        },
+                    );
+                }
+                Decl::Enum(en) => {
+                    let mut variants = HashMap::new();
+                    for variant in &en.variants {
+                        let fields = variant
+                            .fields
+                            .iter()
+                            .map(|f| self.resolve_type(&f.ty))
+                            .collect::<Vec<_>>();
+                        variants.insert(variant.name.clone(), fields);
+                        self.enum_variant_to_enum
+                            .insert(variant.name.clone(), en.name.clone());
+                    }
+                    self.enums.insert(
+                        en.name.clone(),
+                        EnumInfo {
+                            variants,
                             span: decl.span.clone(),
                         },
                     );
@@ -614,6 +647,37 @@ impl TypeChecker {
                             self.declare_variable(&bindings[0], (**err).clone(), false, span);
                         } else {
                             self.error(format!("Invalid Result pattern: {}", name), span);
+                        }
+                    }
+                    ResolvedType::Class(enum_name) => {
+                        if let Some(enum_info) = self.enums.get(enum_name).cloned() {
+                            if let Some(field_tys) = enum_info.variants.get(name) {
+                                if field_tys.len() != bindings.len() {
+                                    self.error(
+                                        format!(
+                                            "Pattern '{}' expects {} binding(s), got {}",
+                                            name,
+                                            field_tys.len(),
+                                            bindings.len()
+                                        ),
+                                        span,
+                                    );
+                                } else {
+                                    for (binding, ty) in bindings.iter().zip(field_tys.iter()) {
+                                        self.declare_variable(binding, ty.clone(), false, span.clone());
+                                    }
+                                }
+                            } else {
+                                self.error(
+                                    format!("Unknown variant '{}' for enum '{}'", name, enum_name),
+                                    span,
+                                );
+                            }
+                        } else {
+                            self.error(
+                                format!("Cannot match variant {} on type {}", name, expected_type),
+                                span,
+                            );
                         }
                     }
                     _ => {
@@ -1023,6 +1087,68 @@ impl TypeChecker {
                     if let Some(ret) = self.check_builtin_call(&builtin_name, args, span.clone()) {
                         return ret;
                     }
+                }
+
+                // Enum variant constructor call: `Enum.Variant(...)`
+                if let Some(enum_info) = self.enums.get(name).cloned() {
+                    if let Some(field_types) = enum_info.variants.get(field) {
+                        if args.len() != field_types.len() {
+                            self.error(
+                                format!(
+                                    "Enum variant '{}.{}' expects {} argument(s), got {}",
+                                    name,
+                                    field,
+                                    field_types.len(),
+                                    args.len()
+                                ),
+                                span.clone(),
+                            );
+                        } else {
+                            for (arg, expected_ty) in args.iter().zip(field_types.iter()) {
+                                let actual = self.check_expr(&arg.node, arg.span.clone());
+                                if !self.types_compatible(expected_ty, &actual) {
+                                    self.error(
+                                        format!(
+                                            "Enum variant argument type mismatch: expected {}, got {}",
+                                            expected_ty, actual
+                                        ),
+                                        arg.span.clone(),
+                                    );
+                                }
+                            }
+                        }
+                        return ResolvedType::Class(name.clone());
+                    }
+                }
+
+                // Module dot syntax: `Module.func(...)` -> `Module__func(...)`
+                let mangled = format!("{}__{}", name, field);
+                if let Some(sig) = self.functions.get(&mangled).cloned() {
+                    if args.len() != sig.params.len() {
+                        self.error(
+                            format!(
+                                "Function '{}' expects {} arguments, got {}",
+                                mangled,
+                                sig.params.len(),
+                                args.len()
+                            ),
+                            span.clone(),
+                        );
+                    } else {
+                        for (arg, (_, param_type)) in args.iter().zip(sig.params.iter()) {
+                            let arg_type = self.check_expr(&arg.node, arg.span.clone());
+                            if !self.types_compatible(param_type, &arg_type) {
+                                self.error(
+                                    format!(
+                                        "Argument type mismatch: expected {}, got {}",
+                                        param_type, arg_type
+                                    ),
+                                    arg.span.clone(),
+                                );
+                            }
+                        }
+                    }
+                    return sig.return_type;
                 }
             }
 

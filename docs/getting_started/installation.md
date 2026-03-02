@@ -22,7 +22,7 @@ cd apex-compiler
 
 ### 2. Build the Compiler
 
-Use Cargo to build the project in release mode for authorized performance:
+Use Cargo to build the project in release mode:
 
 ```bash
 cargo build --release
@@ -66,4 +66,4 @@ To verify that everything is set up correctly, run:
 apex-compiler --version
 ```
 
-(Note: If the `--version` flag is not yet implemented, try running `apex-compiler` without arguments to see help output).
+The executable exposes the `apex` CLI interface.

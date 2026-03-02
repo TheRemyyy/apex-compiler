@@ -16,12 +16,12 @@ mod typeck;
 use clap::{Parser as ClapParser, Subcommand};
 use colored::*;
 use inkwell::context::Context;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::ast::{Decl, ImportDecl, Program};
+use crate::ast::{Decl, Expr, ImportDecl, Program, Stmt};
 use crate::borrowck::BorrowChecker;
 use crate::codegen::Codegen;
 use crate::import_check::ImportChecker;
@@ -323,6 +323,7 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
     let files = config.get_source_files(&project_root);
     let mut parsed_files: Vec<(PathBuf, String, Program, Vec<ImportDecl>)> = Vec::new();
     let mut global_function_map: HashMap<String, String> = HashMap::new(); // func_name -> namespace
+    let mut function_collisions: Vec<(String, String, String)> = Vec::new();
 
     for file in &files {
         let source = fs::read_to_string(file).map_err(|e| {
@@ -375,11 +376,38 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
         // Extract function definitions for global map
         for decl in &program.declarations {
             if let Decl::Function(func) = &decl.node {
-                global_function_map.insert(func.name.clone(), namespace.clone());
+                if let Some(existing_ns) = global_function_map.get(&func.name) {
+                    if existing_ns != &namespace {
+                        function_collisions.push((
+                            func.name.clone(),
+                            existing_ns.clone(),
+                            namespace.clone(),
+                        ));
+                    }
+                } else {
+                    global_function_map.insert(func.name.clone(), namespace.clone());
+                }
             }
         }
 
         parsed_files.push((file.clone(), namespace, program, imports));
+    }
+
+    if !function_collisions.is_empty() {
+        eprintln!(
+            "{} Function name collisions detected across namespaces:",
+            "error".red().bold()
+        );
+        for (func, ns_a, ns_b) in function_collisions {
+            eprintln!(
+                "  → '{}' is defined in both '{}' and '{}'",
+                func, ns_a, ns_b
+            );
+        }
+        return Err(
+            "Project contains colliding top-level function names. Use module-qualified names or rename functions."
+                .to_string(),
+        );
     }
 
     // Phase 2: Check imports for each file
@@ -404,56 +432,45 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
         }
     }
 
-    // Phase 3: Merge source files (keeping original names for now)
-    // TODO: Implement name mangling in codegen for proper namespace separation
     let entry_path = config.get_entry_path(&project_root);
-    let mut combined_source = String::new();
-    let mut is_first_file = true;
-
-    for file in &files {
-        let source = fs::read_to_string(file).map_err(|e| {
-            format!(
-                "{}: Failed to read '{}': {}",
-                "error".red().bold(),
-                file.display(),
-                e
-            )
-        })?;
-
-        // Add file marker for error messages
-        combined_source.push_str(&format!("// FILE: {}\n", file.display()));
-
-        // Process source: remove package declarations from non-entry files
-        for line in source.lines() {
-            let trimmed = line.trim();
-
-            // Skip package declarations from non-entry files
-            if trimmed.starts_with("package ") && !is_first_file {
-                continue;
+    let mut namespace_functions: HashMap<String, HashSet<String>> = HashMap::new();
+    for (_, ns, program, _) in &parsed_files {
+        let entry = namespace_functions.entry(ns.clone()).or_default();
+        for decl in &program.declarations {
+            if let Decl::Function(func) = &decl.node {
+                entry.insert(func.name.clone());
             }
-
-            // Skip import declarations (they're already checked)
-            if trimmed.starts_with("import ") {
-                continue;
-            }
-
-            combined_source.push_str(line);
-            combined_source.push('\n');
         }
-
-        is_first_file = false;
     }
 
-    // Compile combined source
-    // Note: Import checking is skipped here because it was already done in Phase 2
+    let entry_namespace = parsed_files
+        .iter()
+        .find(|(file, _, _, _)| file == &entry_path)
+        .map(|(_, ns, _, _)| ns.clone())
+        .unwrap_or_else(|| "global".to_string());
+
+    // Phase 3: Build combined AST with deterministic namespace mangling.
+    let mut combined_program = Program {
+        package: None,
+        declarations: Vec::new(),
+    };
+    for (_, namespace, program, imports) in &parsed_files {
+        let rewritten = rewrite_program_for_project(
+            program,
+            namespace,
+            &entry_namespace,
+            &namespace_functions,
+            &global_function_map,
+            imports,
+        );
+        combined_program
+            .declarations
+            .extend(rewritten.declarations.into_iter());
+    }
+
+    // Compile combined program AST (import/type checks already done above).
     let output_path = project_root.join(&config.output);
-    compile_source(
-        &combined_source,
-        &entry_path,
-        &output_path,
-        emit_llvm,
-        false, // Skip import checking - already done above
-    )?;
+    compile_program_ast(&combined_program, &entry_path, &output_path, emit_llvm)?;
 
     println!(
         "{} {} -> {}",
@@ -461,6 +478,489 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
         config.name.cyan(),
         output_path.display()
     );
+
+    Ok(())
+}
+
+fn rewrite_program_for_project(
+    program: &Program,
+    current_namespace: &str,
+    entry_namespace: &str,
+    namespace_functions: &HashMap<String, HashSet<String>>,
+    global_function_map: &HashMap<String, String>,
+    imports: &[ImportDecl],
+) -> Program {
+    let local_functions = namespace_functions
+        .get(current_namespace)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut imported_map: HashMap<String, String> = HashMap::new();
+    for import in imports {
+        if import.path.ends_with(".*") {
+            let ns = import.path.trim_end_matches(".*");
+            if let Some(funcs) = namespace_functions.get(ns) {
+                for name in funcs {
+                    imported_map.insert(name.clone(), ns.to_string());
+                }
+            }
+        } else if import.path.contains('.') {
+            let mut parts = import.path.split('.').collect::<Vec<_>>();
+            if let Some(name) = parts.pop() {
+                imported_map.insert(name.to_string(), parts.join("."));
+            }
+        }
+    }
+
+    Program {
+        package: None,
+        declarations: program
+            .declarations
+            .iter()
+            .filter(|d| !matches!(d.node, Decl::Import(_)))
+            .map(|d| {
+                let node = match &d.node {
+                    Decl::Function(func) => {
+                        let mut f = func.clone();
+                        f.body = rewrite_block_calls_for_project(
+                            &f.body,
+                            current_namespace,
+                            entry_namespace,
+                            &local_functions,
+                            &imported_map,
+                            global_function_map,
+                        );
+                        f.name = mangle_project_symbol(current_namespace, entry_namespace, &f.name);
+                        Decl::Function(f)
+                    }
+                    Decl::Class(class) => {
+                        let mut c = class.clone();
+                        if let Some(ctor) = &class.constructor {
+                            let mut new_ctor = ctor.clone();
+                            new_ctor.body = rewrite_block_calls_for_project(
+                                &new_ctor.body,
+                                current_namespace,
+                                entry_namespace,
+                                &local_functions,
+                                &imported_map,
+                                global_function_map,
+                            );
+                            c.constructor = Some(new_ctor);
+                        }
+                        c.methods = class
+                            .methods
+                            .iter()
+                            .map(|m| {
+                                let mut nm = m.clone();
+                                nm.body = rewrite_block_calls_for_project(
+                                    &nm.body,
+                                    current_namespace,
+                                    entry_namespace,
+                                    &local_functions,
+                                    &imported_map,
+                                    global_function_map,
+                                );
+                                nm
+                            })
+                            .collect();
+                        Decl::Class(c)
+                    }
+                    _ => d.node.clone(),
+                };
+                ast::Spanned::new(node, d.span.clone())
+            })
+            .collect(),
+    }
+}
+
+fn mangle_project_symbol(namespace: &str, entry_namespace: &str, name: &str) -> String {
+    if name == "main" && namespace == entry_namespace {
+        "main".to_string()
+    } else {
+        format!("{}__{}", namespace.replace('.', "__"), name)
+    }
+}
+
+fn rewrite_block_calls_for_project(
+    block: &ast::Block,
+    current_namespace: &str,
+    entry_namespace: &str,
+    local_functions: &HashSet<String>,
+    imported_map: &HashMap<String, String>,
+    global_function_map: &HashMap<String, String>,
+) -> ast::Block {
+    block
+        .iter()
+        .map(|stmt| {
+            ast::Spanned::new(
+                rewrite_stmt_calls_for_project(
+                    &stmt.node,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                ),
+                stmt.span.clone(),
+            )
+        })
+        .collect()
+}
+
+fn rewrite_stmt_calls_for_project(
+    stmt: &Stmt,
+    current_namespace: &str,
+    entry_namespace: &str,
+    local_functions: &HashSet<String>,
+    imported_map: &HashMap<String, String>,
+    global_function_map: &HashMap<String, String>,
+) -> Stmt {
+    match stmt {
+        Stmt::Let {
+            name,
+            ty,
+            value,
+            mutable,
+        } => Stmt::Let {
+            name: name.clone(),
+            ty: ty.clone(),
+            value: ast::Spanned::new(
+                rewrite_expr_calls_for_project(
+                    &value.node,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                ),
+                value.span.clone(),
+            ),
+            mutable: *mutable,
+        },
+        Stmt::Assign { target, value } => Stmt::Assign {
+            target: ast::Spanned::new(
+                rewrite_expr_calls_for_project(
+                    &target.node,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                ),
+                target.span.clone(),
+            ),
+            value: ast::Spanned::new(
+                rewrite_expr_calls_for_project(
+                    &value.node,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                ),
+                value.span.clone(),
+            ),
+        },
+        Stmt::Expr(expr) => Stmt::Expr(ast::Spanned::new(
+            rewrite_expr_calls_for_project(
+                &expr.node,
+                current_namespace,
+                entry_namespace,
+                local_functions,
+                imported_map,
+                global_function_map,
+            ),
+            expr.span.clone(),
+        )),
+        Stmt::Return(Some(expr)) => Stmt::Return(Some(ast::Spanned::new(
+            rewrite_expr_calls_for_project(
+                &expr.node,
+                current_namespace,
+                entry_namespace,
+                local_functions,
+                imported_map,
+                global_function_map,
+            ),
+            expr.span.clone(),
+        ))),
+        Stmt::If {
+            condition,
+            then_block,
+            else_block,
+        } => Stmt::If {
+            condition: ast::Spanned::new(
+                rewrite_expr_calls_for_project(
+                    &condition.node,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                ),
+                condition.span.clone(),
+            ),
+            then_block: rewrite_block_calls_for_project(
+                then_block,
+                current_namespace,
+                entry_namespace,
+                local_functions,
+                imported_map,
+                global_function_map,
+            ),
+            else_block: else_block.as_ref().map(|b| {
+                rewrite_block_calls_for_project(
+                    b,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                )
+            }),
+        },
+        Stmt::While { condition, body } => Stmt::While {
+            condition: ast::Spanned::new(
+                rewrite_expr_calls_for_project(
+                    &condition.node,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                ),
+                condition.span.clone(),
+            ),
+            body: rewrite_block_calls_for_project(
+                body,
+                current_namespace,
+                entry_namespace,
+                local_functions,
+                imported_map,
+                global_function_map,
+            ),
+        },
+        Stmt::For {
+            var,
+            var_type,
+            iterable,
+            body,
+        } => Stmt::For {
+            var: var.clone(),
+            var_type: var_type.clone(),
+            iterable: ast::Spanned::new(
+                rewrite_expr_calls_for_project(
+                    &iterable.node,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                ),
+                iterable.span.clone(),
+            ),
+            body: rewrite_block_calls_for_project(
+                body,
+                current_namespace,
+                entry_namespace,
+                local_functions,
+                imported_map,
+                global_function_map,
+            ),
+        },
+        Stmt::Match { expr, arms } => Stmt::Match {
+            expr: ast::Spanned::new(
+                rewrite_expr_calls_for_project(
+                    &expr.node,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                ),
+                expr.span.clone(),
+            ),
+            arms: arms
+                .iter()
+                .map(|arm| ast::MatchArm {
+                    pattern: arm.pattern.clone(),
+                    body: rewrite_block_calls_for_project(
+                        &arm.body,
+                        current_namespace,
+                        entry_namespace,
+                        local_functions,
+                        imported_map,
+                        global_function_map,
+                    ),
+                })
+                .collect(),
+        },
+        _ => stmt.clone(),
+    }
+}
+
+fn rewrite_expr_calls_for_project(
+    expr: &Expr,
+    current_namespace: &str,
+    entry_namespace: &str,
+    local_functions: &HashSet<String>,
+    imported_map: &HashMap<String, String>,
+    global_function_map: &HashMap<String, String>,
+) -> Expr {
+    match expr {
+        Expr::Call { callee, args } => {
+            let rewritten_callee = match &callee.node {
+                Expr::Ident(name) => {
+                    if local_functions.contains(name) {
+                        Expr::Ident(mangle_project_symbol(
+                            current_namespace,
+                            entry_namespace,
+                            name,
+                        ))
+                    } else if let Some(ns) = imported_map.get(name) {
+                        Expr::Ident(mangle_project_symbol(ns, entry_namespace, name))
+                    } else if let Some(ns) = global_function_map.get(name) {
+                        Expr::Ident(mangle_project_symbol(ns, entry_namespace, name))
+                    } else {
+                        Expr::Ident(name.clone())
+                    }
+                }
+                other => rewrite_expr_calls_for_project(
+                    other,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                ),
+            };
+            Expr::Call {
+                callee: Box::new(ast::Spanned::new(rewritten_callee, callee.span.clone())),
+                args: args
+                    .iter()
+                    .map(|a| {
+                        ast::Spanned::new(
+                            rewrite_expr_calls_for_project(
+                                &a.node,
+                                current_namespace,
+                                entry_namespace,
+                                local_functions,
+                                imported_map,
+                                global_function_map,
+                            ),
+                            a.span.clone(),
+                        )
+                    })
+                    .collect(),
+            }
+        }
+        Expr::Binary { op, left, right } => Expr::Binary {
+            op: *op,
+            left: Box::new(ast::Spanned::new(
+                rewrite_expr_calls_for_project(
+                    &left.node,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                ),
+                left.span.clone(),
+            )),
+            right: Box::new(ast::Spanned::new(
+                rewrite_expr_calls_for_project(
+                    &right.node,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                ),
+                right.span.clone(),
+            )),
+        },
+        Expr::Unary { op, expr } => Expr::Unary {
+            op: *op,
+            expr: Box::new(ast::Spanned::new(
+                rewrite_expr_calls_for_project(
+                    &expr.node,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                ),
+                expr.span.clone(),
+            )),
+        },
+        Expr::Field { object, field } => Expr::Field {
+            object: Box::new(ast::Spanned::new(
+                rewrite_expr_calls_for_project(
+                    &object.node,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                ),
+                object.span.clone(),
+            )),
+            field: field.clone(),
+        },
+        Expr::Index { object, index } => Expr::Index {
+            object: Box::new(ast::Spanned::new(
+                rewrite_expr_calls_for_project(
+                    &object.node,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                ),
+                object.span.clone(),
+            )),
+            index: Box::new(ast::Spanned::new(
+                rewrite_expr_calls_for_project(
+                    &index.node,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                ),
+                index.span.clone(),
+            )),
+        },
+        _ => expr.clone(),
+    }
+}
+
+fn compile_program_ast(
+    program: &Program,
+    source_path: &Path,
+    output_path: &Path,
+    emit_llvm: bool,
+) -> Result<(), String> {
+    let context = Context::create();
+    let module_name = source_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("main");
+
+    let mut codegen = Codegen::new(&context, module_name);
+    codegen
+        .compile(program)
+        .map_err(|e| format!("{}: Codegen error: {}", "error".red().bold(), e.message))?;
+
+    if emit_llvm {
+        let ll_path = output_path.with_extension("ll");
+        codegen.write_ir(&ll_path)?;
+        println!("{} {}", "LLVM IR".green().bold(), ll_path.display());
+    } else {
+        let ir_path = output_path.with_extension("ll");
+        codegen.write_ir(&ir_path)?;
+        compile_ir(&ir_path, output_path)?;
+        let _ = fs::remove_file(&ir_path);
+    }
 
     Ok(())
 }

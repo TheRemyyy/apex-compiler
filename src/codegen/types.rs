@@ -1405,56 +1405,58 @@ impl<'ctx> Codegen<'ctx> {
             false,
         );
 
+        let i32_type = self.context.i32_type();
+        let i64_type = self.context.i64_type();
+        let zero = i32_type.const_int(0, false);
+        let (key_ty, val_ty) = match &var.ty {
+            Type::Map(k, v) => ((**k).clone(), (**v).clone()),
+            _ => (Type::Integer, Type::Integer),
+        };
+        let key_llvm = self.llvm_type(&key_ty);
+        let val_llvm = self.llvm_type(&val_ty);
+
+        let length_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    map_type.as_basic_type_enum(),
+                    map_ptr,
+                    &[zero, i32_type.const_int(1, false)],
+                    "len_ptr",
+                )
+                .unwrap()
+        };
+        let keys_ptr_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    map_type.as_basic_type_enum(),
+                    map_ptr,
+                    &[zero, i32_type.const_int(2, false)],
+                    "keys_ptr_ptr",
+                )
+                .unwrap()
+        };
+        let values_ptr_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    map_type.as_basic_type_enum(),
+                    map_ptr,
+                    &[zero, i32_type.const_int(3, false)],
+                    "vals_ptr_ptr",
+                )
+                .unwrap()
+        };
+
         match method {
-            "length" => {
-                let i32_type = self.context.i32_type();
-                let zero = i32_type.const_int(0, false);
-                let length_ptr = unsafe {
-                    self.builder
-                        .build_gep(
-                            map_type.as_basic_type_enum(),
-                            map_ptr,
-                            &[zero, i32_type.const_int(1, false)],
-                            "len_ptr",
-                        )
-                        .unwrap()
-                };
-                let length = self
-                    .builder
-                    .build_load(self.context.i64_type(), length_ptr, "len")
-                    .unwrap();
-                Ok(length)
-            }
+            "length" => Ok(self.builder.build_load(i64_type, length_ptr, "len").unwrap()),
+            "insert" => self.compile_map_method(map_name, "set", args),
             "set" => {
-                // Simple implementation: append key-value at end (no duplicate check)
-                let i32_type = self.context.i32_type();
-                let zero = i32_type.const_int(0, false);
-                let length_ptr = unsafe {
-                    self.builder
-                        .build_gep(
-                            map_type.as_basic_type_enum(),
-                            map_ptr,
-                            &[zero, i32_type.const_int(1, false)],
-                            "len_ptr",
-                        )
-                        .unwrap()
-                };
+                let key = self.compile_expr(&args[0].node)?;
+                let value = self.compile_expr(&args[1].node)?;
                 let length = self
                     .builder
-                    .build_load(self.context.i64_type(), length_ptr, "len")
+                    .build_load(i64_type, length_ptr, "len")
                     .unwrap()
                     .into_int_value();
-
-                let keys_ptr_ptr = unsafe {
-                    self.builder
-                        .build_gep(
-                            map_type.as_basic_type_enum(),
-                            map_ptr,
-                            &[zero, i32_type.const_int(2, false)],
-                            "keys_ptr_ptr",
-                        )
-                        .unwrap()
-                };
                 let keys_ptr = self
                     .builder
                     .build_load(
@@ -1464,17 +1466,6 @@ impl<'ctx> Codegen<'ctx> {
                     )
                     .unwrap()
                     .into_pointer_value();
-
-                let values_ptr_ptr = unsafe {
-                    self.builder
-                        .build_gep(
-                            map_type.as_basic_type_enum(),
-                            map_ptr,
-                            &[zero, i32_type.const_int(3, false)],
-                            "vals_ptr_ptr",
-                        )
-                        .unwrap()
-                };
                 let values_ptr = self
                     .builder
                     .build_load(
@@ -1485,114 +1476,359 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap()
                     .into_pointer_value();
 
+                // Very small linear map: update existing key if present.
+                let idx_ptr = self.builder.build_alloca(i64_type, "map_idx").unwrap();
+                self.builder
+                    .build_store(idx_ptr, i64_type.const_int(0, false))
+                    .unwrap();
+                let current_fn = self.current_function.unwrap();
+                let cond_bb = self.context.append_basic_block(current_fn, "map_set.cond");
+                let body_bb = self.context.append_basic_block(current_fn, "map_set.body");
+                let append_bb = self.context.append_basic_block(current_fn, "map_set.append");
+                let done_bb = self.context.append_basic_block(current_fn, "map_set.done");
+
+                self.builder.build_unconditional_branch(cond_bb).unwrap();
+                self.builder.position_at_end(cond_bb);
+                let i = self
+                    .builder
+                    .build_load(i64_type, idx_ptr, "i")
+                    .unwrap()
+                    .into_int_value();
+                let in_bounds = self
+                    .builder
+                    .build_int_compare(IntPredicate::SLT, i, length, "i_lt_len")
+                    .unwrap();
+                self.builder
+                    .build_conditional_branch(in_bounds, body_bb, append_bb)
+                    .unwrap();
+
+                self.builder.position_at_end(body_bb);
                 let offset = self
                     .builder
-                    .build_int_mul(
-                        length,
-                        self.context.i64_type().const_int(8, false),
-                        "offset",
-                    )
+                    .build_int_mul(i, i64_type.const_int(8, false), "offset")
+                    .unwrap();
+                let key_slot = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), keys_ptr, &[offset], "key_slot")
+                        .unwrap()
+                };
+                let existing = self.builder.build_load(key_llvm, key_slot, "existing").unwrap();
+                let eq = if matches!(key_ty, Type::String) {
+                    let strcmp = self.get_or_declare_strcmp();
+                    let cmp = self
+                        .builder
+                        .build_call(strcmp, &[existing.into(), key.into()], "strcmp")
+                        .unwrap();
+                    let cmp_v = match cmp.try_as_basic_value() {
+                        ValueKind::Basic(v) => v.into_int_value(),
+                        _ => self.context.i32_type().const_int(1, false),
+                    };
+                    self.builder
+                        .build_int_compare(
+                            IntPredicate::EQ,
+                            cmp_v,
+                            self.context.i32_type().const_int(0, false),
+                            "eq",
+                        )
+                        .unwrap()
+                } else if existing.is_int_value() && key.is_int_value() {
+                    self.builder
+                        .build_int_compare(
+                            IntPredicate::EQ,
+                            existing.into_int_value(),
+                            key.into_int_value(),
+                            "eq",
+                        )
+                        .unwrap()
+                } else {
+                    self.context.bool_type().const_int(0, false)
+                };
+                let cont_bb = self.context.append_basic_block(current_fn, "map_set.cont");
+                let update_bb = self.context.append_basic_block(current_fn, "map_set.update");
+                self.builder
+                    .build_conditional_branch(eq, update_bb, cont_bb)
                     .unwrap();
 
-                // Store key
-                let key_elem_ptr = unsafe {
+                self.builder.position_at_end(update_bb);
+                let val_slot = unsafe {
                     self.builder
-                        .build_gep(self.context.i8_type(), keys_ptr, &[offset], "key_ptr")
+                        .build_gep(self.context.i8_type(), values_ptr, &[offset], "val_slot")
                         .unwrap()
                 };
-                let key = self.compile_expr(&args[0].node)?;
-                self.builder.build_store(key_elem_ptr, key).unwrap();
+                self.builder.build_store(val_slot, value).unwrap();
+                self.builder.build_unconditional_branch(done_bb).unwrap();
 
-                // Store value
-                let val_elem_ptr = unsafe {
-                    self.builder
-                        .build_gep(self.context.i8_type(), values_ptr, &[offset], "val_ptr")
-                        .unwrap()
-                };
-                let value = self.compile_expr(&args[1].node)?;
-                self.builder.build_store(val_elem_ptr, value).unwrap();
-
-                // Increment length
-                let new_length = self
+                self.builder.position_at_end(cont_bb);
+                let next_i = self
                     .builder
-                    .build_int_add(
-                        length,
-                        self.context.i64_type().const_int(1, false),
-                        "new_len",
-                    )
+                    .build_int_add(i, i64_type.const_int(1, false), "next_i")
                     .unwrap();
-                self.builder.build_store(length_ptr, new_length).unwrap();
+                self.builder.build_store(idx_ptr, next_i).unwrap();
+                self.builder.build_unconditional_branch(cond_bb).unwrap();
 
+                self.builder.position_at_end(append_bb);
+                let offset = self
+                    .builder
+                    .build_int_mul(length, i64_type.const_int(8, false), "append_off")
+                    .unwrap();
+                let key_slot = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), keys_ptr, &[offset], "key_slot_new")
+                        .unwrap()
+                };
+                self.builder.build_store(key_slot, key).unwrap();
+                let val_slot = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), values_ptr, &[offset], "val_slot_new")
+                        .unwrap()
+                };
+                self.builder.build_store(val_slot, value).unwrap();
+                let new_len = self
+                    .builder
+                    .build_int_add(length, i64_type.const_int(1, false), "new_len")
+                    .unwrap();
+                self.builder.build_store(length_ptr, new_len).unwrap();
+                self.builder.build_unconditional_branch(done_bb).unwrap();
+
+                self.builder.position_at_end(done_bb);
                 Ok(self.context.i8_type().const_int(0, false).into())
             }
-            "insert" => {
-                // Alias for set
-                self.compile_map_method(map_name, "set", args)
-            }
             "get" => {
-                // Simple linear search
-                let i32_type = self.context.i32_type();
-                let zero = i32_type.const_int(0, false);
-                let length_ptr = unsafe {
-                    self.builder
-                        .build_gep(
-                            map_type.as_basic_type_enum(),
-                            map_ptr,
-                            &[zero, i32_type.const_int(1, false)],
-                            "len_ptr",
-                        )
-                        .unwrap()
-                };
-                let _length = self
+                let key = self.compile_expr(&args[0].node)?;
+                let length = self
                     .builder
-                    .build_load(self.context.i64_type(), length_ptr, "len")
-                    .unwrap();
-
-                let keys_ptr_ptr = unsafe {
-                    self.builder
-                        .build_gep(
-                            map_type.as_basic_type_enum(),
-                            map_ptr,
-                            &[zero, i32_type.const_int(2, false)],
-                            "keys_ptr_ptr",
-                        )
-                        .unwrap()
-                };
-                let _keys_ptr = self
+                    .build_load(i64_type, length_ptr, "len")
+                    .unwrap()
+                    .into_int_value();
+                let keys_ptr = self
                     .builder
                     .build_load(
                         self.context.ptr_type(AddressSpace::default()),
                         keys_ptr_ptr,
                         "keys",
                     )
-                    .unwrap();
-
-                let values_ptr_ptr = unsafe {
-                    self.builder
-                        .build_gep(
-                            map_type.as_basic_type_enum(),
-                            map_ptr,
-                            &[zero, i32_type.const_int(3, false)],
-                            "vals_ptr_ptr",
-                        )
-                        .unwrap()
-                };
-                let _values_ptr = self
+                    .unwrap()
+                    .into_pointer_value();
+                let values_ptr = self
                     .builder
                     .build_load(
                         self.context.ptr_type(AddressSpace::default()),
                         values_ptr_ptr,
                         "vals",
                     )
+                    .unwrap()
+                    .into_pointer_value();
+
+                let idx_ptr = self.builder.build_alloca(i64_type, "map_idx").unwrap();
+                let res_ptr = self.builder.build_alloca(val_llvm, "map_get_res").unwrap();
+                self.builder
+                    .build_store(idx_ptr, i64_type.const_int(0, false))
+                    .unwrap();
+                self.builder.build_store(res_ptr, val_llvm.const_zero()).unwrap();
+
+                let current_fn = self.current_function.unwrap();
+                let cond_bb = self.context.append_basic_block(current_fn, "map_get.cond");
+                let body_bb = self.context.append_basic_block(current_fn, "map_get.body");
+                let done_bb = self.context.append_basic_block(current_fn, "map_get.done");
+                self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+                self.builder.position_at_end(cond_bb);
+                let i = self
+                    .builder
+                    .build_load(i64_type, idx_ptr, "i")
+                    .unwrap()
+                    .into_int_value();
+                let in_bounds = self
+                    .builder
+                    .build_int_compare(IntPredicate::SLT, i, length, "i_lt_len")
+                    .unwrap();
+                self.builder
+                    .build_conditional_branch(in_bounds, body_bb, done_bb)
                     .unwrap();
 
-                // For now, just return 0 - proper implementation would need loops
-                // TODO: Implement proper key search
-                Ok(self.context.i64_type().const_int(0, false).into())
+                self.builder.position_at_end(body_bb);
+                let offset = self
+                    .builder
+                    .build_int_mul(i, i64_type.const_int(8, false), "offset")
+                    .unwrap();
+                let key_slot = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), keys_ptr, &[offset], "key_slot")
+                        .unwrap()
+                };
+                let existing = self.builder.build_load(key_llvm, key_slot, "existing").unwrap();
+                let eq = if matches!(key_ty, Type::String) {
+                    let strcmp = self.get_or_declare_strcmp();
+                    let cmp = self
+                        .builder
+                        .build_call(strcmp, &[existing.into(), key.into()], "strcmp")
+                        .unwrap();
+                    let cmp_v = match cmp.try_as_basic_value() {
+                        ValueKind::Basic(v) => v.into_int_value(),
+                        _ => self.context.i32_type().const_int(1, false),
+                    };
+                    self.builder
+                        .build_int_compare(
+                            IntPredicate::EQ,
+                            cmp_v,
+                            self.context.i32_type().const_int(0, false),
+                            "eq",
+                        )
+                        .unwrap()
+                } else if existing.is_int_value() && key.is_int_value() {
+                    self.builder
+                        .build_int_compare(
+                            IntPredicate::EQ,
+                            existing.into_int_value(),
+                            key.into_int_value(),
+                            "eq",
+                        )
+                        .unwrap()
+                } else {
+                    self.context.bool_type().const_int(0, false)
+                };
+                let next_bb = self.context.append_basic_block(current_fn, "map_get.next");
+                let found_bb = self.context.append_basic_block(current_fn, "map_get.found");
+                self.builder
+                    .build_conditional_branch(eq, found_bb, next_bb)
+                    .unwrap();
+
+                self.builder.position_at_end(found_bb);
+                let val_slot = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), values_ptr, &[offset], "val_slot")
+                        .unwrap()
+                };
+                let found = self.builder.build_load(val_llvm, val_slot, "found").unwrap();
+                self.builder.build_store(res_ptr, found).unwrap();
+                self.builder.build_unconditional_branch(done_bb).unwrap();
+
+                self.builder.position_at_end(next_bb);
+                let next_i = self
+                    .builder
+                    .build_int_add(i, i64_type.const_int(1, false), "next_i")
+                    .unwrap();
+                self.builder.build_store(idx_ptr, next_i).unwrap();
+                self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+                self.builder.position_at_end(done_bb);
+                Ok(self.builder.build_load(val_llvm, res_ptr, "map_get_res").unwrap())
             }
             "contains" => {
-                // For now, just return false
-                Ok(self.context.bool_type().const_int(0, false).into())
+                let key = self.compile_expr(&args[0].node)?;
+                let length = self
+                    .builder
+                    .build_load(i64_type, length_ptr, "len")
+                    .unwrap()
+                    .into_int_value();
+                let keys_ptr = self
+                    .builder
+                    .build_load(
+                        self.context.ptr_type(AddressSpace::default()),
+                        keys_ptr_ptr,
+                        "keys",
+                    )
+                    .unwrap()
+                    .into_pointer_value();
+
+                let idx_ptr = self.builder.build_alloca(i64_type, "map_idx").unwrap();
+                let res_ptr = self
+                    .builder
+                    .build_alloca(self.context.bool_type(), "contains_res")
+                    .unwrap();
+                self.builder
+                    .build_store(idx_ptr, i64_type.const_int(0, false))
+                    .unwrap();
+                self.builder
+                    .build_store(res_ptr, self.context.bool_type().const_int(0, false))
+                    .unwrap();
+
+                let current_fn = self.current_function.unwrap();
+                let cond_bb = self.context.append_basic_block(current_fn, "map_contains.cond");
+                let body_bb = self.context.append_basic_block(current_fn, "map_contains.body");
+                let done_bb = self.context.append_basic_block(current_fn, "map_contains.done");
+                self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+                self.builder.position_at_end(cond_bb);
+                let i = self
+                    .builder
+                    .build_load(i64_type, idx_ptr, "i")
+                    .unwrap()
+                    .into_int_value();
+                let in_bounds = self
+                    .builder
+                    .build_int_compare(IntPredicate::SLT, i, length, "i_lt_len")
+                    .unwrap();
+                self.builder
+                    .build_conditional_branch(in_bounds, body_bb, done_bb)
+                    .unwrap();
+
+                self.builder.position_at_end(body_bb);
+                let offset = self
+                    .builder
+                    .build_int_mul(i, i64_type.const_int(8, false), "offset")
+                    .unwrap();
+                let key_slot = unsafe {
+                    self.builder
+                        .build_gep(self.context.i8_type(), keys_ptr, &[offset], "key_slot")
+                        .unwrap()
+                };
+                let existing = self.builder.build_load(key_llvm, key_slot, "existing").unwrap();
+                let eq = if matches!(key_ty, Type::String) {
+                    let strcmp = self.get_or_declare_strcmp();
+                    let cmp = self
+                        .builder
+                        .build_call(strcmp, &[existing.into(), key.into()], "strcmp")
+                        .unwrap();
+                    let cmp_v = match cmp.try_as_basic_value() {
+                        ValueKind::Basic(v) => v.into_int_value(),
+                        _ => self.context.i32_type().const_int(1, false),
+                    };
+                    self.builder
+                        .build_int_compare(
+                            IntPredicate::EQ,
+                            cmp_v,
+                            self.context.i32_type().const_int(0, false),
+                            "eq",
+                        )
+                        .unwrap()
+                } else if existing.is_int_value() && key.is_int_value() {
+                    self.builder
+                        .build_int_compare(
+                            IntPredicate::EQ,
+                            existing.into_int_value(),
+                            key.into_int_value(),
+                            "eq",
+                        )
+                        .unwrap()
+                } else {
+                    self.context.bool_type().const_int(0, false)
+                };
+                let next_bb = self.context.append_basic_block(current_fn, "map_contains.next");
+                let found_bb = self.context.append_basic_block(current_fn, "map_contains.found");
+                self.builder
+                    .build_conditional_branch(eq, found_bb, next_bb)
+                    .unwrap();
+
+                self.builder.position_at_end(found_bb);
+                self.builder
+                    .build_store(res_ptr, self.context.bool_type().const_int(1, false))
+                    .unwrap();
+                self.builder.build_unconditional_branch(done_bb).unwrap();
+
+                self.builder.position_at_end(next_bb);
+                let next_i = self
+                    .builder
+                    .build_int_add(i, i64_type.const_int(1, false), "next_i")
+                    .unwrap();
+                self.builder.build_store(idx_ptr, next_i).unwrap();
+                self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+                self.builder.position_at_end(done_bb);
+                Ok(self
+                    .builder
+                    .build_load(self.context.bool_type(), res_ptr, "contains_res")
+                    .unwrap())
             }
             _ => Err(CodegenError::new(format!("Unknown Map method: {}", method))),
         }
