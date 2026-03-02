@@ -323,7 +323,13 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
     let files = config.get_source_files(&project_root);
     let mut parsed_files: Vec<(PathBuf, String, Program, Vec<ImportDecl>)> = Vec::new();
     let mut global_function_map: HashMap<String, String> = HashMap::new(); // func_name -> namespace
+    let mut global_class_map: HashMap<String, String> = HashMap::new(); // class_name -> namespace
+    let mut global_module_map: HashMap<String, String> = HashMap::new(); // module_name -> namespace
+    let mut namespace_class_map: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut namespace_module_map: HashMap<String, HashSet<String>> = HashMap::new();
     let mut function_collisions: Vec<(String, String, String)> = Vec::new();
+    let mut class_collisions: Vec<(String, String, String)> = Vec::new();
+    let mut module_collisions: Vec<(String, String, String)> = Vec::new();
 
     for file in &files {
         let source = fs::read_to_string(file).map_err(|e| {
@@ -373,20 +379,53 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
             })
             .collect();
 
-        // Extract function definitions for global map
+        // Extract symbol definitions for global maps
+        let class_entry = namespace_class_map.entry(namespace.clone()).or_default();
+        let module_entry = namespace_module_map.entry(namespace.clone()).or_default();
         for decl in &program.declarations {
-            if let Decl::Function(func) = &decl.node {
-                if let Some(existing_ns) = global_function_map.get(&func.name) {
-                    if existing_ns != &namespace {
-                        function_collisions.push((
-                            func.name.clone(),
-                            existing_ns.clone(),
-                            namespace.clone(),
-                        ));
+            match &decl.node {
+                Decl::Function(func) => {
+                    if let Some(existing_ns) = global_function_map.get(&func.name) {
+                        if existing_ns != &namespace {
+                            function_collisions.push((
+                                func.name.clone(),
+                                existing_ns.clone(),
+                                namespace.clone(),
+                            ));
+                        }
+                    } else {
+                        global_function_map.insert(func.name.clone(), namespace.clone());
                     }
-                } else {
-                    global_function_map.insert(func.name.clone(), namespace.clone());
                 }
+                Decl::Class(class) => {
+                    class_entry.insert(class.name.clone());
+                    if let Some(existing_ns) = global_class_map.get(&class.name) {
+                        if existing_ns != &namespace {
+                            class_collisions.push((
+                                class.name.clone(),
+                                existing_ns.clone(),
+                                namespace.clone(),
+                            ));
+                        }
+                    } else {
+                        global_class_map.insert(class.name.clone(), namespace.clone());
+                    }
+                }
+                Decl::Module(module) => {
+                    module_entry.insert(module.name.clone());
+                    if let Some(existing_ns) = global_module_map.get(&module.name) {
+                        if existing_ns != &namespace {
+                            module_collisions.push((
+                                module.name.clone(),
+                                existing_ns.clone(),
+                                namespace.clone(),
+                            ));
+                        }
+                    } else {
+                        global_module_map.insert(module.name.clone(), namespace.clone());
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -406,6 +445,32 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
         }
         return Err(
             "Project contains colliding top-level function names. Use module-qualified names or rename functions."
+                .to_string(),
+        );
+    }
+    if !class_collisions.is_empty() {
+        eprintln!(
+            "{} Class name collisions detected across namespaces:",
+            "error".red().bold()
+        );
+        for (name, ns_a, ns_b) in class_collisions {
+            eprintln!("  â†’ '{}' is defined in both '{}' and '{}'", name, ns_a, ns_b);
+        }
+        return Err(
+            "Project contains colliding top-level class names. Use unique class names per project."
+                .to_string(),
+        );
+    }
+    if !module_collisions.is_empty() {
+        eprintln!(
+            "{} Module name collisions detected across namespaces:",
+            "error".red().bold()
+        );
+        for (name, ns_a, ns_b) in module_collisions {
+            eprintln!("  â†’ '{}' is defined in both '{}' and '{}'", name, ns_a, ns_b);
+        }
+        return Err(
+            "Project contains colliding top-level module names. Use unique module names per project."
                 .to_string(),
         );
     }
@@ -461,6 +526,10 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
             &entry_namespace,
             &namespace_functions,
             &global_function_map,
+            &namespace_class_map,
+            &global_class_map,
+            &namespace_module_map,
+            &global_module_map,
             imports,
         );
         combined_program
@@ -488,14 +557,28 @@ fn rewrite_program_for_project(
     entry_namespace: &str,
     namespace_functions: &HashMap<String, HashSet<String>>,
     global_function_map: &HashMap<String, String>,
+    namespace_classes: &HashMap<String, HashSet<String>>,
+    global_class_map: &HashMap<String, String>,
+    namespace_modules: &HashMap<String, HashSet<String>>,
+    global_module_map: &HashMap<String, String>,
     imports: &[ImportDecl],
 ) -> Program {
     let local_functions = namespace_functions
         .get(current_namespace)
         .cloned()
         .unwrap_or_default();
+    let local_classes = namespace_classes
+        .get(current_namespace)
+        .cloned()
+        .unwrap_or_default();
+    let local_modules = namespace_modules
+        .get(current_namespace)
+        .cloned()
+        .unwrap_or_default();
 
     let mut imported_map: HashMap<String, String> = HashMap::new();
+    let mut imported_classes: HashMap<String, String> = HashMap::new();
+    let mut imported_modules: HashMap<String, String> = HashMap::new();
     for import in imports {
         if import.path.ends_with(".*") {
             let ns = import.path.trim_end_matches(".*");
@@ -504,10 +587,23 @@ fn rewrite_program_for_project(
                     imported_map.insert(name.clone(), ns.to_string());
                 }
             }
+            if let Some(classes) = namespace_classes.get(ns) {
+                for name in classes {
+                    imported_classes.insert(name.clone(), ns.to_string());
+                }
+            }
+            if let Some(modules) = namespace_modules.get(ns) {
+                for name in modules {
+                    imported_modules.insert(name.clone(), ns.to_string());
+                }
+            }
         } else if import.path.contains('.') {
             let mut parts = import.path.split('.').collect::<Vec<_>>();
             if let Some(name) = parts.pop() {
-                imported_map.insert(name.to_string(), parts.join("."));
+                let ns = parts.join(".");
+                imported_map.insert(name.to_string(), ns.clone());
+                imported_classes.insert(name.to_string(), ns.clone());
+                imported_modules.insert(name.to_string(), ns);
             }
         }
     }
@@ -522,6 +618,32 @@ fn rewrite_program_for_project(
                 let node = match &d.node {
                     Decl::Function(func) => {
                         let mut f = func.clone();
+                        let mut scopes = vec![f.params.iter().map(|p| p.name.clone()).collect()];
+                        f.params = f
+                            .params
+                            .iter()
+                            .map(|p| ast::Parameter {
+                                name: p.name.clone(),
+                                ty: rewrite_type_for_project(
+                                    &p.ty,
+                                    current_namespace,
+                                    &local_classes,
+                                    &imported_classes,
+                                    global_class_map,
+                                    entry_namespace,
+                                ),
+                                mutable: p.mutable,
+                                mode: p.mode,
+                            })
+                            .collect();
+                        f.return_type = rewrite_type_for_project(
+                            &f.return_type,
+                            current_namespace,
+                            &local_classes,
+                            &imported_classes,
+                            global_class_map,
+                            entry_namespace,
+                        );
                         f.body = rewrite_block_calls_for_project(
                             &f.body,
                             current_namespace,
@@ -529,14 +651,61 @@ fn rewrite_program_for_project(
                             &local_functions,
                             &imported_map,
                             global_function_map,
+                            &local_classes,
+                            &imported_classes,
+                            global_class_map,
+                            &local_modules,
+                            &imported_modules,
+                            global_module_map,
+                            &mut scopes,
                         );
                         f.name = mangle_project_symbol(current_namespace, entry_namespace, &f.name);
                         Decl::Function(f)
                     }
                     Decl::Class(class) => {
                         let mut c = class.clone();
+                        c.name = mangle_project_symbol(current_namespace, entry_namespace, &c.name);
+                        c.fields = c
+                            .fields
+                            .iter()
+                            .map(|field| ast::Field {
+                                name: field.name.clone(),
+                                ty: rewrite_type_for_project(
+                                    &field.ty,
+                                    current_namespace,
+                                    &local_classes,
+                                    &imported_classes,
+                                    global_class_map,
+                                    entry_namespace,
+                                ),
+                                mutable: field.mutable,
+                                visibility: field.visibility,
+                            })
+                            .collect();
                         if let Some(ctor) = &class.constructor {
                             let mut new_ctor = ctor.clone();
+                            let mut scopes: Vec<HashSet<String>> =
+                                vec![new_ctor.params.iter().map(|p| p.name.clone()).collect()];
+                            if let Some(scope) = scopes.last_mut() {
+                                scope.insert("this".to_string());
+                            }
+                            new_ctor.params = new_ctor
+                                .params
+                                .iter()
+                                .map(|p| ast::Parameter {
+                                    name: p.name.clone(),
+                                    ty: rewrite_type_for_project(
+                                        &p.ty,
+                                        current_namespace,
+                                        &local_classes,
+                                        &imported_classes,
+                                        global_class_map,
+                                        entry_namespace,
+                                    ),
+                                    mutable: p.mutable,
+                                    mode: p.mode,
+                                })
+                                .collect();
                             new_ctor.body = rewrite_block_calls_for_project(
                                 &new_ctor.body,
                                 current_namespace,
@@ -544,6 +713,13 @@ fn rewrite_program_for_project(
                                 &local_functions,
                                 &imported_map,
                                 global_function_map,
+                                &local_classes,
+                                &imported_classes,
+                                global_class_map,
+                                &local_modules,
+                                &imported_modules,
+                                global_module_map,
+                                &mut scopes,
                             );
                             c.constructor = Some(new_ctor);
                         }
@@ -552,6 +728,36 @@ fn rewrite_program_for_project(
                             .iter()
                             .map(|m| {
                                 let mut nm = m.clone();
+                                let mut scopes: Vec<HashSet<String>> =
+                                    vec![nm.params.iter().map(|p| p.name.clone()).collect()];
+                                if let Some(scope) = scopes.last_mut() {
+                                    scope.insert("this".to_string());
+                                }
+                                nm.params = nm
+                                    .params
+                                    .iter()
+                                    .map(|p| ast::Parameter {
+                                        name: p.name.clone(),
+                                        ty: rewrite_type_for_project(
+                                            &p.ty,
+                                            current_namespace,
+                                            &local_classes,
+                                            &imported_classes,
+                                            global_class_map,
+                                            entry_namespace,
+                                        ),
+                                        mutable: p.mutable,
+                                        mode: p.mode,
+                                    })
+                                    .collect();
+                                nm.return_type = rewrite_type_for_project(
+                                    &nm.return_type,
+                                    current_namespace,
+                                    &local_classes,
+                                    &imported_classes,
+                                    global_class_map,
+                                    entry_namespace,
+                                );
                                 nm.body = rewrite_block_calls_for_project(
                                     &nm.body,
                                     current_namespace,
@@ -559,11 +765,50 @@ fn rewrite_program_for_project(
                                     &local_functions,
                                     &imported_map,
                                     global_function_map,
+                                    &local_classes,
+                                    &imported_classes,
+                                    global_class_map,
+                                    &local_modules,
+                                    &imported_modules,
+                                    global_module_map,
+                                    &mut scopes,
                                 );
                                 nm
                             })
                             .collect();
                         Decl::Class(c)
+                    }
+                    Decl::Module(module) => {
+                        let mut m = module.clone();
+                        m.name = mangle_project_symbol(current_namespace, entry_namespace, &m.name);
+                        Decl::Module(m)
+                    }
+                    Decl::Enum(en) => {
+                        let mut e = en.clone();
+                        e.name = mangle_project_symbol(current_namespace, entry_namespace, &e.name);
+                        e.variants = e
+                            .variants
+                            .iter()
+                            .map(|v| ast::EnumVariant {
+                                name: v.name.clone(),
+                                fields: v
+                                    .fields
+                                    .iter()
+                                    .map(|f| ast::EnumField {
+                                        name: f.name.clone(),
+                                        ty: rewrite_type_for_project(
+                                            &f.ty,
+                                            current_namespace,
+                                            &local_classes,
+                                            &imported_classes,
+                                            global_class_map,
+                                            entry_namespace,
+                                        ),
+                                    })
+                                    .collect(),
+                            })
+                            .collect();
+                        Decl::Enum(e)
                     }
                     _ => d.node.clone(),
                 };
@@ -581,6 +826,218 @@ fn mangle_project_symbol(namespace: &str, entry_namespace: &str, name: &str) -> 
     }
 }
 
+fn rewrite_type_for_project(
+    ty: &ast::Type,
+    current_namespace: &str,
+    local_classes: &HashSet<String>,
+    imported_classes: &HashMap<String, String>,
+    global_class_map: &HashMap<String, String>,
+    entry_namespace: &str,
+) -> ast::Type {
+    match ty {
+        ast::Type::Named(name) => {
+            if local_classes.contains(name) {
+                ast::Type::Named(mangle_project_symbol(current_namespace, entry_namespace, name))
+            } else if let Some(ns) = imported_classes.get(name).or_else(|| global_class_map.get(name))
+            {
+                ast::Type::Named(mangle_project_symbol(ns, entry_namespace, name))
+            } else {
+                ast::Type::Named(name.clone())
+            }
+        }
+        ast::Type::Generic(name, args) => ast::Type::Generic(
+            if local_classes.contains(name) {
+                mangle_project_symbol(current_namespace, entry_namespace, name)
+            } else if let Some(ns) = imported_classes.get(name).or_else(|| global_class_map.get(name))
+            {
+                mangle_project_symbol(ns, entry_namespace, name)
+            } else {
+                name.clone()
+            },
+            args.iter()
+                .map(|a| {
+                    rewrite_type_for_project(
+                        a,
+                        current_namespace,
+                        local_classes,
+                        imported_classes,
+                        global_class_map,
+                        entry_namespace,
+                    )
+                })
+                .collect(),
+        ),
+        ast::Type::Function(params, ret) => ast::Type::Function(
+            params
+                .iter()
+                .map(|p| {
+                    rewrite_type_for_project(
+                        p,
+                        current_namespace,
+                        local_classes,
+                        imported_classes,
+                        global_class_map,
+                        entry_namespace,
+                    )
+                })
+                .collect(),
+            Box::new(rewrite_type_for_project(
+                ret,
+                current_namespace,
+                local_classes,
+                imported_classes,
+                global_class_map,
+                entry_namespace,
+            )),
+        ),
+        ast::Type::Option(inner) => ast::Type::Option(Box::new(rewrite_type_for_project(
+            inner,
+            current_namespace,
+            local_classes,
+            imported_classes,
+            global_class_map,
+            entry_namespace,
+        ))),
+        ast::Type::Result(ok, err) => ast::Type::Result(
+            Box::new(rewrite_type_for_project(
+                ok,
+                current_namespace,
+                local_classes,
+                imported_classes,
+                global_class_map,
+                entry_namespace,
+            )),
+            Box::new(rewrite_type_for_project(
+                err,
+                current_namespace,
+                local_classes,
+                imported_classes,
+                global_class_map,
+                entry_namespace,
+            )),
+        ),
+        ast::Type::List(inner) => ast::Type::List(Box::new(rewrite_type_for_project(
+            inner,
+            current_namespace,
+            local_classes,
+            imported_classes,
+            global_class_map,
+            entry_namespace,
+        ))),
+        ast::Type::Map(k, v) => ast::Type::Map(
+            Box::new(rewrite_type_for_project(
+                k,
+                current_namespace,
+                local_classes,
+                imported_classes,
+                global_class_map,
+                entry_namespace,
+            )),
+            Box::new(rewrite_type_for_project(
+                v,
+                current_namespace,
+                local_classes,
+                imported_classes,
+                global_class_map,
+                entry_namespace,
+            )),
+        ),
+        ast::Type::Set(inner) => ast::Type::Set(Box::new(rewrite_type_for_project(
+            inner,
+            current_namespace,
+            local_classes,
+            imported_classes,
+            global_class_map,
+            entry_namespace,
+        ))),
+        ast::Type::Ref(inner) => ast::Type::Ref(Box::new(rewrite_type_for_project(
+            inner,
+            current_namespace,
+            local_classes,
+            imported_classes,
+            global_class_map,
+            entry_namespace,
+        ))),
+        ast::Type::MutRef(inner) => ast::Type::MutRef(Box::new(rewrite_type_for_project(
+            inner,
+            current_namespace,
+            local_classes,
+            imported_classes,
+            global_class_map,
+            entry_namespace,
+        ))),
+        ast::Type::Box(inner) => ast::Type::Box(Box::new(rewrite_type_for_project(
+            inner,
+            current_namespace,
+            local_classes,
+            imported_classes,
+            global_class_map,
+            entry_namespace,
+        ))),
+        ast::Type::Rc(inner) => ast::Type::Rc(Box::new(rewrite_type_for_project(
+            inner,
+            current_namespace,
+            local_classes,
+            imported_classes,
+            global_class_map,
+            entry_namespace,
+        ))),
+        ast::Type::Arc(inner) => ast::Type::Arc(Box::new(rewrite_type_for_project(
+            inner,
+            current_namespace,
+            local_classes,
+            imported_classes,
+            global_class_map,
+            entry_namespace,
+        ))),
+        ast::Type::Task(inner) => ast::Type::Task(Box::new(rewrite_type_for_project(
+            inner,
+            current_namespace,
+            local_classes,
+            imported_classes,
+            global_class_map,
+            entry_namespace,
+        ))),
+        ast::Type::Range(inner) => ast::Type::Range(Box::new(rewrite_type_for_project(
+            inner,
+            current_namespace,
+            local_classes,
+            imported_classes,
+            global_class_map,
+            entry_namespace,
+        ))),
+        _ => ty.clone(),
+    }
+}
+
+fn is_shadowed(name: &str, scopes: &[HashSet<String>]) -> bool {
+    scopes.iter().rev().any(|scope| scope.contains(name))
+}
+
+fn push_scope(scopes: &mut Vec<HashSet<String>>) {
+    scopes.push(HashSet::new());
+}
+
+fn pop_scope(scopes: &mut Vec<HashSet<String>>) {
+    if scopes.len() > 1 {
+        scopes.pop();
+    }
+}
+
+fn bind_pattern_locals(pattern: &ast::Pattern, scope: &mut HashSet<String>) {
+    match pattern {
+        ast::Pattern::Ident(name) => {
+            scope.insert(name.clone());
+        }
+        ast::Pattern::Variant(_, bindings) => {
+            for b in bindings {
+                scope.insert(b.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
 fn rewrite_block_calls_for_project(
     block: &ast::Block,
     current_namespace: &str,
@@ -588,6 +1045,13 @@ fn rewrite_block_calls_for_project(
     local_functions: &HashSet<String>,
     imported_map: &HashMap<String, String>,
     global_function_map: &HashMap<String, String>,
+    local_classes: &HashSet<String>,
+    imported_classes: &HashMap<String, String>,
+    global_class_map: &HashMap<String, String>,
+    local_modules: &HashSet<String>,
+    imported_modules: &HashMap<String, String>,
+    global_module_map: &HashMap<String, String>,
+    scopes: &mut Vec<HashSet<String>>,
 ) -> ast::Block {
     block
         .iter()
@@ -600,6 +1064,13 @@ fn rewrite_block_calls_for_project(
                     local_functions,
                     imported_map,
                     global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
                 ),
                 stmt.span.clone(),
             )
@@ -614,6 +1085,13 @@ fn rewrite_stmt_calls_for_project(
     local_functions: &HashSet<String>,
     imported_map: &HashMap<String, String>,
     global_function_map: &HashMap<String, String>,
+    local_classes: &HashSet<String>,
+    imported_classes: &HashMap<String, String>,
+    global_class_map: &HashMap<String, String>,
+    local_modules: &HashSet<String>,
+    imported_modules: &HashMap<String, String>,
+    global_module_map: &HashMap<String, String>,
+    scopes: &mut Vec<HashSet<String>>,
 ) -> Stmt {
     match stmt {
         Stmt::Let {
@@ -621,22 +1099,42 @@ fn rewrite_stmt_calls_for_project(
             ty,
             value,
             mutable,
-        } => Stmt::Let {
-            name: name.clone(),
-            ty: ty.clone(),
-            value: ast::Spanned::new(
-                rewrite_expr_calls_for_project(
-                    &value.node,
+        } => {
+            let rewritten = Stmt::Let {
+                name: name.clone(),
+                ty: rewrite_type_for_project(
+                    ty,
                     current_namespace,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
                     entry_namespace,
-                    local_functions,
-                    imported_map,
-                    global_function_map,
                 ),
-                value.span.clone(),
-            ),
-            mutable: *mutable,
-        },
+                value: ast::Spanned::new(
+                    rewrite_expr_calls_for_project(
+                        &value.node,
+                        current_namespace,
+                        entry_namespace,
+                        local_functions,
+                        imported_map,
+                        global_function_map,
+                        local_classes,
+                        imported_classes,
+                        global_class_map,
+                        local_modules,
+                        imported_modules,
+                        global_module_map,
+                        scopes,
+                    ),
+                    value.span.clone(),
+                ),
+                mutable: *mutable,
+            };
+            if let Some(scope) = scopes.last_mut() {
+                scope.insert(name.clone());
+            }
+            rewritten
+        }
         Stmt::Assign { target, value } => Stmt::Assign {
             target: ast::Spanned::new(
                 rewrite_expr_calls_for_project(
@@ -646,6 +1144,13 @@ fn rewrite_stmt_calls_for_project(
                     local_functions,
                     imported_map,
                     global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
                 ),
                 target.span.clone(),
             ),
@@ -657,6 +1162,13 @@ fn rewrite_stmt_calls_for_project(
                     local_functions,
                     imported_map,
                     global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
                 ),
                 value.span.clone(),
             ),
@@ -669,6 +1181,13 @@ fn rewrite_stmt_calls_for_project(
                 local_functions,
                 imported_map,
                 global_function_map,
+                local_classes,
+                imported_classes,
+                global_class_map,
+                local_modules,
+                imported_modules,
+                global_module_map,
+                scopes,
             ),
             expr.span.clone(),
         )),
@@ -680,6 +1199,13 @@ fn rewrite_stmt_calls_for_project(
                 local_functions,
                 imported_map,
                 global_function_map,
+                local_classes,
+                imported_classes,
+                global_class_map,
+                local_modules,
+                imported_modules,
+                global_module_map,
+                scopes,
             ),
             expr.span.clone(),
         ))),
@@ -687,8 +1213,8 @@ fn rewrite_stmt_calls_for_project(
             condition,
             then_block,
             else_block,
-        } => Stmt::If {
-            condition: ast::Spanned::new(
+        } => {
+            let condition = ast::Spanned::new(
                 rewrite_expr_calls_for_project(
                     &condition.node,
                     current_namespace,
@@ -696,30 +1222,61 @@ fn rewrite_stmt_calls_for_project(
                     local_functions,
                     imported_map,
                     global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
                 ),
                 condition.span.clone(),
-            ),
-            then_block: rewrite_block_calls_for_project(
+            );
+            push_scope(scopes);
+            let then_block = rewrite_block_calls_for_project(
                 then_block,
                 current_namespace,
                 entry_namespace,
                 local_functions,
                 imported_map,
                 global_function_map,
-            ),
-            else_block: else_block.as_ref().map(|b| {
-                rewrite_block_calls_for_project(
+                local_classes,
+                imported_classes,
+                global_class_map,
+                local_modules,
+                imported_modules,
+                global_module_map,
+                scopes,
+            );
+            pop_scope(scopes);
+            let else_block = else_block.as_ref().map(|b| {
+                push_scope(scopes);
+                let rewritten = rewrite_block_calls_for_project(
                     b,
                     current_namespace,
                     entry_namespace,
                     local_functions,
                     imported_map,
                     global_function_map,
-                )
-            }),
-        },
-        Stmt::While { condition, body } => Stmt::While {
-            condition: ast::Spanned::new(
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
+                );
+                pop_scope(scopes);
+                rewritten
+            });
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            }
+        }
+        Stmt::While { condition, body } => {
+            let condition = ast::Spanned::new(
                 rewrite_expr_calls_for_project(
                     &condition.node,
                     current_namespace,
@@ -727,27 +1284,42 @@ fn rewrite_stmt_calls_for_project(
                     local_functions,
                     imported_map,
                     global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
                 ),
                 condition.span.clone(),
-            ),
-            body: rewrite_block_calls_for_project(
+            );
+            push_scope(scopes);
+            let body = rewrite_block_calls_for_project(
                 body,
                 current_namespace,
                 entry_namespace,
                 local_functions,
                 imported_map,
                 global_function_map,
-            ),
-        },
+                local_classes,
+                imported_classes,
+                global_class_map,
+                local_modules,
+                imported_modules,
+                global_module_map,
+                scopes,
+            );
+            pop_scope(scopes);
+            Stmt::While { condition, body }
+        }
         Stmt::For {
             var,
             var_type,
             iterable,
             body,
-        } => Stmt::For {
-            var: var.clone(),
-            var_type: var_type.clone(),
-            iterable: ast::Spanned::new(
+        } => {
+            let iterable = ast::Spanned::new(
                 rewrite_expr_calls_for_project(
                     &iterable.node,
                     current_namespace,
@@ -755,18 +1327,52 @@ fn rewrite_stmt_calls_for_project(
                     local_functions,
                     imported_map,
                     global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
                 ),
                 iterable.span.clone(),
-            ),
-            body: rewrite_block_calls_for_project(
+            );
+            push_scope(scopes);
+            if let Some(scope) = scopes.last_mut() {
+                scope.insert(var.clone());
+            }
+            let body = rewrite_block_calls_for_project(
                 body,
                 current_namespace,
                 entry_namespace,
                 local_functions,
                 imported_map,
                 global_function_map,
-            ),
-        },
+                local_classes,
+                imported_classes,
+                global_class_map,
+                local_modules,
+                imported_modules,
+                global_module_map,
+                scopes,
+            );
+            pop_scope(scopes);
+            Stmt::For {
+                var: var.clone(),
+                var_type: var_type.as_ref().map(|t| {
+                    rewrite_type_for_project(
+                        t,
+                        current_namespace,
+                        local_classes,
+                        imported_classes,
+                        global_class_map,
+                        entry_namespace,
+                    )
+                }),
+                iterable,
+                body,
+            }
+        }
         Stmt::Match { expr, arms } => Stmt::Match {
             expr: ast::Spanned::new(
                 rewrite_expr_calls_for_project(
@@ -776,21 +1382,43 @@ fn rewrite_stmt_calls_for_project(
                     local_functions,
                     imported_map,
                     global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
                 ),
                 expr.span.clone(),
             ),
             arms: arms
                 .iter()
-                .map(|arm| ast::MatchArm {
-                    pattern: arm.pattern.clone(),
-                    body: rewrite_block_calls_for_project(
+                .map(|arm| {
+                    push_scope(scopes);
+                    if let Some(scope) = scopes.last_mut() {
+                        bind_pattern_locals(&arm.pattern, scope);
+                    }
+                    let body = rewrite_block_calls_for_project(
                         &arm.body,
                         current_namespace,
                         entry_namespace,
                         local_functions,
                         imported_map,
                         global_function_map,
-                    ),
+                        local_classes,
+                        imported_classes,
+                        global_class_map,
+                        local_modules,
+                        imported_modules,
+                        global_module_map,
+                        scopes,
+                    );
+                    pop_scope(scopes);
+                    ast::MatchArm {
+                        pattern: arm.pattern.clone(),
+                        body,
+                    }
                 })
                 .collect(),
         },
@@ -805,12 +1433,21 @@ fn rewrite_expr_calls_for_project(
     local_functions: &HashSet<String>,
     imported_map: &HashMap<String, String>,
     global_function_map: &HashMap<String, String>,
+    local_classes: &HashSet<String>,
+    imported_classes: &HashMap<String, String>,
+    global_class_map: &HashMap<String, String>,
+    local_modules: &HashSet<String>,
+    imported_modules: &HashMap<String, String>,
+    global_module_map: &HashMap<String, String>,
+    scopes: &mut Vec<HashSet<String>>,
 ) -> Expr {
     match expr {
         Expr::Call { callee, args } => {
             let rewritten_callee = match &callee.node {
                 Expr::Ident(name) => {
-                    if local_functions.contains(name) {
+                    if is_shadowed(name, scopes) {
+                        Expr::Ident(name.clone())
+                    } else if local_functions.contains(name) {
                         Expr::Ident(mangle_project_symbol(
                             current_namespace,
                             entry_namespace,
@@ -831,6 +1468,13 @@ fn rewrite_expr_calls_for_project(
                     local_functions,
                     imported_map,
                     global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
                 ),
             };
             Expr::Call {
@@ -846,7 +1490,14 @@ fn rewrite_expr_calls_for_project(
                                 local_functions,
                                 imported_map,
                                 global_function_map,
-                            ),
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
+                ),
                             a.span.clone(),
                         )
                     })
@@ -863,6 +1514,13 @@ fn rewrite_expr_calls_for_project(
                     local_functions,
                     imported_map,
                     global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
                 ),
                 left.span.clone(),
             )),
@@ -874,6 +1532,13 @@ fn rewrite_expr_calls_for_project(
                     local_functions,
                     imported_map,
                     global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
                 ),
                 right.span.clone(),
             )),
@@ -888,24 +1553,51 @@ fn rewrite_expr_calls_for_project(
                     local_functions,
                     imported_map,
                     global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
                 ),
                 expr.span.clone(),
             )),
         },
-        Expr::Field { object, field } => Expr::Field {
-            object: Box::new(ast::Spanned::new(
-                rewrite_expr_calls_for_project(
+        Expr::Field { object, field } => {
+            let rewritten_object = match &object.node {
+                Expr::Ident(name) if !is_shadowed(name, scopes) => {
+                    if local_modules.contains(name) {
+                        Expr::Ident(mangle_project_symbol(current_namespace, entry_namespace, name))
+                    } else if let Some(ns) = imported_modules.get(name) {
+                        Expr::Ident(mangle_project_symbol(ns, entry_namespace, name))
+                    } else if let Some(ns) = global_module_map.get(name) {
+                        Expr::Ident(mangle_project_symbol(ns, entry_namespace, name))
+                    } else {
+                        Expr::Ident(name.clone())
+                    }
+                }
+                _ => rewrite_expr_calls_for_project(
                     &object.node,
                     current_namespace,
                     entry_namespace,
                     local_functions,
                     imported_map,
                     global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
                 ),
-                object.span.clone(),
-            )),
-            field: field.clone(),
-        },
+            };
+            Expr::Field {
+                object: Box::new(ast::Spanned::new(rewritten_object, object.span.clone())),
+                field: field.clone(),
+            }
+        }
         Expr::Index { object, index } => Expr::Index {
             object: Box::new(ast::Spanned::new(
                 rewrite_expr_calls_for_project(
@@ -915,6 +1607,13 @@ fn rewrite_expr_calls_for_project(
                     local_functions,
                     imported_map,
                     global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
                 ),
                 object.span.clone(),
             )),
@@ -926,10 +1625,92 @@ fn rewrite_expr_calls_for_project(
                     local_functions,
                     imported_map,
                     global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
                 ),
                 index.span.clone(),
             )),
         },
+        Expr::Construct { ty, args } => Expr::Construct {
+            ty: if local_classes.contains(ty) {
+                mangle_project_symbol(current_namespace, entry_namespace, ty)
+            } else if let Some(ns) = imported_classes.get(ty).or_else(|| global_class_map.get(ty)) {
+                mangle_project_symbol(ns, entry_namespace, ty)
+            } else {
+                ty.clone()
+            },
+            args: args
+                .iter()
+                .map(|a| {
+                    ast::Spanned::new(
+                        rewrite_expr_calls_for_project(
+                            &a.node,
+                            current_namespace,
+                            entry_namespace,
+                            local_functions,
+                            imported_map,
+                            global_function_map,
+                            local_classes,
+                            imported_classes,
+                            global_class_map,
+                            local_modules,
+                            imported_modules,
+                            global_module_map,
+                            scopes,
+                        ),
+                        a.span.clone(),
+                    )
+                })
+                .collect(),
+        },
+        Expr::Lambda { params, body } => {
+            push_scope(scopes);
+            if let Some(scope) = scopes.last_mut() {
+                for param in params {
+                    scope.insert(param.name.clone());
+                }
+            }
+            let rewritten_body = rewrite_expr_calls_for_project(
+                &body.node,
+                current_namespace,
+                entry_namespace,
+                local_functions,
+                imported_map,
+                global_function_map,
+                local_classes,
+                imported_classes,
+                global_class_map,
+                local_modules,
+                imported_modules,
+                global_module_map,
+                scopes,
+            );
+            pop_scope(scopes);
+            Expr::Lambda {
+                params: params
+                    .iter()
+                    .map(|p| ast::Parameter {
+                        name: p.name.clone(),
+                        ty: rewrite_type_for_project(
+                            &p.ty,
+                            current_namespace,
+                            local_classes,
+                            imported_classes,
+                            global_class_map,
+                            entry_namespace,
+                        ),
+                        mutable: p.mutable,
+                        mode: p.mode,
+                    })
+                    .collect(),
+                body: Box::new(ast::Spanned::new(rewritten_body, body.span.clone())),
+            }
+        }
         _ => expr.clone(),
     }
 }
@@ -1539,3 +2320,233 @@ fn compile_and_run_test(source_path: &Path, exe_path: &Path) -> Result<(), Strin
 
     Ok(())
 }
+
+#[cfg(test)]
+mod project_rewrite_tests {
+    use super::*;
+
+    fn sp<T>(node: T) -> ast::Spanned<T> {
+        ast::Spanned::new(node, 0..0)
+    }
+
+    #[test]
+    fn keeps_shadowed_function_call_unmangled() {
+        let program = Program {
+            package: Some("app".to_string()),
+            declarations: vec![sp(Decl::Function(ast::FunctionDecl {
+                name: "main".to_string(),
+                generic_params: vec![],
+                params: vec![],
+                return_type: ast::Type::None,
+                body: vec![
+                    sp(Stmt::Let {
+                        name: "foo".to_string(),
+                        ty: ast::Type::Integer,
+                        value: sp(Expr::Literal(ast::Literal::Integer(1))),
+                        mutable: false,
+                    }),
+                    sp(Stmt::Expr(sp(Expr::Call {
+                        callee: Box::new(sp(Expr::Ident("foo".to_string()))),
+                        args: vec![],
+                    }))),
+                ],
+                is_async: false,
+                visibility: ast::Visibility::Private,
+                attributes: vec![],
+            }))],
+        };
+
+        let imports = vec![ast::ImportDecl {
+            path: "lib.foo".to_string(),
+        }];
+        let namespace_functions = HashMap::from([
+            ("app".to_string(), HashSet::from(["main".to_string()])),
+            ("lib".to_string(), HashSet::from(["foo".to_string()])),
+        ]);
+        let global_function_map = HashMap::from([("foo".to_string(), "lib".to_string())]);
+
+        let rewritten = rewrite_program_for_project(
+            &program,
+            "app",
+            "app",
+            &namespace_functions,
+            &global_function_map,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &imports,
+        );
+
+        let Decl::Function(func) = &rewritten.declarations[0].node else {
+            panic!("expected function declaration");
+        };
+        let Stmt::Expr(expr_stmt) = &func.body[1].node else {
+            panic!("expected call statement");
+        };
+        let Expr::Call { callee, .. } = &expr_stmt.node else {
+            panic!("expected call expression");
+        };
+        let Expr::Ident(name) = &callee.node else {
+            panic!("expected ident callee");
+        };
+        assert_eq!(name, "foo");
+    }
+
+    #[test]
+    fn rewrites_imported_class_construct_and_module_field() {
+        let program = Program {
+            package: Some("app".to_string()),
+            declarations: vec![sp(Decl::Function(ast::FunctionDecl {
+                name: "main".to_string(),
+                generic_params: vec![],
+                params: vec![],
+                return_type: ast::Type::None,
+                body: vec![
+                    sp(Stmt::Let {
+                        name: "w".to_string(),
+                        ty: ast::Type::Named("Widget".to_string()),
+                        value: sp(Expr::Construct {
+                            ty: "Widget".to_string(),
+                            args: vec![],
+                        }),
+                        mutable: false,
+                    }),
+                    sp(Stmt::Expr(sp(Expr::Call {
+                        callee: Box::new(sp(Expr::Field {
+                            object: Box::new(sp(Expr::Ident("Utils".to_string()))),
+                            field: "make".to_string(),
+                        })),
+                        args: vec![],
+                    }))),
+                ],
+                is_async: false,
+                visibility: ast::Visibility::Private,
+                attributes: vec![],
+            }))],
+        };
+
+        let imports = vec![
+            ast::ImportDecl {
+                path: "lib.Widget".to_string(),
+            },
+            ast::ImportDecl {
+                path: "lib.Utils".to_string(),
+            },
+        ];
+        let namespace_functions = HashMap::from([("app".to_string(), HashSet::from(["main".to_string()]))]);
+        let namespace_classes = HashMap::from([("lib".to_string(), HashSet::from(["Widget".to_string()]))]);
+        let namespace_modules = HashMap::from([("lib".to_string(), HashSet::from(["Utils".to_string()]))]);
+        let global_class_map = HashMap::from([("Widget".to_string(), "lib".to_string())]);
+        let global_module_map = HashMap::from([("Utils".to_string(), "lib".to_string())]);
+
+        let rewritten = rewrite_program_for_project(
+            &program,
+            "app",
+            "app",
+            &namespace_functions,
+            &HashMap::new(),
+            &namespace_classes,
+            &global_class_map,
+            &namespace_modules,
+            &global_module_map,
+            &imports,
+        );
+
+        let Decl::Function(func) = &rewritten.declarations[0].node else {
+            panic!("expected function declaration");
+        };
+        let Stmt::Let { ty, value, .. } = &func.body[0].node else {
+            panic!("expected let statement");
+        };
+        assert_eq!(ty, &ast::Type::Named("lib__Widget".to_string()));
+        let Expr::Construct { ty, .. } = &value.node else {
+            panic!("expected construct expression");
+        };
+        assert_eq!(ty, "lib__Widget");
+
+        let Stmt::Expr(expr_stmt) = &func.body[1].node else {
+            panic!("expected expr statement");
+        };
+        let Expr::Call { callee, .. } = &expr_stmt.node else {
+            panic!("expected call expression");
+        };
+        let Expr::Field { object, .. } = &callee.node else {
+            panic!("expected field expression");
+        };
+        let Expr::Ident(name) = &object.node else {
+            panic!("expected module ident");
+        };
+        assert_eq!(name, "lib__Utils");
+    }
+
+    #[test]
+    fn keeps_shadowed_module_ident_unmangled() {
+        let program = Program {
+            package: Some("app".to_string()),
+            declarations: vec![sp(Decl::Function(ast::FunctionDecl {
+                name: "main".to_string(),
+                generic_params: vec![],
+                params: vec![],
+                return_type: ast::Type::None,
+                body: vec![
+                    sp(Stmt::Let {
+                        name: "Utils".to_string(),
+                        ty: ast::Type::Integer,
+                        value: sp(Expr::Literal(ast::Literal::Integer(0))),
+                        mutable: false,
+                    }),
+                    sp(Stmt::Expr(sp(Expr::Call {
+                        callee: Box::new(sp(Expr::Field {
+                            object: Box::new(sp(Expr::Ident("Utils".to_string()))),
+                            field: "make".to_string(),
+                        })),
+                        args: vec![],
+                    }))),
+                ],
+                is_async: false,
+                visibility: ast::Visibility::Private,
+                attributes: vec![],
+            }))],
+        };
+
+        let imports = vec![ast::ImportDecl {
+            path: "lib.Utils".to_string(),
+        }];
+        let namespace_functions = HashMap::from([("app".to_string(), HashSet::from(["main".to_string()]))]);
+        let namespace_modules = HashMap::from([("lib".to_string(), HashSet::from(["Utils".to_string()]))]);
+        let global_module_map = HashMap::from([("Utils".to_string(), "lib".to_string())]);
+
+        let rewritten = rewrite_program_for_project(
+            &program,
+            "app",
+            "app",
+            &namespace_functions,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &namespace_modules,
+            &global_module_map,
+            &imports,
+        );
+
+        let Decl::Function(func) = &rewritten.declarations[0].node else {
+            panic!("expected function declaration");
+        };
+        let Stmt::Expr(expr_stmt) = &func.body[1].node else {
+            panic!("expected expr statement");
+        };
+        let Expr::Call { callee, .. } = &expr_stmt.node else {
+            panic!("expected call expression");
+        };
+        let Expr::Field { object, .. } = &callee.node else {
+            panic!("expected field expression");
+        };
+        let Expr::Ident(name) = &object.node else {
+            panic!("expected module ident");
+        };
+        assert_eq!(name, "Utils");
+    }
+}
+
+
