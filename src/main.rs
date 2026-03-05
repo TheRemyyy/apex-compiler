@@ -1985,10 +1985,7 @@ fn compile_ir(ir_path: &Path, output_path: &Path, opt_level: Option<&str>) -> Re
             .arg(opt_flag);
 
         if tuned {
-            cmd.arg("-march=native")
-                .arg("-mtune=native")
-                .arg("-fno-vectorize")
-                .arg("-fno-slp-vectorize");
+            cmd.arg("-march=native").arg("-mtune=native");
         }
 
         #[cfg(windows)]
