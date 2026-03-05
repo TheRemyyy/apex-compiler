@@ -31,7 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `entry` is now `src/main.apex`
   - `files` includes `src/main.apex`
 - Fixed test runner generation:
-  - generated hook/test invocations now call functions (`fn();`) instead of expression statements (`fn;`)
+  - generated hook/test invocations now call functions (`testName();`) instead of expression statements (`testName;`)
   - `main()` stripping logic no longer over-consumes source after the main function.
 - Fixed `apex test --filter` summary counters:
   - `total`/`ignored` now reflect the filtered subset, not the unfiltered discovery set.

@@ -2048,6 +2048,9 @@ fn compile_ir(
             }
         }
 
+        // Safe performance tweak: keep less frame bookkeeping in optimized binaries.
+        cmd.arg("-fomit-frame-pointer");
+
         #[cfg(windows)]
         cmd.arg("-llegacy_stdio_definitions");
 
