@@ -1605,6 +1605,10 @@ impl<'ctx> Codegen<'ctx> {
                 let current_fn = self.current_function.unwrap();
                 let cond_bb = self.context.append_basic_block(current_fn, "map_set.cond");
                 let body_bb = self.context.append_basic_block(current_fn, "map_set.body");
+                let cont_bb = self.context.append_basic_block(current_fn, "map_set.cont");
+                let update_bb = self
+                    .context
+                    .append_basic_block(current_fn, "map_set.update");
                 let append_bb = self
                     .context
                     .append_basic_block(current_fn, "map_set.append");
@@ -1669,10 +1673,6 @@ impl<'ctx> Codegen<'ctx> {
                 } else {
                     self.context.bool_type().const_int(0, false)
                 };
-                let cont_bb = self.context.append_basic_block(current_fn, "map_set.cont");
-                let update_bb = self
-                    .context
-                    .append_basic_block(current_fn, "map_set.update");
                 self.builder
                     .build_conditional_branch(eq, update_bb, cont_bb)
                     .unwrap();
