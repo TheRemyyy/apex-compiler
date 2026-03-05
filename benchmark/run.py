@@ -47,6 +47,14 @@ def ensure_tool(name: str) -> None:
         raise RuntimeError(f"Required tool not found in PATH: {name}")
 
 
+def detect_c_compiler() -> str:
+    if shutil.which("clang"):
+        return "clang"
+    if shutil.which("gcc"):
+        return "gcc"
+    raise RuntimeError("Required C compiler not found in PATH: clang or gcc")
+
+
 def parse_checksum(output: str) -> int:
     line = output.strip().splitlines()[-1].strip()
     return int(line)
@@ -84,9 +92,9 @@ def compile_apex(
         raise RuntimeError(f"Failed to compile Apex benchmark {bench}:\n{proc.stderr}")
 
 
-def compile_c(root: Path, bench: str, out: Path) -> None:
+def compile_c(root: Path, bench: str, out: Path, c_compiler: str) -> None:
     src = root / "benchmark" / "c" / f"{bench}.c"
-    cmd = ["gcc", "-O3", "-march=native", "-std=c11", str(src), "-o", str(out)]
+    cmd = [c_compiler, "-O3", "-march=native", "-std=c11", str(src), "-o", str(out)]
     proc = run_cmd(cmd, root)
     if proc.returncode != 0:
         raise RuntimeError(f"Failed to compile C benchmark {bench}:\n{proc.stderr}")
@@ -135,6 +143,7 @@ def build_markdown(result: Dict) -> str:
     lines.append(f"- Warmup runs: `{result['warmup']}`")
     lines.append(f"- Apex opt level: `{result.get('apex_opt_level', 'n/a')}`")
     lines.append(f"- Apex target: `{result.get('apex_target') or 'native/default'}`")
+    lines.append(f"- C compiler: `{result.get('c_compiler', 'n/a')}`")
     lines.append("")
 
     for bench in result["benchmarks"]:
@@ -225,9 +234,9 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     ensure_tool("python3")
-    ensure_tool("gcc")
     ensure_tool("rustc")
     ensure_tool("cargo")
+    c_compiler = detect_c_compiler()
 
     llvm_prefix = detect_llvm_prefix()
     build_env = {"LLVM_SYS_211_PREFIX": llvm_prefix}
@@ -245,6 +254,7 @@ def main() -> int:
         "warmup": args.warmup,
         "apex_opt_level": args.apex_opt_level,
         "apex_target": args.apex_target,
+        "c_compiler": c_compiler,
         "benchmarks": [],
     }
 
@@ -264,7 +274,7 @@ def main() -> int:
             args.apex_opt_level,
             args.apex_target,
         )
-        compile_c(root, spec.name, binaries["c"])
+        compile_c(root, spec.name, binaries["c"], c_compiler)
         compile_rust(root, spec.name, binaries["rust"])
 
         lang_data: Dict[str, Dict] = {}

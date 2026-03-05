@@ -7,25 +7,25 @@ fn main() {
     let size: usize = 100;
     let total = size * size;
 
-    let mut a = vec![0i32; total];
-    let mut b = vec![0i32; total];
-    let mut c = vec![0i32; total];
+    let mut a = vec![0i64; total];
+    let mut b = vec![0i64; total];
+    let mut c = vec![0i64; total];
 
     for p in 0..total {
-        a[p] = ((p as i32 * 17 + 13) % 97) - 48;
-        b[p] = ((p as i32 * 31 + 7) % 89) - 44;
+        a[p] = ((p as i64 * 17 + 13) % 97) - 48;
+        b[p] = ((p as i64 * 31 + 7) % 89) - 44;
     }
 
     for i in 0..size {
         for j in 0..size {
-            let mut sum: i64 = 0;
+            let mut sum = 0i64;
             for k in 0..size {
-                sum += i64::from(a[idx(i, k, size)]) * i64::from(b[idx(k, j, size)]);
+                sum += a[idx(i, k, size)] * b[idx(k, j, size)];
             }
-            c[idx(i, j, size)] = sum as i32;
+            c[idx(i, j, size)] = sum;
         }
     }
 
-    let checksum: i64 = c.iter().map(|&x| i64::from(x)).sum();
+    let checksum: i64 = c.iter().copied().sum();
     println!("{checksum}");
 }

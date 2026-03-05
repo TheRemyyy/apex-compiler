@@ -10,9 +10,9 @@ int main(void) {
     const int size = 100;
     const int total = size * size;
 
-    int32_t *a = (int32_t *)malloc((size_t)total * sizeof(int32_t));
-    int32_t *b = (int32_t *)malloc((size_t)total * sizeof(int32_t));
-    int32_t *c = (int32_t *)malloc((size_t)total * sizeof(int32_t));
+    int64_t *a = (int64_t *)malloc((size_t)total * sizeof(int64_t));
+    int64_t *b = (int64_t *)malloc((size_t)total * sizeof(int64_t));
+    int64_t *c = (int64_t *)malloc((size_t)total * sizeof(int64_t));
     if (!a || !b || !c) {
         free(a);
         free(b);
@@ -30,9 +30,9 @@ int main(void) {
         for (int j = 0; j < size; j++) {
             int64_t sum = 0;
             for (int k = 0; k < size; k++) {
-                sum += (int64_t)a[idx(i, k, size)] * (int64_t)b[idx(k, j, size)];
+                sum += a[idx(i, k, size)] * b[idx(k, j, size)];
             }
-            c[idx(i, j, size)] = (int32_t)sum;
+            c[idx(i, j, size)] = sum;
         }
     }
 

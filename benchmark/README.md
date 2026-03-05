@@ -31,7 +31,7 @@ benchmark/
 
 - Linux/macOS shell environment.
 - `python3`
-- `gcc` (for C)
+- `clang` or `gcc` (for C; runner prefers `clang` when available)
 - `rustc` (for Rust)
 - Apex compiler binary available at `target/release/apex-compiler`
 
