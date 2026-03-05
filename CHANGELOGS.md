@@ -8,28 +8,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### ✨ Added
 
-- Module dot syntax support in semantic/codegen paths (`Module.function(...)`) while keeping `Module__function(...)` compatibility.
-- Enum metadata and constructor support for `Enum.Variant(...)` in codegen/type checking.
-- LSP diagnostics publication on open/change (lexer/parser errors) and baseline go-to-definition symbol lookup.
+- **Module Dot Syntax**: Added semantic/codegen support for `Module.function(...)` while keeping `Module__function(...)` compatibility.
+- **Enum Variant Constructors**: Added enum metadata and constructor support for `Enum.Variant(...)` in codegen/type checking.
+- **LSP Diagnostics on Edit**: Added diagnostics publication on open/change (lexer/parser errors) and baseline go-to-definition symbol lookup.
 
-- Integration tests for multi-file project rewrite edge cases:
-  - shadowed local function identifiers are not mangled
-  - imported class constructor and module field accesses are mangled deterministically
-  - shadowed module identifiers are not mangled
+- **Integration Test Coverage**: Added tests for multi-file project rewrite edge cases:
+  - Shadowed local function identifiers are not mangled.
+  - Imported class constructor and module field accesses are mangled deterministically.
+  - Shadowed module identifiers are not mangled.
+
 ### ♻️ Changed
 
-- Match code generation expanded to support enum-style variant dispatch and payload binding flows.
-- Map codegen methods (`set`, `insert`, `get`, `contains`) moved from placeholder behavior to functional linear-lookup behavior with update semantics.
-- Project build pipeline now combines parsed AST declarations directly instead of text-merging source strings.
-- Full docs mirror maintained under `web/public/docs/` from `docs/`.
-- Project call rewriting is now scope-aware (params, locals, loop vars, lambda params, and match bindings are preserved).
-- Project documentation now documents AST combining, deterministic mangling, scope-aware behavior, and collision policy.
+- **Match Codegen**: Expanded to support enum-style variant dispatch and payload binding flows.
+- **Map Methods**: `set`, `insert`, `get`, and `contains` now use functional linear-lookup behavior with update semantics.
+- **Project Build Pipeline**: Now combines parsed AST declarations directly instead of text-merging source strings.
+- **Docs Mirroring**: Full docs mirror is maintained under `web/public/docs/` from `docs/`.
+- **Scope-Aware Rewriting**: Project call rewriting now preserves params, locals, loop vars, lambda params, and match bindings.
+- **Architecture Docs**: Project documentation now covers AST combining, deterministic mangling, scope-aware behavior, and collision policy.
 
 ### 🐛 Fixed
 
-- Namespace collision handling now fails early with clear function+namespace diagnostics.
-- Documentation consistency updates (`apex` CLI usage, module syntax notes, compiler architecture file map).
-- Class and module top-level name collisions now fail early across namespaces.
+- **Namespace Collisions**: Collision handling now fails early with clear function+namespace diagnostics.
+- **Documentation Consistency**: Updated `apex` CLI usage, module syntax notes, and compiler architecture file map.
+- **Class/Module Collisions**: Top-level class and module name collisions now fail early across namespaces.
 
 ## [1.3.2] - Range Types - 2026-02-22
 
@@ -83,10 +84,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added fuzzy string matching for error suggestions
 - Updated `import_check.rs` with suggestion engine
 
-### 📊 Stats
-- 34/34 tests passing
-- Zero clippy warnings
-
 ## [1.3.1] - Import System Fixes - 2026-02-22
 
 ### 🐛 Bug Fixes
@@ -101,10 +98,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `main.rs`: Skip redundant import check during compilation phase (already done in analysis phase)
 - All examples now properly import required modules
 - Full `cargo fmt` and `cargo clippy` compliance
-
-### 📊 Stats
-- 34/34 tests passing
-- Zero clippy warnings
 
 ## [1.3.0] - Multi-File & Namespace System - 2026-02-21
 
@@ -161,11 +154,6 @@ This release introduces a complete multi-file project system with Java-style nam
 - Must use `import namespace.function;` or `import namespace.*;`
 - Same-namespace functions work without imports (local scope)
 - Functions without package declaration are in `global` namespace
-
-### 📊 Stats
-- 32/32 tests passing
-- 3 new example projects demonstrating features
-- Zero clippy warnings
 
 ## [1.2.0] - 2026-02-21
 
