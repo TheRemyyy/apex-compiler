@@ -47,14 +47,6 @@ def ensure_tool(name: str) -> None:
         raise RuntimeError(f"Required tool not found in PATH: {name}")
 
 
-def detect_c_compiler() -> str:
-    if shutil.which("clang"):
-        return "clang"
-    if shutil.which("gcc"):
-        return "gcc"
-    raise RuntimeError("Required C compiler not found in PATH: clang or gcc")
-
-
 def parse_checksum(output: str) -> int:
     line = output.strip().splitlines()[-1].strip()
     return int(line)
@@ -234,9 +226,10 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     ensure_tool("python3")
+    ensure_tool("clang")
     ensure_tool("rustc")
     ensure_tool("cargo")
-    c_compiler = detect_c_compiler()
+    c_compiler = "clang"
 
     llvm_prefix = detect_llvm_prefix()
     build_env = {"LLVM_SYS_211_PREFIX": llvm_prefix}
