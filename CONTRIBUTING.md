@@ -10,7 +10,7 @@ See the [Installation Guide](docs/getting_started/installation.md) for prerequis
 2. **Clone your fork**:
 
    ```bash
-   git clone https://github.com/YOUR_USERNAME/apex-compiler.git
+   git clone https://github.com/theremyyy/apex-compiler.git
    cd apex-compiler
    ```
 
