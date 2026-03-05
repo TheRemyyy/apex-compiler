@@ -1,4 +1,4 @@
-name = "multi_file_demo"
+name = "multi_file_project"
 version = "1.0.0"
 entry = "src/main.apex"
 files = [
@@ -6,5 +6,5 @@ files = [
     "src/string_utils.apex",
     "src/main.apex"
 ]
-output = "multi_file_demo"
+output = "multi_file_project"
 opt_level = "3"
