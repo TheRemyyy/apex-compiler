@@ -4,7 +4,7 @@ All notable changes to the Apex Programming Language Compiler will be documented
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased] - Compiler/LSP/Docs Sync
+## [1.3.3] - Compiler/LSP/Docs Sync - 2026-03-05
 
 ### ✨ Added
 
