@@ -6,6 +6,17 @@ target/
 *.ll
 *.o
 
+# Benchmarks
+benchmark/bin/matrix_mul_apex
+benchmark/bin/matrix_mul_c
+benchmark/bin/matrix_mul_rust
+benchmark/bin/prime_count_apex
+benchmark/bin/prime_count_c
+benchmark/bin/prime_count_rust
+benchmark/bin/sum_loop_apex
+benchmark/bin/sum_loop_c
+benchmark/bin/sum_loop_rust
+
 # Web
 web/node_modules
 web/dist
