@@ -52,7 +52,7 @@ opt_level = "3"
 | `entry` | Yes | Entry point file (contains `main()`) |
 | `files` | Yes | List of all source files to compile |
 | `output` | No | Output binary name (default: project name) |
-| `opt_level` | No | Optimization level 0-3 (default: 3) |
+| `opt_level` | No | Final Clang optimization level: `0`, `1`, `2`, `3`, `s`, `z`, or `fast` (default: `3`) |
 | `target` | No | Target triple (optional) |
 
 ## Project Commands
@@ -99,6 +99,13 @@ Source Files:
   - src/utils.apex
   - src/main.apex
 ```
+
+## Optimization Behavior
+
+- Project builds (`apex build`, `apex run` in a project) use `opt_level` from `apex.toml`.
+- Valid values are: `0`, `1`, `2`, `3`, `s`, `z`, `fast`.
+- If `opt_level` is missing or invalid, Apex safely falls back to maximum-performance `-O3`.
+- Single-file mode (`apex compile file.apex`, `apex run file.apex`) defaults to maximum-performance settings.
 
 ## How It Works
 

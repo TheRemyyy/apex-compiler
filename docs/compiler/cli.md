@@ -38,6 +38,10 @@ apex <command> [arguments] [flags]
 | `--emit-llvm` | | Emits the LLVM IR (`.ll` file) instead of a binary. |
 | `--no-check` | | Skips type checking. **Warning: Unsafe.** |
 
+Optimization note:
+- In project mode, optimization level is controlled by `opt_level` in `apex.toml` (`0/1/2/3/s/z/fast`, default `3`).
+- In single-file mode (`apex compile file.apex` / `apex run file.apex`), Apex uses maximum-performance optimization by default.
+
 ## Test Command
 
 The `test` command discovers and runs functions marked with `@Test`:

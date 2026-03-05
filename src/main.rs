@@ -545,7 +545,13 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
 
     // Compile combined program AST (import/type checks already done above).
     let output_path = project_root.join(&config.output);
-    compile_program_ast(&combined_program, &entry_path, &output_path, emit_llvm)?;
+    compile_program_ast(
+        &combined_program,
+        &entry_path,
+        &output_path,
+        emit_llvm,
+        Some(&config.opt_level),
+    )?;
 
     println!(
         "{} {} -> {}",
@@ -1745,6 +1751,7 @@ fn compile_program_ast(
     source_path: &Path,
     output_path: &Path,
     emit_llvm: bool,
+    opt_level: Option<&str>,
 ) -> Result<(), String> {
     let context = Context::create();
     let module_name = source_path
@@ -1764,7 +1771,7 @@ fn compile_program_ast(
     } else {
         let ir_path = output_path.with_extension("ll");
         codegen.write_ir(&ir_path)?;
-        compile_ir(&ir_path, output_path)?;
+        compile_ir(&ir_path, output_path, opt_level)?;
         let _ = fs::remove_file(&ir_path);
     }
 
@@ -1867,7 +1874,7 @@ fn compile_file(
         }
     });
 
-    compile_source(&source, file, &output_path, emit_llvm, do_check)?;
+    compile_source(&source, file, &output_path, emit_llvm, do_check, None)?;
 
     println!("{} {}", "Output".green().bold(), output_path.display());
     Ok(())
@@ -1880,6 +1887,7 @@ fn compile_source(
     output_path: &Path,
     emit_llvm: bool,
     do_check: bool,
+    opt_level: Option<&str>,
 ) -> Result<(), String> {
     let filename = source_path
         .file_name()
@@ -1941,22 +1949,40 @@ fn compile_source(
         let ir_path = output_path.with_extension("ll");
         codegen.write_ir(&ir_path)?;
 
-        compile_ir(&ir_path, output_path)?;
+        compile_ir(&ir_path, output_path, opt_level)?;
         let _ = fs::remove_file(&ir_path);
     }
 
     Ok(())
 }
 
+fn resolve_clang_opt_flag(opt_level: Option<&str>) -> &'static str {
+    let normalized = opt_level
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    match normalized.as_str() {
+        "" | "3" => "-O3",
+        "0" => "-O0",
+        "1" => "-O1",
+        "2" => "-O2",
+        "s" => "-Os",
+        "z" => "-Oz",
+        "fast" => "-Ofast",
+        _ => "-O3",
+    }
+}
+
 /// Compile LLVM IR using clang
-fn compile_ir(ir_path: &Path, output_path: &Path) -> Result<(), String> {
+fn compile_ir(ir_path: &Path, output_path: &Path, opt_level: Option<&str>) -> Result<(), String> {
+    let opt_flag = resolve_clang_opt_flag(opt_level);
     let run_clang = |tuned: bool| {
         let mut cmd = Command::new("clang");
         cmd.arg(ir_path)
             .arg("-o")
             .arg(output_path)
             .arg("-Wno-override-module")
-            .arg("-O3");
+            .arg(opt_flag);
 
         if tuned {
             cmd.arg("-march=native")
@@ -2345,7 +2371,7 @@ fn compile_and_run_test(source_path: &Path, exe_path: &Path) -> Result<(), Strin
     let source = fs::read_to_string(source_path)
         .map_err(|e| format!("Failed to read test runner: {}", e))?;
 
-    compile_source(&source, source_path, exe_path, false, true)?;
+    compile_source(&source, source_path, exe_path, false, true, None)?;
 
     // Run the compiled test
     println!("\n{}", "Running tests...".cyan().bold());
