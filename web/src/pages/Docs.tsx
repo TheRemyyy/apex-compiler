@@ -12,6 +12,41 @@ renderer.heading = (text: string, depth: number) => {
 
 marked.use({ renderer });
 
+function rewriteInternalDocLinks(html: string, currentPath: string): string {
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = html;
+
+    const baseDocPath = `${currentPath}.md`;
+    const baseUrl = new URL(baseDocPath, window.location.origin);
+
+    const isExternalHref = (href: string) => /^(https?:|mailto:|tel:)/i.test(href);
+
+    tempDiv.querySelectorAll('a').forEach((anchor) => {
+        const rawHref = anchor.getAttribute('href');
+        if (!rawHref || rawHref.startsWith('#') || isExternalHref(rawHref)) {
+            return;
+        }
+
+        const resolved = new URL(rawHref, baseUrl);
+        let path = resolved.pathname;
+
+        if (path.endsWith('.md')) {
+            path = path.slice(0, -3);
+        }
+
+        // Normalize accidental /docs/docs/... links caused by nested relative paths.
+        if (path.startsWith('/docs/docs/')) {
+            path = path.replace('/docs/docs/', '/docs/');
+        }
+
+        const finalHref = `${path}${resolved.hash}`;
+        anchor.setAttribute('href', finalHref);
+        anchor.setAttribute('data-router-link', 'true');
+    });
+
+    return tempDiv.innerHTML;
+}
+
 // Navigation structure - URL paths (without .md)
 const NAV_ITEMS = [
     { title: 'Overview', path: '/docs/overview' },
@@ -140,7 +175,8 @@ export function Docs() {
             })
             .then(async text => {
                 const html = await marked.parse(text);
-                setContent(html);
+                const rewrittenHtml = rewriteInternalDocLinks(html, normalizedPath);
+                setContent(rewrittenHtml);
                 setLoading(false);
                 window.scrollTo(0, 0);
             })
@@ -150,6 +186,18 @@ export function Docs() {
                 setLoading(false);
             });
     }, [normalizedPath]);
+
+    const handleContentClick = (event: React.MouseEvent<HTMLElement>) => {
+        const target = event.target as HTMLElement;
+        const link = target.closest('a[data-router-link="true"]') as HTMLAnchorElement | null;
+        if (!link) return;
+
+        const href = link.getAttribute('href');
+        if (!href) return;
+
+        event.preventDefault();
+        navigate(href);
+    };
 
     return (
         <div className="flex flex-col lg:flex-row bg-[#09090b] text-gray-100 font-sans selection:bg-gray-700 selection:text-white pt-14 lg:pt-16 min-h-screen">
@@ -244,6 +292,7 @@ export function Docs() {
                         prose-strong:text-white prose-strong:font-semibold
                         prose-code:text-[13px] prose-code:bg-[#18181b] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:border prose-code:border-[#27272a]/50
                         prose-pre:bg-[#0c0c0e] prose-pre:border prose-pre:border-[#27272a] prose-pre:rounded-lg prose-pre:shadow-sm"
+                                onClick={handleContentClick}
                                 dangerouslySetInnerHTML={{ __html: content }}
                             />
 
