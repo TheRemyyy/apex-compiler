@@ -1,4 +1,4 @@
-name = "java_style_demo"
+name = "multi_file_depth_project"
 version = "1.0.0"
 entry = "src/main.apex"
 files = [
@@ -6,5 +6,5 @@ files = [
     "src/utils/strings.apex",
     "src/main.apex"
 ]
-output = "java_style_demo"
+output = "multi_file_depth_project"
 opt_level = "3"
