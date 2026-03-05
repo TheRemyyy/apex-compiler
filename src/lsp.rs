@@ -167,28 +167,45 @@ impl Backend {
             start -= 1;
         }
         let mut end = idx;
-        while end + 1 < chars.len() && (chars[end + 1].is_alphanumeric() || chars[end + 1] == '_')
-        {
+        while end + 1 < chars.len() && (chars[end + 1].is_alphanumeric() || chars[end + 1] == '_') {
             end += 1;
         }
         Some(chars[start..=end].iter().collect())
     }
 
-    fn definition_locations(&self, uri: &Url, text: &str, program: &Program, symbol: &str) -> Vec<Location> {
+    fn definition_locations(
+        &self,
+        uri: &Url,
+        text: &str,
+        program: &Program,
+        symbol: &str,
+    ) -> Vec<Location> {
         let mut out = Vec::new();
         for decl in &program.declarations {
             match &decl.node {
                 Decl::Function(func) if func.name == symbol => {
-                    out.push(Location::new(uri.clone(), self.span_to_range(text, decl.span.clone())));
+                    out.push(Location::new(
+                        uri.clone(),
+                        self.span_to_range(text, decl.span.clone()),
+                    ));
                 }
                 Decl::Class(class) if class.name == symbol => {
-                    out.push(Location::new(uri.clone(), self.span_to_range(text, decl.span.clone())));
+                    out.push(Location::new(
+                        uri.clone(),
+                        self.span_to_range(text, decl.span.clone()),
+                    ));
                 }
                 Decl::Enum(en) if en.name == symbol => {
-                    out.push(Location::new(uri.clone(), self.span_to_range(text, decl.span.clone())));
+                    out.push(Location::new(
+                        uri.clone(),
+                        self.span_to_range(text, decl.span.clone()),
+                    ));
                 }
                 Decl::Interface(inter) if inter.name == symbol => {
-                    out.push(Location::new(uri.clone(), self.span_to_range(text, decl.span.clone())));
+                    out.push(Location::new(
+                        uri.clone(),
+                        self.span_to_range(text, decl.span.clone()),
+                    ));
                 }
                 Decl::Module(module) => {
                     if module.name == symbol {

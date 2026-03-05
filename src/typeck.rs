@@ -664,7 +664,12 @@ impl TypeChecker {
                                     );
                                 } else {
                                     for (binding, ty) in bindings.iter().zip(field_tys.iter()) {
-                                        self.declare_variable(binding, ty.clone(), false, span.clone());
+                                        self.declare_variable(
+                                            binding,
+                                            ty.clone(),
+                                            false,
+                                            span.clone(),
+                                        );
                                     }
                                 }
                             } else {

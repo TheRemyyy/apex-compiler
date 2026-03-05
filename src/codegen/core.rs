@@ -1124,7 +1124,11 @@ impl<'ctx> Codegen<'ctx> {
         Ok(())
     }
 
-    fn encode_enum_payload(&self, value: BasicValueEnum<'ctx>, ty: &Type) -> Result<IntValue<'ctx>> {
+    fn encode_enum_payload(
+        &self,
+        value: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<IntValue<'ctx>> {
         let i64_type = self.context.i64_type();
         let encoded = match ty {
             Type::Integer => value.into_int_value(),
@@ -1143,11 +1147,7 @@ impl<'ctx> Codegen<'ctx> {
                 .into_int_value(),
             Type::String | Type::Named(_) | Type::Ref(_) | Type::MutRef(_) => self
                 .builder
-                .build_ptr_to_int(
-                    value.into_pointer_value(),
-                    i64_type,
-                    "ptr_to_i64",
-                )
+                .build_ptr_to_int(value.into_pointer_value(), i64_type, "ptr_to_i64")
                 .unwrap(),
             _ => {
                 return Err(CodegenError::new(
@@ -1955,12 +1955,11 @@ impl<'ctx> Codegen<'ctx> {
                 // Module dot syntax: Module.func(...) -> Module__func(...)
                 let mangled = format!("{}__{}", owner_name, field);
                 if let Some((func, _)) = self.functions.get(&mangled).cloned() {
-                    let mut compiled_args: Vec<BasicValueEnum> = vec![
-                        self.context
-                            .ptr_type(AddressSpace::default())
-                            .const_null()
-                            .into(),
-                    ];
+                    let mut compiled_args: Vec<BasicValueEnum> = vec![self
+                        .context
+                        .ptr_type(AddressSpace::default())
+                        .const_null()
+                        .into()];
                     for a in args {
                         compiled_args.push(self.compile_expr(&a.node)?);
                     }

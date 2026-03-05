@@ -454,7 +454,10 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
             "error".red().bold()
         );
         for (name, ns_a, ns_b) in class_collisions {
-            eprintln!("  â†’ '{}' is defined in both '{}' and '{}'", name, ns_a, ns_b);
+            eprintln!(
+                "  â†’ '{}' is defined in both '{}' and '{}'",
+                name, ns_a, ns_b
+            );
         }
         return Err(
             "Project contains colliding top-level class names. Use unique class names per project."
@@ -467,7 +470,10 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
             "error".red().bold()
         );
         for (name, ns_a, ns_b) in module_collisions {
-            eprintln!("  â†’ '{}' is defined in both '{}' and '{}'", name, ns_a, ns_b);
+            eprintln!(
+                "  â†’ '{}' is defined in both '{}' and '{}'",
+                name, ns_a, ns_b
+            );
         }
         return Err(
             "Project contains colliding top-level module names. Use unique module names per project."
@@ -551,6 +557,7 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rewrite_program_for_project(
     program: &Program,
     current_namespace: &str,
@@ -837,8 +844,14 @@ fn rewrite_type_for_project(
     match ty {
         ast::Type::Named(name) => {
             if local_classes.contains(name) {
-                ast::Type::Named(mangle_project_symbol(current_namespace, entry_namespace, name))
-            } else if let Some(ns) = imported_classes.get(name).or_else(|| global_class_map.get(name))
+                ast::Type::Named(mangle_project_symbol(
+                    current_namespace,
+                    entry_namespace,
+                    name,
+                ))
+            } else if let Some(ns) = imported_classes
+                .get(name)
+                .or_else(|| global_class_map.get(name))
             {
                 ast::Type::Named(mangle_project_symbol(ns, entry_namespace, name))
             } else {
@@ -848,7 +861,9 @@ fn rewrite_type_for_project(
         ast::Type::Generic(name, args) => ast::Type::Generic(
             if local_classes.contains(name) {
                 mangle_project_symbol(current_namespace, entry_namespace, name)
-            } else if let Some(ns) = imported_classes.get(name).or_else(|| global_class_map.get(name))
+            } else if let Some(ns) = imported_classes
+                .get(name)
+                .or_else(|| global_class_map.get(name))
             {
                 mangle_project_symbol(ns, entry_namespace, name)
             } else {
@@ -1038,6 +1053,7 @@ fn bind_pattern_locals(pattern: &ast::Pattern, scope: &mut HashSet<String>) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rewrite_block_calls_for_project(
     block: &ast::Block,
     current_namespace: &str,
@@ -1078,6 +1094,7 @@ fn rewrite_block_calls_for_project(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rewrite_stmt_calls_for_project(
     stmt: &Stmt,
     current_namespace: &str,
@@ -1426,6 +1443,7 @@ fn rewrite_stmt_calls_for_project(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rewrite_expr_calls_for_project(
     expr: &Expr,
     current_namespace: &str,
@@ -1490,14 +1508,14 @@ fn rewrite_expr_calls_for_project(
                                 local_functions,
                                 imported_map,
                                 global_function_map,
-                    local_classes,
-                    imported_classes,
-                    global_class_map,
-                    local_modules,
-                    imported_modules,
-                    global_module_map,
-                    scopes,
-                ),
+                                local_classes,
+                                imported_classes,
+                                global_class_map,
+                                local_modules,
+                                imported_modules,
+                                global_module_map,
+                                scopes,
+                            ),
                             a.span.clone(),
                         )
                     })
@@ -1568,7 +1586,11 @@ fn rewrite_expr_calls_for_project(
             let rewritten_object = match &object.node {
                 Expr::Ident(name) if !is_shadowed(name, scopes) => {
                     if local_modules.contains(name) {
-                        Expr::Ident(mangle_project_symbol(current_namespace, entry_namespace, name))
+                        Expr::Ident(mangle_project_symbol(
+                            current_namespace,
+                            entry_namespace,
+                            name,
+                        ))
                     } else if let Some(ns) = imported_modules.get(name) {
                         Expr::Ident(mangle_project_symbol(ns, entry_namespace, name))
                     } else if let Some(ns) = global_module_map.get(name) {
@@ -1639,7 +1661,10 @@ fn rewrite_expr_calls_for_project(
         Expr::Construct { ty, args } => Expr::Construct {
             ty: if local_classes.contains(ty) {
                 mangle_project_symbol(current_namespace, entry_namespace, ty)
-            } else if let Some(ns) = imported_classes.get(ty).or_else(|| global_class_map.get(ty)) {
+            } else if let Some(ns) = imported_classes
+                .get(ty)
+                .or_else(|| global_class_map.get(ty))
+            {
                 mangle_project_symbol(ns, entry_namespace, ty)
             } else {
                 ty.clone()
@@ -2434,9 +2459,12 @@ mod project_rewrite_tests {
                 path: "lib.Utils".to_string(),
             },
         ];
-        let namespace_functions = HashMap::from([("app".to_string(), HashSet::from(["main".to_string()]))]);
-        let namespace_classes = HashMap::from([("lib".to_string(), HashSet::from(["Widget".to_string()]))]);
-        let namespace_modules = HashMap::from([("lib".to_string(), HashSet::from(["Utils".to_string()]))]);
+        let namespace_functions =
+            HashMap::from([("app".to_string(), HashSet::from(["main".to_string()]))]);
+        let namespace_classes =
+            HashMap::from([("lib".to_string(), HashSet::from(["Widget".to_string()]))]);
+        let namespace_modules =
+            HashMap::from([("lib".to_string(), HashSet::from(["Utils".to_string()]))]);
         let global_class_map = HashMap::from([("Widget".to_string(), "lib".to_string())]);
         let global_module_map = HashMap::from([("Utils".to_string(), "lib".to_string())]);
 
@@ -2513,8 +2541,10 @@ mod project_rewrite_tests {
         let imports = vec![ast::ImportDecl {
             path: "lib.Utils".to_string(),
         }];
-        let namespace_functions = HashMap::from([("app".to_string(), HashSet::from(["main".to_string()]))]);
-        let namespace_modules = HashMap::from([("lib".to_string(), HashSet::from(["Utils".to_string()]))]);
+        let namespace_functions =
+            HashMap::from([("app".to_string(), HashSet::from(["main".to_string()]))]);
+        let namespace_modules =
+            HashMap::from([("lib".to_string(), HashSet::from(["Utils".to_string()]))]);
         let global_module_map = HashMap::from([("Utils".to_string(), "lib".to_string())]);
 
         let rewritten = rewrite_program_for_project(
@@ -2548,5 +2578,3 @@ mod project_rewrite_tests {
         assert_eq!(name, "Utils");
     }
 }
-
-

@@ -1447,7 +1447,10 @@ impl<'ctx> Codegen<'ctx> {
         };
 
         match method {
-            "length" => Ok(self.builder.build_load(i64_type, length_ptr, "len").unwrap()),
+            "length" => Ok(self
+                .builder
+                .build_load(i64_type, length_ptr, "len")
+                .unwrap()),
             "insert" => self.compile_map_method(map_name, "set", args),
             "set" => {
                 let key = self.compile_expr(&args[0].node)?;
@@ -1484,7 +1487,9 @@ impl<'ctx> Codegen<'ctx> {
                 let current_fn = self.current_function.unwrap();
                 let cond_bb = self.context.append_basic_block(current_fn, "map_set.cond");
                 let body_bb = self.context.append_basic_block(current_fn, "map_set.body");
-                let append_bb = self.context.append_basic_block(current_fn, "map_set.append");
+                let append_bb = self
+                    .context
+                    .append_basic_block(current_fn, "map_set.append");
                 let done_bb = self.context.append_basic_block(current_fn, "map_set.done");
 
                 self.builder.build_unconditional_branch(cond_bb).unwrap();
@@ -1512,7 +1517,10 @@ impl<'ctx> Codegen<'ctx> {
                         .build_gep(self.context.i8_type(), keys_ptr, &[offset], "key_slot")
                         .unwrap()
                 };
-                let existing = self.builder.build_load(key_llvm, key_slot, "existing").unwrap();
+                let existing = self
+                    .builder
+                    .build_load(key_llvm, key_slot, "existing")
+                    .unwrap();
                 let eq = if matches!(key_ty, Type::String) {
                     let strcmp = self.get_or_declare_strcmp();
                     let cmp = self
@@ -1544,7 +1552,9 @@ impl<'ctx> Codegen<'ctx> {
                     self.context.bool_type().const_int(0, false)
                 };
                 let cont_bb = self.context.append_basic_block(current_fn, "map_set.cont");
-                let update_bb = self.context.append_basic_block(current_fn, "map_set.update");
+                let update_bb = self
+                    .context
+                    .append_basic_block(current_fn, "map_set.update");
                 self.builder
                     .build_conditional_branch(eq, update_bb, cont_bb)
                     .unwrap();
@@ -1579,7 +1589,12 @@ impl<'ctx> Codegen<'ctx> {
                 self.builder.build_store(key_slot, key).unwrap();
                 let val_slot = unsafe {
                     self.builder
-                        .build_gep(self.context.i8_type(), values_ptr, &[offset], "val_slot_new")
+                        .build_gep(
+                            self.context.i8_type(),
+                            values_ptr,
+                            &[offset],
+                            "val_slot_new",
+                        )
                         .unwrap()
                 };
                 self.builder.build_store(val_slot, value).unwrap();
@@ -1624,7 +1639,9 @@ impl<'ctx> Codegen<'ctx> {
                 self.builder
                     .build_store(idx_ptr, i64_type.const_int(0, false))
                     .unwrap();
-                self.builder.build_store(res_ptr, val_llvm.const_zero()).unwrap();
+                self.builder
+                    .build_store(res_ptr, val_llvm.const_zero())
+                    .unwrap();
 
                 let current_fn = self.current_function.unwrap();
                 let cond_bb = self.context.append_basic_block(current_fn, "map_get.cond");
@@ -1656,7 +1673,10 @@ impl<'ctx> Codegen<'ctx> {
                         .build_gep(self.context.i8_type(), keys_ptr, &[offset], "key_slot")
                         .unwrap()
                 };
-                let existing = self.builder.build_load(key_llvm, key_slot, "existing").unwrap();
+                let existing = self
+                    .builder
+                    .build_load(key_llvm, key_slot, "existing")
+                    .unwrap();
                 let eq = if matches!(key_ty, Type::String) {
                     let strcmp = self.get_or_declare_strcmp();
                     let cmp = self
@@ -1699,7 +1719,10 @@ impl<'ctx> Codegen<'ctx> {
                         .build_gep(self.context.i8_type(), values_ptr, &[offset], "val_slot")
                         .unwrap()
                 };
-                let found = self.builder.build_load(val_llvm, val_slot, "found").unwrap();
+                let found = self
+                    .builder
+                    .build_load(val_llvm, val_slot, "found")
+                    .unwrap();
                 self.builder.build_store(res_ptr, found).unwrap();
                 self.builder.build_unconditional_branch(done_bb).unwrap();
 
@@ -1712,7 +1735,10 @@ impl<'ctx> Codegen<'ctx> {
                 self.builder.build_unconditional_branch(cond_bb).unwrap();
 
                 self.builder.position_at_end(done_bb);
-                Ok(self.builder.build_load(val_llvm, res_ptr, "map_get_res").unwrap())
+                Ok(self
+                    .builder
+                    .build_load(val_llvm, res_ptr, "map_get_res")
+                    .unwrap())
             }
             "contains" => {
                 let key = self.compile_expr(&args[0].node)?;
@@ -1744,9 +1770,15 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
 
                 let current_fn = self.current_function.unwrap();
-                let cond_bb = self.context.append_basic_block(current_fn, "map_contains.cond");
-                let body_bb = self.context.append_basic_block(current_fn, "map_contains.body");
-                let done_bb = self.context.append_basic_block(current_fn, "map_contains.done");
+                let cond_bb = self
+                    .context
+                    .append_basic_block(current_fn, "map_contains.cond");
+                let body_bb = self
+                    .context
+                    .append_basic_block(current_fn, "map_contains.body");
+                let done_bb = self
+                    .context
+                    .append_basic_block(current_fn, "map_contains.done");
                 self.builder.build_unconditional_branch(cond_bb).unwrap();
 
                 self.builder.position_at_end(cond_bb);
@@ -1773,7 +1805,10 @@ impl<'ctx> Codegen<'ctx> {
                         .build_gep(self.context.i8_type(), keys_ptr, &[offset], "key_slot")
                         .unwrap()
                 };
-                let existing = self.builder.build_load(key_llvm, key_slot, "existing").unwrap();
+                let existing = self
+                    .builder
+                    .build_load(key_llvm, key_slot, "existing")
+                    .unwrap();
                 let eq = if matches!(key_ty, Type::String) {
                     let strcmp = self.get_or_declare_strcmp();
                     let cmp = self
@@ -1804,8 +1839,12 @@ impl<'ctx> Codegen<'ctx> {
                 } else {
                     self.context.bool_type().const_int(0, false)
                 };
-                let next_bb = self.context.append_basic_block(current_fn, "map_contains.next");
-                let found_bb = self.context.append_basic_block(current_fn, "map_contains.found");
+                let next_bb = self
+                    .context
+                    .append_basic_block(current_fn, "map_contains.next");
+                let found_bb = self
+                    .context
+                    .append_basic_block(current_fn, "map_contains.found");
                 self.builder
                     .build_conditional_branch(eq, found_bb, next_bb)
                     .unwrap();

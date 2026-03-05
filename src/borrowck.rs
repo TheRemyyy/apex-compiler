@@ -167,8 +167,10 @@ impl BorrowChecker {
                                 func.params.iter().map(|p| p.mode).collect(),
                             );
                             // Keep unprefixed for backward compatibility.
-                            self.functions
-                                .insert(func.name.clone(), func.params.iter().map(|p| p.mode).collect());
+                            self.functions.insert(
+                                func.name.clone(),
+                                func.params.iter().map(|p| p.mode).collect(),
+                            );
                         }
                         _ => self.collect_sig(&inner.node),
                     }
