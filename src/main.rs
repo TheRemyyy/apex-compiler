@@ -1950,32 +1950,53 @@ fn compile_source(
 
 /// Compile LLVM IR using clang
 fn compile_ir(ir_path: &Path, output_path: &Path) -> Result<(), String> {
-    let mut cmd = Command::new("clang");
-    cmd.arg(ir_path)
-        .arg("-o")
-        .arg(output_path)
-        .arg("-Wno-override-module")
-        .arg("-O3");
+    let run_clang = |tuned: bool| {
+        let mut cmd = Command::new("clang");
+        cmd.arg(ir_path)
+            .arg("-o")
+            .arg(output_path)
+            .arg("-Wno-override-module")
+            .arg("-O3");
 
-    #[cfg(windows)]
-    cmd.arg("-llegacy_stdio_definitions");
+        if tuned {
+            cmd.arg("-march=native")
+                .arg("-mtune=native")
+                .arg("-fno-vectorize")
+                .arg("-fno-slp-vectorize");
+        }
 
-    #[cfg(not(windows))]
-    cmd.arg("-lm");
+        #[cfg(windows)]
+        cmd.arg("-llegacy_stdio_definitions");
 
-    let result = cmd.output();
+        #[cfg(not(windows))]
+        cmd.arg("-lm");
 
-    match result {
-        Ok(output) => {
-            if output.status.success() {
-                Ok(())
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                Err(format!(
-                    "{}: Clang failed: {}",
-                    "error".red().bold(),
-                    stderr
-                ))
+        cmd.output()
+    };
+
+    // Prefer native-tuned binaries for maximum local performance, but keep a safe fallback.
+    let tuned = run_clang(true);
+    match tuned {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(_) => {
+            let fallback = run_clang(false);
+            match fallback {
+                Ok(output) => {
+                    if output.status.success() {
+                        Ok(())
+                    } else {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        Err(format!(
+                            "{}: Clang failed: {}",
+                            "error".red().bold(),
+                            stderr
+                        ))
+                    }
+                }
+                Err(_) => Err(format!(
+                    "{}: Clang not found. Install clang to compile.",
+                    "error".red().bold()
+                )),
             }
         }
         Err(_) => Err(format!(

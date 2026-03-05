@@ -25,6 +25,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Docs Mirroring**: Full docs mirror is maintained under `web/public/docs/` from `docs/`.
 - **Scope-Aware Rewriting**: Project call rewriting now preserves params, locals, loop vars, lambda params, and match bindings.
 - **Architecture Docs**: Project documentation now covers AST combining, deterministic mangling, scope-aware behavior, and collision policy.
+- **Native Clang Tuning**: Final IR compilation now prefers `-march=native -mtune=native` with a safe fallback to baseline `-O3` if tuned flags are unavailable.
+- **Vectorization Strategy**: Disabled Clang loop/SLP vectorizers for generated IR (`-fno-vectorize -fno-slp-vectorize`) to avoid architecture-specific regressions and improve real-world benchmark consistency.
 
 ### 🐛 Fixed
 
