@@ -69,3 +69,66 @@ Lambdas can capture variables from their enclosing environment.
 offset: Integer = 10;
 adder: (Integer) -> Integer = (x: Integer) => x + offset;
 ```
+
+## Extern Functions (C Interop)
+
+Use `extern function` to declare C ABI symbols and call native libraries.
+
+```apex
+extern function puts(msg: String): Integer;
+
+function main(): None {
+    puts("hello from C");
+    return None;
+}
+```
+
+Reference example: `examples/27_extern_c_interop.apex`.
+
+Variadic C signatures are supported:
+
+```apex
+extern function printf(fmt: String, ...): Integer;
+```
+
+Reference example: `examples/30_extern_variadic_printf.apex`.
+
+You can also specify ABI and link name explicitly:
+
+```apex
+extern(c, "puts") function c_puts(msg: String): Integer;
+extern(system, "printf") function sys_printf(fmt: String, ...): Integer;
+```
+
+Reference example: `examples/31_extern_abi_link_name.apex`.
+
+Current extern FFI-safe signature types are:
+- `Integer`
+- `Float`
+- `Boolean`
+- `Char`
+- `String` (C string pointer interop)
+- `None`
+
+For robust integrations, prefer a safe Apex wrapper around raw extern calls.
+Reference example: `examples/32_extern_safe_wrapper.apex`.
+
+## Effect Attributes
+
+You can annotate functions with effect attributes:
+
+- `@Pure`
+- `@Io`
+- `@Net`
+- `@Alloc`
+- `@Unsafe`
+- `@Thread`
+- `@Any`
+
+`@Pure` forbids effectful calls. If a function declares effect attributes, calls requiring
+missing effects produce type-check errors.
+
+For functions without explicit effect attributes, Apex infers required effects from the call graph.
+Use `@Any` to explicitly opt into permissive mode for integration-heavy code.
+
+Reference example: `examples/26_effect_system.apex`.

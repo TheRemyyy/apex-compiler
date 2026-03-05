@@ -2406,6 +2406,9 @@ mod project_rewrite_tests {
                 name: "main".to_string(),
                 generic_params: vec![],
                 params: vec![],
+                is_variadic: false,
+                extern_abi: None,
+                extern_link_name: None,
                 return_type: ast::Type::None,
                 body: vec![
                     sp(Stmt::Let {
@@ -2420,6 +2423,7 @@ mod project_rewrite_tests {
                     }))),
                 ],
                 is_async: false,
+                is_extern: false,
                 visibility: ast::Visibility::Private,
                 attributes: vec![],
             }))],
@@ -2470,6 +2474,9 @@ mod project_rewrite_tests {
                 name: "main".to_string(),
                 generic_params: vec![],
                 params: vec![],
+                is_variadic: false,
+                extern_abi: None,
+                extern_link_name: None,
                 return_type: ast::Type::None,
                 body: vec![
                     sp(Stmt::Let {
@@ -2490,6 +2497,7 @@ mod project_rewrite_tests {
                     }))),
                 ],
                 is_async: false,
+                is_extern: false,
                 visibility: ast::Visibility::Private,
                 attributes: vec![],
             }))],
@@ -2560,6 +2568,9 @@ mod project_rewrite_tests {
                 name: "main".to_string(),
                 generic_params: vec![],
                 params: vec![],
+                is_variadic: false,
+                extern_abi: None,
+                extern_link_name: None,
                 return_type: ast::Type::None,
                 body: vec![
                     sp(Stmt::Let {
@@ -2577,6 +2588,7 @@ mod project_rewrite_tests {
                     }))),
                 ],
                 is_async: false,
+                is_extern: false,
                 visibility: ast::Visibility::Private,
                 attributes: vec![],
             }))],

@@ -13,7 +13,7 @@ use inkwell::values::{
     BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue, ValueKind,
 };
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 
@@ -92,6 +92,7 @@ pub struct Codegen<'ctx> {
     pub lambda_counter: u32,
     async_counter: u32,
     async_functions: HashMap<String, AsyncFunctionPlan<'ctx>>,
+    extern_functions: HashSet<String>,
 }
 
 impl<'ctx> Codegen<'ctx> {
@@ -115,6 +116,7 @@ impl<'ctx> Codegen<'ctx> {
             lambda_counter: 0,
             async_counter: 0,
             async_functions: HashMap::new(),
+            extern_functions: HashSet::new(),
         }
     }
 
@@ -644,6 +646,10 @@ impl<'ctx> Codegen<'ctx> {
     // === Functions ===
 
     pub fn declare_function(&mut self, func: &FunctionDecl) -> Result<FunctionValue<'ctx>> {
+        if func.is_extern {
+            return self.declare_extern_function(func);
+        }
+
         if func.is_async {
             if func.name == "main" {
                 return Err(CodegenError::new(
@@ -715,6 +721,41 @@ impl<'ctx> Codegen<'ctx> {
         Ok(function)
     }
 
+    fn declare_extern_function(&mut self, func: &FunctionDecl) -> Result<FunctionValue<'ctx>> {
+        let param_types: Vec<BasicMetadataTypeEnum> = func
+            .params
+            .iter()
+            .map(|p| self.llvm_type(&p.ty).into())
+            .collect();
+
+        let fn_type = match &func.return_type {
+            Type::None => self.context.void_type().fn_type(&param_types, func.is_variadic),
+            ty => self.llvm_type(ty).fn_type(&param_types, func.is_variadic),
+        };
+
+        let symbol_name = func.extern_link_name.as_deref().unwrap_or(&func.name);
+        let function = self.module.add_function(symbol_name, fn_type, None);
+        match func.extern_abi.as_deref().unwrap_or("c") {
+            // On current targets, C/system are both emitted as default C calling convention.
+            "c" | "system" => {
+                function.set_call_conventions(0);
+            }
+            _ => {}
+        }
+        self.extern_functions.insert(func.name.clone());
+        self.functions.insert(
+            func.name.clone(),
+            (
+                function,
+                Type::Function(
+                    func.params.iter().map(|p| p.ty.clone()).collect(),
+                    Box::new(func.return_type.clone()),
+                ),
+            ),
+        );
+        Ok(function)
+    }
+
     fn task_struct_type(&self) -> StructType<'ctx> {
         let ptr = self.context.ptr_type(AddressSpace::default());
         self.context.struct_type(
@@ -722,6 +763,16 @@ impl<'ctx> Codegen<'ctx> {
                 self.context.i64_type().into(),
                 ptr.into(),
                 self.context.bool_type().into(),
+            ],
+            false,
+        )
+    }
+
+    fn timespec_struct_type(&self) -> StructType<'ctx> {
+        self.context.struct_type(
+            &[
+                self.context.i64_type().into(),
+                self.context.i64_type().into(),
             ],
             false,
         )
@@ -1234,6 +1285,10 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     pub fn compile_function(&mut self, func: &FunctionDecl) -> Result<()> {
+        if func.is_extern {
+            return Ok(());
+        }
+
         if func.is_async {
             return self.compile_async_function(func);
         }
@@ -2250,6 +2305,12 @@ impl<'ctx> Codegen<'ctx> {
                         .unwrap();
                     Ok(val)
                 } else if let Some((func, ty)) = self.functions.get(name) {
+                    if self.extern_functions.contains(name) {
+                        return Err(CodegenError::new(format!(
+                            "extern function '{}' cannot be used as a first-class value yet",
+                            name
+                        )));
+                    }
                     // Create a closure struct { fn_ptr, null_env }
                     let struct_ty = self.llvm_type(ty).into_struct_type();
                     let mut closure = struct_ty.get_undef();
@@ -2760,6 +2821,11 @@ impl<'ctx> Codegen<'ctx> {
         }
 
         // Regular function call
+        let callee_name = if let Expr::Ident(name) = callee {
+            Some(name.clone())
+        } else {
+            None
+        };
         let func = match callee {
             Expr::Ident(name) => {
                 // First check if it's a function pointer/local variable
@@ -2837,8 +2903,13 @@ impl<'ctx> Codegen<'ctx> {
         };
 
         let mut compiled_args: Vec<BasicValueEnum> = Vec::new();
-        // Add null env_ptr for direct calls (except main)
-        if func.get_name().to_str().unwrap() != "main" {
+        let func_name = func.get_name().to_str().unwrap_or_default().to_string();
+        let is_extern_call = callee_name
+            .as_deref()
+            .map(|n| self.extern_functions.contains(n))
+            .unwrap_or(false);
+        // Add null env_ptr for direct Apex calls (except main / extern C ABI)
+        if func_name != "main" && !is_extern_call {
             compiled_args.push(
                 self.context
                     .ptr_type(AddressSpace::default())
@@ -2915,6 +2986,9 @@ impl<'ctx> Codegen<'ctx> {
                         return self.compile_range_method(name, method, args);
                     }
                 }
+                Type::Task(inner) => {
+                    return self.compile_task_method(object, inner, method, args);
+                }
                 _ => {}
             }
         }
@@ -2963,6 +3037,477 @@ impl<'ctx> Codegen<'ctx> {
         match call.try_as_basic_value() {
             ValueKind::Basic(val) => Ok(val),
             ValueKind::Instruction(_) => Ok(self.context.i8_type().const_int(0, false).into()),
+        }
+    }
+
+    fn compile_task_method(
+        &mut self,
+        object: &Expr,
+        inner: &Type,
+        method: &str,
+        args: &[Spanned<Expr>],
+    ) -> Result<BasicValueEnum<'ctx>> {
+        let expected_args = match method {
+            "await_timeout" => 1,
+            "is_done" | "cancel" => 0,
+            _ => 0,
+        };
+        if args.len() != expected_args {
+            return Err(CodegenError::new(format!(
+                "Task.{}() expects {} argument(s), got {}",
+                method,
+                expected_args,
+                args.len()
+            )));
+        }
+
+        let task_ty = self.task_struct_type();
+        let task_raw = self.compile_expr(object)?;
+        if !task_raw.is_pointer_value() {
+            return Err(CodegenError::new("Task method call on non-task value"));
+        }
+        let task_ptr = self
+            .builder
+            .build_pointer_cast(
+                task_raw.into_pointer_value(),
+                self.context.ptr_type(AddressSpace::default()),
+                "task_method_ptr",
+            )
+            .unwrap();
+
+        let i32_ty = self.context.i32_type();
+        let zero = i32_ty.const_int(0, false);
+        let thread_idx = i32_ty.const_int(0, false);
+        let result_idx = i32_ty.const_int(1, false);
+        let done_idx = i32_ty.const_int(2, false);
+
+        match method {
+            "is_done" => {
+                let done_field = unsafe {
+                    self.builder
+                        .build_gep(task_ty, task_ptr, &[zero, done_idx], "task_done_ptr")
+                        .unwrap()
+                };
+                Ok(self
+                    .builder
+                    .build_load(self.context.bool_type(), done_field, "task_done")
+                    .unwrap())
+            }
+            "cancel" => {
+                let thread_field = unsafe {
+                    self.builder
+                        .build_gep(task_ty, task_ptr, &[zero, thread_idx], "task_thread_ptr")
+                        .unwrap()
+                };
+                let thread_id = self
+                    .builder
+                    .build_load(self.context.i64_type(), thread_field, "task_thread_id")
+                    .unwrap();
+
+                let pthread_cancel = self.get_or_declare_pthread_cancel();
+                self.builder
+                    .build_call(pthread_cancel, &[thread_id.into()], "task_cancel")
+                    .unwrap();
+
+                let done_field = unsafe {
+                    self.builder
+                        .build_gep(task_ty, task_ptr, &[zero, done_idx], "task_done_ptr")
+                        .unwrap()
+                };
+                self.builder
+                    .build_store(done_field, self.context.bool_type().const_int(1, false))
+                    .unwrap();
+
+                // Store default zero value so await after cancel doesn't dereference null.
+                let result_field = unsafe {
+                    self.builder
+                        .build_gep(task_ty, task_ptr, &[zero, result_idx], "task_result_ptr")
+                        .unwrap()
+                };
+                let malloc = self.get_or_declare_malloc();
+                let result_ptr = if matches!(inner, Type::None) {
+                    let raw = self
+                        .builder
+                        .build_call(
+                            malloc,
+                            &[self.context.i64_type().const_int(1, false).into()],
+                            "task_cancel_none_alloc",
+                        )
+                        .unwrap()
+                        .try_as_basic_value();
+                    let ptr = match raw {
+                        ValueKind::Basic(BasicValueEnum::PointerValue(p)) => p,
+                        _ => {
+                            return Err(CodegenError::new(
+                                "malloc failed while creating canceled task value",
+                            ));
+                        }
+                    };
+                    let typed = self
+                        .builder
+                        .build_pointer_cast(
+                            ptr,
+                            self.context.ptr_type(AddressSpace::default()),
+                            "task_cancel_none_ptr",
+                        )
+                        .unwrap();
+                    self.builder
+                        .build_store(typed, self.context.i8_type().const_int(0, false))
+                        .unwrap();
+                    ptr
+                } else {
+                    let llvm_inner = self.llvm_type(inner);
+                    let size = llvm_inner
+                        .size_of()
+                        .ok_or_else(|| CodegenError::new("failed to size Task inner type"))?;
+                    let raw = self
+                        .builder
+                        .build_call(malloc, &[size.into()], "task_cancel_alloc")
+                        .unwrap()
+                        .try_as_basic_value();
+                    let ptr = match raw {
+                        ValueKind::Basic(BasicValueEnum::PointerValue(p)) => p,
+                        _ => {
+                            return Err(CodegenError::new(
+                                "malloc failed while creating canceled task value",
+                            ));
+                        }
+                    };
+                    let typed_ptr = self
+                        .builder
+                        .build_pointer_cast(
+                            ptr,
+                            self.context.ptr_type(AddressSpace::default()),
+                            "task_cancel_result_ptr",
+                        )
+                        .unwrap();
+
+                    let zero_value: BasicValueEnum = match llvm_inner {
+                        BasicTypeEnum::IntType(t) => t.const_zero().into(),
+                        BasicTypeEnum::FloatType(t) => t.const_float(0.0).into(),
+                        BasicTypeEnum::PointerType(t) => t.const_null().into(),
+                        BasicTypeEnum::StructType(t) => t.const_zero().into(),
+                        _ => self.context.i8_type().const_int(0, false).into(),
+                    };
+                    self.builder.build_store(typed_ptr, zero_value).unwrap();
+                    ptr
+                };
+                self.builder.build_store(result_field, result_ptr).unwrap();
+                Ok(self.context.i8_type().const_int(0, false).into())
+            }
+            "await_timeout" => {
+                let ms = self.compile_expr(&args[0].node)?;
+                if !ms.is_int_value() {
+                    return Err(CodegenError::new(
+                        "Task.await_timeout(ms) requires Integer milliseconds",
+                    ));
+                }
+                let ms_i64 = self
+                    .builder
+                    .build_int_cast(ms.into_int_value(), self.context.i64_type(), "timeout_ms")
+                    .unwrap();
+
+                let current_fn = self
+                    .current_function
+                    .ok_or_else(|| CodegenError::new("Task.await_timeout used outside function"))?;
+
+                let done_field = unsafe {
+                    self.builder
+                        .build_gep(task_ty, task_ptr, &[zero, done_idx], "task_done_ptr")
+                        .unwrap()
+                };
+                let done_val = self
+                    .builder
+                    .build_load(self.context.bool_type(), done_field, "task_done")
+                    .unwrap()
+                    .into_int_value();
+                let result_field = unsafe {
+                    self.builder
+                        .build_gep(task_ty, task_ptr, &[zero, result_idx], "task_result_field")
+                        .unwrap()
+                };
+
+                let done_bb = self
+                    .context
+                    .append_basic_block(current_fn, "task_timeout_done");
+                let wait_bb = self
+                    .context
+                    .append_basic_block(current_fn, "task_timeout_wait");
+                let succ_bb = self
+                    .context
+                    .append_basic_block(current_fn, "task_timeout_succ");
+                let timeout_bb = self
+                    .context
+                    .append_basic_block(current_fn, "task_timeout_fail");
+                let merge_bb = self
+                    .context
+                    .append_basic_block(current_fn, "task_timeout_merge");
+
+                self.builder
+                    .build_conditional_branch(done_val, done_bb, wait_bb)
+                    .unwrap();
+
+                // done -> Some(result)
+                self.builder.position_at_end(done_bb);
+                let existing_ptr = self
+                    .builder
+                    .build_load(
+                        self.context.ptr_type(AddressSpace::default()),
+                        result_field,
+                        "task_existing_result",
+                    )
+                    .unwrap()
+                    .into_pointer_value();
+                let done_value: BasicValueEnum = if matches!(inner, Type::None) {
+                    self.context.i8_type().const_int(0, false).into()
+                } else {
+                    let inner_llvm = self.llvm_type(inner);
+                    let typed_ptr = self
+                        .builder
+                        .build_pointer_cast(
+                            existing_ptr,
+                            self.context.ptr_type(AddressSpace::default()),
+                            "task_done_typed_ptr",
+                        )
+                        .unwrap();
+                    self.builder
+                        .build_load(inner_llvm, typed_ptr, "task_done_value")
+                        .unwrap()
+                };
+                let done_some = self.create_option_some(done_value)?;
+                self.builder.build_unconditional_branch(merge_bb).unwrap();
+
+                // wait -> timed join
+                self.builder.position_at_end(wait_bb);
+                let thread_field = unsafe {
+                    self.builder
+                        .build_gep(task_ty, task_ptr, &[zero, thread_idx], "task_thread_ptr")
+                        .unwrap()
+                };
+                let thread_id = self
+                    .builder
+                    .build_load(self.context.i64_type(), thread_field, "task_thread_id")
+                    .unwrap();
+
+                let join_result_ptr = self
+                    .builder
+                    .build_alloca(
+                        self.context.ptr_type(AddressSpace::default()),
+                        "timed_join_out",
+                    )
+                    .unwrap();
+                self.builder
+                    .build_store(
+                        join_result_ptr,
+                        self.context.ptr_type(AddressSpace::default()).const_null(),
+                    )
+                    .unwrap();
+
+                let timespec_ty = self.timespec_struct_type();
+                let ts = self.builder.build_alloca(timespec_ty, "deadline").unwrap();
+                let clock_gettime = self.get_or_declare_clock_gettime();
+                let _clock = self
+                    .builder
+                    .build_call(
+                        clock_gettime,
+                        &[
+                            self.context.i32_type().const_int(0, false).into(),
+                            ts.into(),
+                        ],
+                        "clock_now",
+                    )
+                    .unwrap();
+
+                let sec_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            timespec_ty,
+                            ts,
+                            &[zero, i32_ty.const_int(0, false)],
+                            "deadline_sec_ptr",
+                        )
+                        .unwrap()
+                };
+                let nsec_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            timespec_ty,
+                            ts,
+                            &[zero, i32_ty.const_int(1, false)],
+                            "deadline_nsec_ptr",
+                        )
+                        .unwrap()
+                };
+                let sec_now = self
+                    .builder
+                    .build_load(self.context.i64_type(), sec_ptr, "sec_now")
+                    .unwrap()
+                    .into_int_value();
+                let nsec_now = self
+                    .builder
+                    .build_load(self.context.i64_type(), nsec_ptr, "nsec_now")
+                    .unwrap()
+                    .into_int_value();
+
+                let thousand = self.context.i64_type().const_int(1000, false);
+                let million = self.context.i64_type().const_int(1_000_000, false);
+                let billion = self.context.i64_type().const_int(1_000_000_000, false);
+                let ms_sec = self
+                    .builder
+                    .build_int_unsigned_div(ms_i64, thousand, "ms_sec")
+                    .unwrap();
+                let ms_rem = self
+                    .builder
+                    .build_int_unsigned_rem(ms_i64, thousand, "ms_rem")
+                    .unwrap();
+                let sec_add = self
+                    .builder
+                    .build_int_add(sec_now, ms_sec, "deadline_sec_base")
+                    .unwrap();
+                let ns_add = self
+                    .builder
+                    .build_int_add(
+                        nsec_now,
+                        self.builder
+                            .build_int_mul(ms_rem, million, "ms_to_ns")
+                            .unwrap(),
+                        "deadline_ns_add",
+                    )
+                    .unwrap();
+                let carry = self
+                    .builder
+                    .build_int_compare(IntPredicate::UGE, ns_add, billion, "deadline_ns_carry")
+                    .unwrap();
+                let ns_norm = self
+                    .builder
+                    .build_select(
+                        carry,
+                        self.builder
+                            .build_int_sub(ns_add, billion, "deadline_ns_sub")
+                            .unwrap(),
+                        ns_add,
+                        "deadline_ns_norm",
+                    )
+                    .unwrap()
+                    .into_int_value();
+                let sec_norm = self
+                    .builder
+                    .build_int_add(
+                        sec_add,
+                        self.builder
+                            .build_int_z_extend(carry, self.context.i64_type(), "carry_i64")
+                            .unwrap(),
+                        "deadline_sec_norm",
+                    )
+                    .unwrap();
+                self.builder.build_store(sec_ptr, sec_norm).unwrap();
+                self.builder.build_store(nsec_ptr, ns_norm).unwrap();
+
+                let timed_join = self.get_or_declare_pthread_timedjoin_np();
+                let join_status = match self
+                    .builder
+                    .build_call(
+                        timed_join,
+                        &[thread_id.into(), join_result_ptr.into(), ts.into()],
+                        "timed_join",
+                    )
+                    .unwrap()
+                    .try_as_basic_value()
+                {
+                    ValueKind::Basic(v) => v.into_int_value(),
+                    ValueKind::Instruction(_) => {
+                        return Err(CodegenError::new(
+                            "pthread_timedjoin_np should return status",
+                        ));
+                    }
+                };
+
+                let join_ok = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        join_status,
+                        self.context.i32_type().const_int(0, false),
+                        "join_ok",
+                    )
+                    .unwrap();
+                self.builder
+                    .build_conditional_branch(join_ok, succ_bb, timeout_bb)
+                    .unwrap();
+
+                // success -> store result + done, return Some(value)
+                self.builder.position_at_end(succ_bb);
+                let joined_ptr = self
+                    .builder
+                    .build_load(
+                        self.context.ptr_type(AddressSpace::default()),
+                        join_result_ptr,
+                        "joined_result",
+                    )
+                    .unwrap()
+                    .into_pointer_value();
+                self.builder.build_store(result_field, joined_ptr).unwrap();
+                self.builder
+                    .build_store(done_field, self.context.bool_type().const_int(1, false))
+                    .unwrap();
+                let succ_value: BasicValueEnum = if matches!(inner, Type::None) {
+                    self.context.i8_type().const_int(0, false).into()
+                } else {
+                    let inner_llvm = self.llvm_type(inner);
+                    let typed_ptr = self
+                        .builder
+                        .build_pointer_cast(
+                            joined_ptr,
+                            self.context.ptr_type(AddressSpace::default()),
+                            "joined_typed_ptr",
+                        )
+                        .unwrap();
+                    self.builder
+                        .build_load(inner_llvm, typed_ptr, "joined_value")
+                        .unwrap()
+                };
+                let succ_some = self.create_option_some(succ_value)?;
+                self.builder.build_unconditional_branch(merge_bb).unwrap();
+
+                // timeout -> None
+                self.builder.position_at_end(timeout_bb);
+                let option_ty = self.context.struct_type(
+                    &[self.context.i8_type().into(), self.llvm_type(inner)],
+                    false,
+                );
+                let timeout_none: BasicValueEnum<'ctx> = option_ty
+                    .const_named_struct(&[
+                        self.context.i8_type().const_int(0, false).into(),
+                        match self.llvm_type(inner) {
+                            BasicTypeEnum::IntType(t) => t.const_zero().into(),
+                            BasicTypeEnum::FloatType(t) => t.const_float(0.0).into(),
+                            BasicTypeEnum::PointerType(t) => t.const_null().into(),
+                            BasicTypeEnum::StructType(t) => t.const_zero().into(),
+                            _ => self.context.i8_type().const_int(0, false).into(),
+                        },
+                    ])
+                    .into();
+                self.builder.build_unconditional_branch(merge_bb).unwrap();
+
+                self.builder.position_at_end(merge_bb);
+                let phi = self
+                    .builder
+                    .build_phi(
+                        self.llvm_type(&Type::Option(Box::new(inner.clone()))),
+                        "timeout_phi",
+                    )
+                    .unwrap();
+                phi.add_incoming(&[
+                    (&done_some, done_bb),
+                    (&succ_some, succ_bb),
+                    (&timeout_none, timeout_bb),
+                ]);
+                Ok(phi.as_basic_value())
+            }
+            _ => Err(CodegenError::new(format!(
+                "Unknown Task method: {}",
+                method
+            ))),
         }
     }
 

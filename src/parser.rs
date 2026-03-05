@@ -163,6 +163,7 @@ impl<'src> Parser<'src> {
             Some(Token::Function) | Some(Token::Async) => {
                 Decl::Function(self.parse_function(attributes)?)
             }
+            Some(Token::Extern) => Decl::Function(self.parse_extern_function(attributes)?),
             Some(Token::Class) => Decl::Class(self.parse_class(attributes)?),
             Some(Token::Enum) => Decl::Enum(self.parse_enum(attributes)?),
             Some(Token::Interface) => Decl::Interface(self.parse_interface(attributes)?),
@@ -213,6 +214,13 @@ impl<'src> Parser<'src> {
                 "After" => Attribute::After,
                 "BeforeAll" => Attribute::BeforeAll,
                 "AfterAll" => Attribute::AfterAll,
+                "Pure" => Attribute::Pure,
+                "Io" => Attribute::EffectIo,
+                "Net" => Attribute::EffectNet,
+                "Alloc" => Attribute::EffectAlloc,
+                "Unsafe" => Attribute::EffectUnsafe,
+                "Thread" => Attribute::EffectThread,
+                "Any" => Attribute::EffectAny,
                 _ => {
                     return Err(ParseError::new(
                         format!("Unknown attribute: @{}", attr_name),
@@ -334,12 +342,136 @@ impl<'src> Parser<'src> {
             name,
             generic_params,
             params,
+            is_variadic: false,
+            extern_abi: None,
+            extern_link_name: None,
             return_type,
             body,
             is_async,
+            is_extern: false,
             visibility,
             attributes,
         })
+    }
+
+    fn parse_extern_params(&mut self) -> ParseResult<(Vec<Parameter>, bool)> {
+        let mut params = Vec::new();
+        let mut is_variadic = false;
+
+        while !self.check(&Token::RParen) && !self.is_at_end() {
+            if self.check(&Token::Ellipsis) {
+                self.advance();
+                is_variadic = true;
+                break;
+            }
+
+            let mode = if self.check(&Token::Owned) {
+                self.advance();
+                ParamMode::Owned
+            } else if self.check(&Token::Borrow) {
+                self.advance();
+                if self.check(&Token::Mut) {
+                    self.advance();
+                    ParamMode::BorrowMut
+                } else {
+                    ParamMode::Borrow
+                }
+            } else {
+                ParamMode::Owned
+            };
+
+            let mutable = if self.check(&Token::Mut) {
+                self.advance();
+                true
+            } else {
+                false
+            };
+
+            let name = self.parse_ident()?;
+            self.eat(&Token::Colon)?;
+            let ty = self.parse_type()?;
+            params.push(Parameter {
+                name,
+                ty,
+                mutable,
+                mode,
+            });
+
+            if self.check(&Token::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        Ok((params, is_variadic))
+    }
+
+    fn parse_extern_function(&mut self, attributes: Vec<Attribute>) -> ParseResult<FunctionDecl> {
+        let visibility = self.parse_visibility();
+        self.eat(&Token::Extern)?;
+        let (extern_abi, extern_link_name) = if self.check(&Token::LParen) {
+            self.parse_extern_options()?
+        } else {
+            (Some("c".to_string()), None)
+        };
+        self.eat(&Token::Function)?;
+
+        let name = self.parse_ident()?;
+        let generic_params = self.parse_generic_params()?;
+        if !generic_params.is_empty() {
+            return Err(ParseError::new(
+                "extern functions with generic parameters are not supported",
+                self.current_span(),
+            ));
+        }
+
+        self.eat(&Token::LParen)?;
+        let (params, is_variadic) = self.parse_extern_params()?;
+        self.eat(&Token::RParen)?;
+        self.eat(&Token::Colon)?;
+        let return_type = self.parse_type()?;
+        self.eat(&Token::Semi)?;
+
+        Ok(FunctionDecl {
+            name,
+            generic_params,
+            params,
+            is_variadic,
+            extern_abi,
+            extern_link_name,
+            return_type,
+            body: vec![],
+            is_async: false,
+            is_extern: true,
+            visibility,
+            attributes,
+        })
+    }
+
+    fn parse_extern_options(&mut self) -> ParseResult<(Option<String>, Option<String>)> {
+        self.eat(&Token::LParen)?;
+        let abi_ident = self.parse_ident()?;
+        let abi = match abi_ident.as_str() {
+            "c" | "system" => abi_ident,
+            _ => {
+                return Err(ParseError::new(
+                    format!(
+                        "Unsupported extern ABI '{}'. Supported: c, system",
+                        abi_ident
+                    ),
+                    self.current_span(),
+                ));
+            }
+        };
+
+        let mut link_name = None;
+        if self.check(&Token::Comma) {
+            self.advance();
+            link_name = Some(self.parse_string_literal()?);
+        }
+        self.eat(&Token::RParen)?;
+        Ok((Some(abi), link_name))
     }
 
     fn parse_class(&mut self, _attributes: Vec<Attribute>) -> ParseResult<ClassDecl> {
@@ -1469,6 +1601,21 @@ impl<'src> Parser<'src> {
             Some(Token::This) => {
                 self.advance();
                 Expr::This
+            }
+            Some(Token::Static)
+            | Some(Token::Super)
+            | Some(Token::SelfType)
+            | Some(Token::As)
+            | Some(Token::Is)
+            | Some(Token::TypeOf) => {
+                let token = format!("{:?}", self.current());
+                return Err(ParseError::new(
+                    format!(
+                        "Reserved keyword {} is recognized by lexer but not implemented in parser yet",
+                        token
+                    ),
+                    self.current_span(),
+                ));
             }
             Some(Token::Pipe) => {
                 // Lambda: |args| body

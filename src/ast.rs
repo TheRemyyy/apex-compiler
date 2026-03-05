@@ -63,6 +63,13 @@ pub enum Attribute {
     After,
     BeforeAll,
     AfterAll,
+    Pure,
+    EffectIo,
+    EffectNet,
+    EffectAlloc,
+    EffectUnsafe,
+    EffectThread,
+    EffectAny,
 }
 
 /// Complete program
@@ -103,9 +110,13 @@ pub struct FunctionDecl {
     pub name: String,
     pub generic_params: Vec<GenericParam>, // <T extends Comparable>
     pub params: Vec<Parameter>,
+    pub is_variadic: bool,
+    pub extern_abi: Option<String>, // "c" | "system"
+    pub extern_link_name: Option<String>,
     pub return_type: Type,
     pub body: Block,
     pub is_async: bool,
+    pub is_extern: bool,
     pub visibility: Visibility,
     pub attributes: Vec<Attribute>, // @Test, @Ignore, etc.
 }

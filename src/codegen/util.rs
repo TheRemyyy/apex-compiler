@@ -1258,6 +1258,47 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, pthread_join_type, None)
     }
 
+    pub fn get_or_declare_pthread_cancel(&mut self) -> FunctionValue<'ctx> {
+        let name = "pthread_cancel";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+
+        let pthread_cancel_type = self
+            .context
+            .i32_type()
+            .fn_type(&[self.context.i64_type().into()], false);
+        self.module.add_function(name, pthread_cancel_type, None)
+    }
+
+    pub fn get_or_declare_pthread_timedjoin_np(&mut self) -> FunctionValue<'ctx> {
+        let name = "pthread_timedjoin_np";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let pthread_timedjoin_type = self.context.i32_type().fn_type(
+            &[self.context.i64_type().into(), ptr.into(), ptr.into()],
+            false,
+        );
+        self.module.add_function(name, pthread_timedjoin_type, None)
+    }
+
+    pub fn get_or_declare_clock_gettime(&mut self) -> FunctionValue<'ctx> {
+        let name = "clock_gettime";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let clock_gettime_type = self
+            .context
+            .i32_type()
+            .fn_type(&[self.context.i32_type().into(), ptr.into()], false);
+        self.module.add_function(name, clock_gettime_type, None)
+    }
+
     pub fn get_or_declare_sprintf(&mut self) -> FunctionValue<'ctx> {
         let name = "sprintf";
         if let Some(f) = self.module.get_function(name) {

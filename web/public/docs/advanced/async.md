@@ -33,6 +33,16 @@ async function loadMessage(): Task<String> {
 
 Current runtime behavior is thread-backed (`pthread` runtime): multiple tasks can run in parallel, and `await` joins the task if it is not finished yet.
 
+### Task Methods
+
+- `task.is_done(): Boolean`
+- `task.cancel(): None`
+- `task.await_timeout(ms: Integer): Option<T>`
+
+Reference examples:
+- `examples/14_async.apex`
+- `examples/28_async_runtime_control.apex`
+
 ## Async Blocks
 
 `async { ... }` creates a `Task<T>` expression.

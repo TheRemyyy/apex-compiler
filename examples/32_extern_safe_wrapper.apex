@@ -1,0 +1,19 @@
+// Test 32: Extern Safe Wrapper Pattern
+// Tests: wrapping raw extern calls behind validated Apex APIs
+
+import std.io.*;
+
+extern(c, "atoll") function c_atoll(input: String): Integer;
+
+function parsePositiveInt(text: String): Integer {
+    value: Integer = c_atoll(text);
+    require(value >= 0, "Expected non-negative integer input");
+    return value;
+}
+
+function main(): None {
+    println("=== Extern Safe Wrapper ===");
+    parsed: Integer = parsePositiveInt("12345");
+    println("parsed value = {parsed}");
+    return None;
+}

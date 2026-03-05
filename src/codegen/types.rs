@@ -127,8 +127,67 @@ impl<'ctx> Codegen<'ctx> {
                 Ok(is_none.into())
             }
             "unwrap" => {
-                // For now, just return the value without checking if it's Some
-                // A proper implementation would add a runtime check and panic if None
+                let current_fn = self
+                    .current_function
+                    .ok_or_else(|| CodegenError::new("Option.unwrap outside function"))?;
+                let panic_bb = self
+                    .context
+                    .append_basic_block(current_fn, "option_unwrap_panic");
+                let ok_bb = self
+                    .context
+                    .append_basic_block(current_fn, "option_unwrap_ok");
+
+                let is_some_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            option_struct_type.as_basic_type_enum(),
+                            option_ptr,
+                            &[zero, i32_type.const_int(0, false)],
+                            "is_some_ptr",
+                        )
+                        .unwrap()
+                };
+                let is_some = self
+                    .builder
+                    .build_load(self.context.i8_type(), is_some_ptr, "is_some")
+                    .unwrap()
+                    .into_int_value();
+                let is_some_bool = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        is_some,
+                        self.context.i8_type().const_int(0, false),
+                        "is_some_bool",
+                    )
+                    .unwrap();
+                self.builder
+                    .build_conditional_branch(is_some_bool, ok_bb, panic_bb)
+                    .unwrap();
+
+                self.builder.position_at_end(panic_bb);
+                let printf = self.get_or_declare_printf();
+                let exit_fn = self.get_or_declare_exit();
+                let panic_msg = self
+                    .builder
+                    .build_global_string_ptr(
+                        "Option.unwrap() called on None\\n",
+                        "opt_unwrap_panic",
+                    )
+                    .unwrap();
+                self.builder
+                    .build_call(printf, &[panic_msg.as_pointer_value().into()], "")
+                    .unwrap();
+                self.builder
+                    .build_call(
+                        exit_fn,
+                        &[self.context.i32_type().const_int(1, false).into()],
+                        "",
+                    )
+                    .unwrap();
+                self.builder.build_unreachable().unwrap();
+
+                self.builder.position_at_end(ok_bb);
                 let value_ptr = unsafe {
                     self.builder
                         .build_gep(
@@ -223,7 +282,67 @@ impl<'ctx> Codegen<'ctx> {
                 Ok(is_error.into())
             }
             "unwrap" => {
-                // Returns Ok value, panics if Error (runtime check omitted for now)
+                let current_fn = self
+                    .current_function
+                    .ok_or_else(|| CodegenError::new("Result.unwrap outside function"))?;
+                let panic_bb = self
+                    .context
+                    .append_basic_block(current_fn, "result_unwrap_panic");
+                let ok_bb = self
+                    .context
+                    .append_basic_block(current_fn, "result_unwrap_ok");
+
+                let tag_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            result_struct_type.as_basic_type_enum(),
+                            result_ptr,
+                            &[zero, i32_type.const_int(0, false)],
+                            "tag_ptr",
+                        )
+                        .unwrap()
+                };
+                let tag = self
+                    .builder
+                    .build_load(self.context.i8_type(), tag_ptr, "tag")
+                    .unwrap()
+                    .into_int_value();
+                let is_ok = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        tag,
+                        self.context.i8_type().const_int(0, false),
+                        "is_ok",
+                    )
+                    .unwrap();
+                self.builder
+                    .build_conditional_branch(is_ok, ok_bb, panic_bb)
+                    .unwrap();
+
+                self.builder.position_at_end(panic_bb);
+                let printf = self.get_or_declare_printf();
+                let exit_fn = self.get_or_declare_exit();
+                let panic_msg = self
+                    .builder
+                    .build_global_string_ptr(
+                        "Result.unwrap() called on Error\\n",
+                        "res_unwrap_panic",
+                    )
+                    .unwrap();
+                self.builder
+                    .build_call(printf, &[panic_msg.as_pointer_value().into()], "")
+                    .unwrap();
+                self.builder
+                    .build_call(
+                        exit_fn,
+                        &[self.context.i32_type().const_int(1, false).into()],
+                        "",
+                    )
+                    .unwrap();
+                self.builder.build_unreachable().unwrap();
+
+                self.builder.position_at_end(ok_bb);
                 let ok_ptr = unsafe {
                     self.builder
                         .build_gep(

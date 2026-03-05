@@ -82,13 +82,19 @@ impl Backend {
     }
 
     fn parse_error_to_diagnostic(&self, text: &str, err: &ParseError) -> Diagnostic {
+        let mut message = err.message.clone();
+        if message.contains("Reserved keyword") {
+            message.push_str(
+                "\nHint: use currently supported constructs or remove this keyword for now.",
+            );
+        }
         Diagnostic {
             range: self.span_to_range(text, err.span.clone()),
             severity: Some(DiagnosticSeverity::ERROR),
             code: None,
             code_description: None,
             source: Some("apex-parser".to_string()),
-            message: err.message.clone(),
+            message,
             related_information: None,
             tags: None,
             data: None,
@@ -231,6 +237,36 @@ impl Backend {
         out
     }
 
+    fn find_symbol_ranges(&self, text: &str, symbol: &str) -> Vec<Range> {
+        if symbol.is_empty() {
+            return Vec::new();
+        }
+
+        let mut ranges = Vec::new();
+        let bytes = text.as_bytes();
+        let sym = symbol.as_bytes();
+        let mut i = 0usize;
+
+        while i + sym.len() <= bytes.len() {
+            if &bytes[i..i + sym.len()] == sym {
+                let left_ok =
+                    i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
+                let right_idx = i + sym.len();
+                let right_ok = right_idx == bytes.len()
+                    || !(bytes[right_idx].is_ascii_alphanumeric() || bytes[right_idx] == b'_');
+
+                if left_ok && right_ok {
+                    ranges.push(self.span_to_range(text, i..right_idx));
+                    i = right_idx;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+
+        ranges
+    }
+
     /// Get completion items for a position
     fn get_completions(&self, doc: &Document, _pos: Position) -> Vec<CompletionItem> {
         let mut items = Vec::new();
@@ -255,6 +291,7 @@ impl Backend {
             "let",
             "import",
             "package",
+            "extern",
             "async",
             "await",
             "public",
@@ -322,6 +359,7 @@ impl Backend {
             ("let", "Variable declaration\n\n```apex\nlet x: Integer = 10;\n```"),
             ("import", "Import from another module\n\n```apex\nimport utils.math.*;\n```"),
             ("package", "Declare package namespace\n\n```apex\npackage my.module;\n```"),
+            ("extern", "Declare an external C ABI function\n\n```apex\nextern function puts(msg: String): Integer;\nextern(c) function puts2(msg: String): Integer;\nextern(system, \"printf\") function sys_printf(fmt: String, ...): Integer;\n```"),
             ("async", "Async function or block\n\n```apex\nasync function foo(): Task<String> { }\n```"),
             ("await", "Await an async operation\n\n```apex\nlet result = await asyncFunction();\n```"),
             ("return", "Return from function\n\n```apex\nreturn value;\n```"),
@@ -365,6 +403,8 @@ impl LanguageServer for Backend {
                 }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                references_provider: Some(OneOf::Left(true)),
+                rename_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
         })
@@ -464,6 +504,54 @@ impl LanguageServer for Backend {
                         return Ok(Some(GotoDefinitionResponse::Array(locations)));
                     }
                 }
+            }
+        }
+
+        Ok(None)
+    }
+
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let uri = params.text_document_position.text_document.uri;
+        let pos = params.text_document_position.position;
+
+        let docs = self.documents.read().await;
+        if let Some(doc) = docs.get(&uri) {
+            if let Some(symbol) = self.word_at_position(&doc.text, pos) {
+                let ranges = self.find_symbol_ranges(&doc.text, &symbol);
+                let locations: Vec<Location> = ranges
+                    .into_iter()
+                    .map(|range| Location::new(uri.clone(), range))
+                    .collect();
+                return Ok(Some(locations));
+            }
+        }
+        Ok(Some(Vec::new()))
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        let uri = params.text_document_position.text_document.uri;
+        let pos = params.text_document_position.position;
+        let new_name = params.new_name;
+
+        let docs = self.documents.read().await;
+        if let Some(doc) = docs.get(&uri) {
+            if let Some(symbol) = self.word_at_position(&doc.text, pos) {
+                let ranges = self.find_symbol_ranges(&doc.text, &symbol);
+                let edits: Vec<TextEdit> = ranges
+                    .into_iter()
+                    .map(|range| TextEdit {
+                        range,
+                        new_text: new_name.clone(),
+                    })
+                    .collect();
+
+                let mut changes = HashMap::new();
+                changes.insert(uri.clone(), edits);
+                return Ok(Some(WorkspaceEdit {
+                    changes: Some(changes),
+                    document_changes: None,
+                    change_annotations: None,
+                }));
             }
         }
 

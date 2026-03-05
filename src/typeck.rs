@@ -133,6 +133,12 @@ pub struct VarInfo {
 pub struct FuncSig {
     pub params: Vec<(String, ResolvedType)>,
     pub return_type: ResolvedType,
+    pub is_variadic: bool,
+    pub is_extern: bool,
+    pub effects: Vec<String>,
+    pub is_pure: bool,
+    pub allow_any: bool,
+    pub has_explicit_effects: bool,
     pub span: Span,
 }
 
@@ -182,6 +188,12 @@ pub struct TypeChecker {
     errors: Vec<TypeError>,
     /// Current function return type (for checking returns)
     current_return_type: Option<ResolvedType>,
+    /// Current function declared effects
+    current_effects: Vec<String>,
+    /// Whether current function is declared pure
+    current_is_pure: bool,
+    /// Whether current function allows any effects
+    current_allow_any: bool,
     /// Source code for error messages
     source: String,
 }
@@ -204,7 +216,543 @@ impl TypeChecker {
             substitutions: HashMap::new(),
             errors: Vec::new(),
             current_return_type: None,
+            current_effects: Vec::new(),
+            current_is_pure: false,
+            current_allow_any: false,
             source,
+        }
+    }
+
+    fn parse_effects_from_attributes(
+        &self,
+        attrs: &[Attribute],
+    ) -> (Vec<String>, bool, bool, bool) {
+        let mut effects = Vec::new();
+        let mut pure = false;
+        let mut any = false;
+        let mut has_explicit_effects = false;
+
+        for attr in attrs {
+            match attr {
+                Attribute::Pure => pure = true,
+                Attribute::EffectIo => {
+                    has_explicit_effects = true;
+                    effects.push("io".to_string());
+                }
+                Attribute::EffectNet => {
+                    has_explicit_effects = true;
+                    effects.push("net".to_string());
+                }
+                Attribute::EffectAlloc => {
+                    has_explicit_effects = true;
+                    effects.push("alloc".to_string());
+                }
+                Attribute::EffectUnsafe => {
+                    has_explicit_effects = true;
+                    effects.push("unsafe".to_string());
+                }
+                Attribute::EffectThread => {
+                    has_explicit_effects = true;
+                    effects.push("thread".to_string());
+                }
+                Attribute::EffectAny => {
+                    has_explicit_effects = true;
+                    any = true;
+                }
+                _ => {}
+            }
+        }
+
+        effects.sort();
+        effects.dedup();
+        (effects, pure, any, has_explicit_effects)
+    }
+
+    fn validate_effect_attributes(
+        &mut self,
+        attrs: &[Attribute],
+        span: Span,
+        subject: &str,
+    ) {
+        let (effects, pure, any, _) = self.parse_effects_from_attributes(attrs);
+        if pure && any {
+            self.error(
+                format!(
+                    "{} cannot use both @Pure and @Any; pick one effect policy",
+                    subject
+                ),
+                span.clone(),
+            );
+        }
+        if pure && !effects.is_empty() {
+            self.error(
+                format!(
+                    "{} cannot combine @Pure with explicit effects ({})",
+                    subject,
+                    effects.join(", ")
+                ),
+                span,
+            );
+        }
+    }
+
+    fn validate_extern_signature(&mut self, func: &FunctionDecl, span: Span) {
+        if !func.is_extern {
+            return;
+        }
+
+        if func.is_async {
+            self.error(
+                format!("Extern function '{}' cannot be async", func.name),
+                span.clone(),
+            );
+        }
+
+        if func.is_variadic && func.params.is_empty() {
+            self.error(
+                format!(
+                    "Variadic extern function '{}' must declare at least one fixed parameter",
+                    func.name
+                ),
+                span.clone(),
+            );
+        }
+
+        if let Some(abi) = &func.extern_abi {
+            if abi != "c" && abi != "system" {
+                self.error(
+                    format!(
+                        "Extern function '{}' uses unsupported ABI '{}'",
+                        func.name, abi
+                    ),
+                    span.clone(),
+                );
+            }
+        }
+
+        for param in &func.params {
+            let resolved = self.resolve_type(&param.ty);
+            if !self.is_ffi_safe_type(&resolved) {
+                self.error(
+                    format!(
+                        "Extern function '{}' has non-FFI-safe parameter '{}: {}'",
+                        func.name, param.name, resolved
+                    ),
+                    span.clone(),
+                );
+            }
+        }
+        let ret = self.resolve_type(&func.return_type);
+        if !self.is_ffi_safe_type(&ret) {
+            self.error(
+                format!(
+                    "Extern function '{}' has non-FFI-safe return type '{}'",
+                    func.name, ret
+                ),
+                span,
+            );
+        }
+    }
+
+    fn is_ffi_safe_type(&self, ty: &ResolvedType) -> bool {
+        matches!(
+            ty,
+            ResolvedType::Integer
+                | ResolvedType::Float
+                | ResolvedType::Boolean
+                | ResolvedType::Char
+                | ResolvedType::String
+                | ResolvedType::None
+        )
+    }
+
+    fn builtin_required_effect(name: &str) -> Option<&'static str> {
+        if matches!(
+            name,
+            "println"
+                | "print"
+                | "read_line"
+                | "File__read"
+                | "File__write"
+                | "File__delete"
+                | "File__exists"
+                | "System__exec"
+                | "System__shell"
+        ) {
+            return Some("io");
+        }
+        if matches!(
+            name,
+            "System__getenv" | "System__cwd" | "System__os" | "Args__count" | "Args__get"
+        ) {
+            return Some("io");
+        }
+        if matches!(name, "Time__sleep" | "Time__now" | "Time__unix") {
+            return Some("thread");
+        }
+        None
+    }
+
+    fn enforce_required_effect(&mut self, effect: &str, span: Span, callee: &str) {
+        if self.current_is_pure {
+            self.error(
+                format!(
+                    "Pure function cannot call effectful function '{}', required effect: {}",
+                    callee, effect
+                ),
+                span,
+            );
+            return;
+        }
+
+        if self.current_allow_any {
+            return;
+        }
+
+        if !self.current_effects.iter().any(|e| e == effect) {
+            self.error(
+                format!(
+                    "Missing effect '{}' for call to '{}'. Add @{} (or @Any) on the caller function",
+                    effect,
+                    callee,
+                    match effect {
+                        "io" => "Io",
+                        "net" => "Net",
+                        "alloc" => "Alloc",
+                        "unsafe" => "Unsafe",
+                        "thread" => "Thread",
+                        _ => "Io",
+                    }
+                ),
+                span,
+            );
+        }
+    }
+
+    fn enforce_call_effects(&mut self, sig: &FuncSig, span: Span, callee: &str) {
+        if sig.is_pure || sig.allow_any {
+            return;
+        }
+        for eff in &sig.effects {
+            self.enforce_required_effect(eff, span.clone(), callee);
+        }
+    }
+
+    fn infer_effects(&mut self, program: &Program) {
+        // Fixed-point inference over the call graph for declarations without explicit effects.
+        let mut changed = true;
+        let mut passes = 0usize;
+        while changed && passes < 24 {
+            changed = false;
+            passes += 1;
+            for decl in &program.declarations {
+                changed |= self.infer_effects_decl(&decl.node, None);
+            }
+        }
+    }
+
+    fn infer_effects_decl(&mut self, decl: &Decl, module_prefix: Option<&str>) -> bool {
+        match decl {
+            Decl::Function(func) => {
+                let key = if let Some(prefix) = module_prefix {
+                    format!("{}__{}", prefix, func.name)
+                } else {
+                    func.name.clone()
+                };
+                self.infer_effects_for_function_key(&key, &func.body, None)
+            }
+            Decl::Class(class) => {
+                let mut changed = false;
+                for method in &class.methods {
+                    changed |= self.infer_effects_for_method(&class.name, &method.name, &method.body);
+                }
+                changed
+            }
+            Decl::Module(module) => {
+                let next_prefix = if let Some(prefix) = module_prefix {
+                    format!("{}__{}", prefix, module.name)
+                } else {
+                    module.name.clone()
+                };
+                let mut changed = false;
+                for inner in &module.declarations {
+                    changed |= self.infer_effects_decl(&inner.node, Some(&next_prefix));
+                }
+                changed
+            }
+            _ => false,
+        }
+    }
+
+    fn infer_effects_for_function_key(
+        &mut self,
+        key: &str,
+        body: &Block,
+        current_class: Option<&str>,
+    ) -> bool {
+        let Some(sig) = self.functions.get(key).cloned() else {
+            return false;
+        };
+        if sig.is_pure || sig.allow_any || sig.has_explicit_effects {
+            return false;
+        }
+
+        let mut inferred: Vec<String> = self
+            .infer_effects_in_block(body, current_class)
+            .into_iter()
+            .collect();
+        inferred.sort();
+        inferred.dedup();
+
+        if inferred != sig.effects {
+            if let Some(edit_sig) = self.functions.get_mut(key) {
+                edit_sig.effects = inferred;
+                return true;
+            }
+        }
+        false
+    }
+
+    fn infer_effects_for_method(
+        &mut self,
+        class_name: &str,
+        method_name: &str,
+        body: &Block,
+    ) -> bool {
+        let Some(class_info) = self.classes.get(class_name).cloned() else {
+            return false;
+        };
+        let Some(method_sig) = class_info.methods.get(method_name).cloned() else {
+            return false;
+        };
+        if method_sig.is_pure || method_sig.allow_any || method_sig.has_explicit_effects {
+            return false;
+        }
+
+        let mut inferred: Vec<String> = self
+            .infer_effects_in_block(body, Some(class_name))
+            .into_iter()
+            .collect();
+        inferred.sort();
+        inferred.dedup();
+
+        if inferred != method_sig.effects {
+            if let Some(class_edit) = self.classes.get_mut(class_name) {
+                if let Some(sig_edit) = class_edit.methods.get_mut(method_name) {
+                    sig_edit.effects = inferred;
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn infer_effects_in_block(
+        &self,
+        block: &Block,
+        current_class: Option<&str>,
+    ) -> std::collections::BTreeSet<String> {
+        let mut out = std::collections::BTreeSet::new();
+        for stmt in block {
+            self.collect_effects_stmt(&stmt.node, current_class, &mut out);
+        }
+        out
+    }
+
+    fn collect_effects_stmt(
+        &self,
+        stmt: &Stmt,
+        current_class: Option<&str>,
+        out: &mut std::collections::BTreeSet<String>,
+    ) {
+        match stmt {
+            Stmt::Let { value, .. } => self.collect_effects_expr(&value.node, current_class, out),
+            Stmt::Assign { target, value } => {
+                self.collect_effects_expr(&target.node, current_class, out);
+                self.collect_effects_expr(&value.node, current_class, out);
+            }
+            Stmt::Expr(expr) => self.collect_effects_expr(&expr.node, current_class, out),
+            Stmt::Return(expr) => {
+                if let Some(expr) = expr {
+                    self.collect_effects_expr(&expr.node, current_class, out);
+                }
+            }
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                self.collect_effects_expr(&condition.node, current_class, out);
+                for s in then_block {
+                    self.collect_effects_stmt(&s.node, current_class, out);
+                }
+                if let Some(else_block) = else_block {
+                    for s in else_block {
+                        self.collect_effects_stmt(&s.node, current_class, out);
+                    }
+                }
+            }
+            Stmt::While { condition, body } => {
+                self.collect_effects_expr(&condition.node, current_class, out);
+                for s in body {
+                    self.collect_effects_stmt(&s.node, current_class, out);
+                }
+            }
+            Stmt::For { iterable, body, .. } => {
+                self.collect_effects_expr(&iterable.node, current_class, out);
+                for s in body {
+                    self.collect_effects_stmt(&s.node, current_class, out);
+                }
+            }
+            Stmt::Match { expr, arms } => {
+                self.collect_effects_expr(&expr.node, current_class, out);
+                for arm in arms {
+                    for s in &arm.body {
+                        self.collect_effects_stmt(&s.node, current_class, out);
+                    }
+                }
+            }
+            Stmt::Break | Stmt::Continue => {}
+        }
+    }
+
+    fn collect_effects_expr(
+        &self,
+        expr: &Expr,
+        current_class: Option<&str>,
+        out: &mut std::collections::BTreeSet<String>,
+    ) {
+        match expr {
+            Expr::Call { callee, args } => {
+                if let Expr::Ident(name) = &callee.node {
+                    if let Some(required) = Self::builtin_required_effect(name) {
+                        out.insert(required.to_string());
+                    }
+                    if let Some(sig) = self.functions.get(name) {
+                        for eff in &sig.effects {
+                            out.insert(eff.clone());
+                        }
+                    }
+                } else if let Expr::Field { object, field } = &callee.node {
+                    if let Expr::Ident(name) = &object.node {
+                        let builtin_name = format!("{}__{}", name, field);
+                        if let Some(required) = Self::builtin_required_effect(&builtin_name) {
+                            out.insert(required.to_string());
+                        }
+                        if let Some(sig) = self.functions.get(&builtin_name) {
+                            for eff in &sig.effects {
+                                out.insert(eff.clone());
+                            }
+                        }
+                        // Instance-style method call; infer conservatively by method name across classes.
+                        self.collect_class_method_name_effects(field, out);
+                    } else if matches!(object.node, Expr::This) {
+                        if let Some(class_name) = current_class {
+                            if let Some(class_info) = self.classes.get(class_name) {
+                                if let Some(sig) = class_info.methods.get(field) {
+                                    for eff in &sig.effects {
+                                        out.insert(eff.clone());
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        self.collect_class_method_name_effects(field, out);
+                    }
+                }
+
+                self.collect_effects_expr(&callee.node, current_class, out);
+                for arg in args {
+                    self.collect_effects_expr(&arg.node, current_class, out);
+                }
+            }
+            Expr::Binary { left, right, .. } => {
+                self.collect_effects_expr(&left.node, current_class, out);
+                self.collect_effects_expr(&right.node, current_class, out);
+            }
+            Expr::Unary { expr, .. }
+            | Expr::Try(expr)
+            | Expr::Borrow(expr)
+            | Expr::MutBorrow(expr)
+            | Expr::Deref(expr)
+            | Expr::Await(expr) => {
+                self.collect_effects_expr(&expr.node, current_class, out);
+            }
+            Expr::Field { object, .. } => self.collect_effects_expr(&object.node, current_class, out),
+            Expr::Index { object, index } => {
+                self.collect_effects_expr(&object.node, current_class, out);
+                self.collect_effects_expr(&index.node, current_class, out);
+            }
+            Expr::Construct { args, .. } => {
+                for arg in args {
+                    self.collect_effects_expr(&arg.node, current_class, out);
+                }
+            }
+            Expr::Lambda { body, .. } => self.collect_effects_expr(&body.node, current_class, out),
+            Expr::Match { expr, arms } => {
+                self.collect_effects_expr(&expr.node, current_class, out);
+                for arm in arms {
+                    for s in &arm.body {
+                        self.collect_effects_stmt(&s.node, current_class, out);
+                    }
+                }
+            }
+            Expr::StringInterp(parts) => {
+                for part in parts {
+                    if let StringPart::Expr(e) = part {
+                        self.collect_effects_expr(&e.node, current_class, out);
+                    }
+                }
+            }
+            Expr::AsyncBlock(body) | Expr::Block(body) => {
+                for s in body {
+                    self.collect_effects_stmt(&s.node, current_class, out);
+                }
+            }
+            Expr::Require { condition, message } => {
+                self.collect_effects_expr(&condition.node, current_class, out);
+                if let Some(msg) = message {
+                    self.collect_effects_expr(&msg.node, current_class, out);
+                }
+            }
+            Expr::Range { start, end, .. } => {
+                if let Some(s) = start {
+                    self.collect_effects_expr(&s.node, current_class, out);
+                }
+                if let Some(e) = end {
+                    self.collect_effects_expr(&e.node, current_class, out);
+                }
+            }
+            Expr::IfExpr {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.collect_effects_expr(&condition.node, current_class, out);
+                for s in then_branch {
+                    self.collect_effects_stmt(&s.node, current_class, out);
+                }
+                if let Some(else_branch) = else_branch {
+                    for s in else_branch {
+                        self.collect_effects_stmt(&s.node, current_class, out);
+                    }
+                }
+            }
+            Expr::Literal(_) | Expr::Ident(_) | Expr::This => {}
+        }
+    }
+
+    fn collect_class_method_name_effects(
+        &self,
+        method_name: &str,
+        out: &mut std::collections::BTreeSet<String>,
+    ) {
+        for class_info in self.classes.values() {
+            if let Some(sig) = class_info.methods.get(method_name) {
+                for eff in &sig.effects {
+                    out.insert(eff.clone());
+                }
+            }
         }
     }
 
@@ -212,10 +760,12 @@ impl TypeChecker {
     pub fn check(&mut self, program: &Program) -> Result<(), Vec<TypeError>> {
         // First pass: collect all declarations
         self.collect_declarations(program);
+        // Infer effects for non-annotated call graph nodes
+        self.infer_effects(program);
 
         // Second pass: check all function bodies
         for decl in &program.declarations {
-            self.check_decl(&decl.node, decl.span.clone());
+            self.check_decl_with_prefix(&decl.node, decl.span.clone(), None);
         }
 
         if self.errors.is_empty() {
@@ -230,6 +780,12 @@ impl TypeChecker {
         for decl in &program.declarations {
             match &decl.node {
                 Decl::Function(func) => {
+                    self.validate_effect_attributes(
+                        &func.attributes,
+                        decl.span.clone(),
+                        &format!("Function '{}'", func.name),
+                    );
+                    self.validate_extern_signature(func, decl.span.clone());
                     let params: Vec<(String, ResolvedType)> = func
                         .params
                         .iter()
@@ -239,12 +795,20 @@ impl TypeChecker {
                     if func.is_async && !matches!(return_type, ResolvedType::Task(_)) {
                         return_type = ResolvedType::Task(Box::new(return_type));
                     }
+                    let (effects, is_pure, allow_any, has_explicit_effects) =
+                        self.parse_effects_from_attributes(&func.attributes);
 
                     self.functions.insert(
                         func.name.clone(),
                         FuncSig {
                             params,
                             return_type,
+                            is_variadic: func.is_variadic,
+                            is_extern: func.is_extern,
+                            effects,
+                            is_pure,
+                            allow_any,
+                            has_explicit_effects,
                             span: decl.span.clone(),
                         },
                     );
@@ -260,6 +824,11 @@ impl TypeChecker {
 
                     let mut methods = HashMap::new();
                     for method in &class.methods {
+                        self.validate_effect_attributes(
+                            &method.attributes,
+                            decl.span.clone(),
+                            &format!("Method '{}.{}'", class.name, method.name),
+                        );
                         let params: Vec<(String, ResolvedType)> = method
                             .params
                             .iter()
@@ -270,12 +839,20 @@ impl TypeChecker {
                         if method.is_async && !matches!(return_type, ResolvedType::Task(_)) {
                             return_type = ResolvedType::Task(Box::new(return_type));
                         }
+                        let (effects, is_pure, allow_any, has_explicit_effects) =
+                            self.parse_effects_from_attributes(&method.attributes);
 
                         methods.insert(
                             method.name.clone(),
                             FuncSig {
                                 params,
                                 return_type,
+                                is_variadic: method.is_variadic,
+                                is_extern: method.is_extern,
+                                effects,
+                                is_pure,
+                                allow_any,
+                                has_explicit_effects,
                                 span: decl.span.clone(),
                             },
                         );
@@ -322,6 +899,12 @@ impl TypeChecker {
                     // Collect module functions with prefixed names
                     for inner_decl in &module.declarations {
                         if let Decl::Function(func) = &inner_decl.node {
+                            self.validate_effect_attributes(
+                                &func.attributes,
+                                inner_decl.span.clone(),
+                                &format!("Function '{}__{}'", module.name, func.name),
+                            );
+                            self.validate_extern_signature(func, inner_decl.span.clone());
                             let prefixed_name = format!("{}__{}", module.name, func.name);
                             let params: Vec<(String, ResolvedType)> = func
                                 .params
@@ -332,12 +915,20 @@ impl TypeChecker {
                             if func.is_async && !matches!(return_type, ResolvedType::Task(_)) {
                                 return_type = ResolvedType::Task(Box::new(return_type));
                             }
+                            let (effects, is_pure, allow_any, has_explicit_effects) =
+                                self.parse_effects_from_attributes(&func.attributes);
 
                             self.functions.insert(
                                 prefixed_name,
                                 FuncSig {
                                     params,
                                     return_type,
+                                    is_variadic: func.is_variadic,
+                                    is_extern: func.is_extern,
+                                    effects,
+                                    is_pure,
+                                    allow_any,
+                                    has_explicit_effects,
                                     span: inner_decl.span.clone(),
                                 },
                             );
@@ -350,13 +941,25 @@ impl TypeChecker {
     }
 
     /// Check a declaration
-    fn check_decl(&mut self, decl: &Decl, span: Span) {
+    fn check_decl_with_prefix(&mut self, decl: &Decl, span: Span, module_prefix: Option<&str>) {
         match decl {
-            Decl::Function(func) => self.check_function(func, span),
+            Decl::Function(func) => {
+                let key = module_prefix.map(|p| format!("{}__{}", p, func.name));
+                self.check_function(func, span, key.as_deref());
+            }
             Decl::Class(class) => self.check_class(class, span),
             Decl::Module(module) => {
+                let next_prefix = if let Some(prefix) = module_prefix {
+                    format!("{}__{}", prefix, module.name)
+                } else {
+                    module.name.clone()
+                };
                 for inner_decl in &module.declarations {
-                    self.check_decl(&inner_decl.node, inner_decl.span.clone());
+                    self.check_decl_with_prefix(
+                        &inner_decl.node,
+                        inner_decl.span.clone(),
+                        Some(&next_prefix),
+                    );
                 }
             }
             _ => {}
@@ -364,8 +967,25 @@ impl TypeChecker {
     }
 
     /// Check a function
-    fn check_function(&mut self, func: &FunctionDecl, _span: Span) {
+    fn check_function(&mut self, func: &FunctionDecl, _span: Span, function_key: Option<&str>) {
         self.enter_scope();
+        let saved_effects = std::mem::take(&mut self.current_effects);
+        let saved_pure = self.current_is_pure;
+        let saved_any = self.current_allow_any;
+        let sig = function_key
+            .and_then(|k| self.functions.get(k))
+            .or_else(|| self.functions.get(&func.name));
+        if let Some(sig) = sig {
+            self.current_effects = sig.effects.clone();
+            self.current_is_pure = sig.is_pure;
+            self.current_allow_any = sig.allow_any;
+        } else {
+            // Fallback for unresolved keys; should be rare.
+            let (effects, is_pure, allow_any, _) = self.parse_effects_from_attributes(&func.attributes);
+            self.current_effects = effects;
+            self.current_is_pure = is_pure;
+            self.current_allow_any = allow_any;
+        }
 
         // Add parameters to scope
         for param in &func.params {
@@ -383,10 +1003,15 @@ impl TypeChecker {
         }
         self.current_return_type = Some(inner_return_type);
 
-        // Check body
-        self.check_block(&func.body);
+        // Check body (extern declarations have no body)
+        if !func.is_extern {
+            self.check_block(&func.body);
+        }
 
         self.current_return_type = None;
+        self.current_effects = saved_effects;
+        self.current_is_pure = saved_pure;
+        self.current_allow_any = saved_any;
         self.exit_scope();
     }
 
@@ -395,6 +1020,15 @@ impl TypeChecker {
         // Check constructor
         if let Some(ctor) = &class.constructor {
             self.enter_scope();
+            let saved_effects = std::mem::take(&mut self.current_effects);
+            let saved_pure = self.current_is_pure;
+            let saved_any = self.current_allow_any;
+            self.current_effects = self
+                .infer_effects_in_block(&ctor.body, Some(&class.name))
+                .into_iter()
+                .collect();
+            self.current_is_pure = false;
+            self.current_allow_any = false;
 
             // Add 'this' binding
             self.declare_variable("this", ResolvedType::Class(class.name.clone()), true, 0..0);
@@ -406,12 +1040,53 @@ impl TypeChecker {
             }
 
             self.check_block(&ctor.body);
+            self.current_effects = saved_effects;
+            self.current_is_pure = saved_pure;
+            self.current_allow_any = saved_any;
+            self.exit_scope();
+        }
+
+        // Check destructor with inferred effects
+        if let Some(dtor) = &class.destructor {
+            self.enter_scope();
+            let saved_effects = std::mem::take(&mut self.current_effects);
+            let saved_pure = self.current_is_pure;
+            let saved_any = self.current_allow_any;
+            self.current_effects = self
+                .infer_effects_in_block(&dtor.body, Some(&class.name))
+                .into_iter()
+                .collect();
+            self.current_is_pure = false;
+            self.current_allow_any = false;
+            self.declare_variable("this", ResolvedType::Class(class.name.clone()), true, 0..0);
+            self.check_block(&dtor.body);
+            self.current_effects = saved_effects;
+            self.current_is_pure = saved_pure;
+            self.current_allow_any = saved_any;
             self.exit_scope();
         }
 
         // Check methods
         for method in &class.methods {
             self.enter_scope();
+            let saved_effects = std::mem::take(&mut self.current_effects);
+            let saved_pure = self.current_is_pure;
+            let saved_any = self.current_allow_any;
+            if let Some(class_info) = self.classes.get(&class.name) {
+                if let Some(sig) = class_info.methods.get(&method.name) {
+                    self.current_effects = sig.effects.clone();
+                    self.current_is_pure = sig.is_pure;
+                    self.current_allow_any = sig.allow_any;
+                } else {
+                    self.current_effects.clear();
+                    self.current_is_pure = false;
+                    self.current_allow_any = false;
+                }
+            } else {
+                self.current_effects.clear();
+                self.current_is_pure = false;
+                self.current_allow_any = false;
+            }
 
             // Add 'this' binding
             self.declare_variable("this", ResolvedType::Class(class.name.clone()), false, 0..0);
@@ -428,6 +1103,9 @@ impl TypeChecker {
             self.check_block(&method.body);
 
             self.current_return_type = None;
+            self.current_effects = saved_effects;
+            self.current_is_pure = saved_pure;
+            self.current_allow_any = saved_any;
             self.exit_scope();
         }
     }
@@ -565,6 +1243,7 @@ impl TypeChecker {
                 // Determine element type
                 let elem_type = match &iter_type {
                     ResolvedType::List(inner) => (**inner).clone(),
+                    ResolvedType::Range(inner) => (**inner).clone(),
                     ResolvedType::String => ResolvedType::Char,
                     _ => {
                         self.error(
@@ -1018,8 +1697,7 @@ impl TypeChecker {
                         );
                     }
                 }
-                // Range is iterable over Integer
-                ResolvedType::List(Box::new(ResolvedType::Integer))
+                ResolvedType::Range(Box::new(ResolvedType::Integer))
             }
 
             Expr::IfExpr {
@@ -1075,6 +1753,9 @@ impl TypeChecker {
     fn check_call(&mut self, callee: &Expr, args: &[Spanned<Expr>], span: Span) -> ResolvedType {
         // 1. Built-in functions (special handling for println, etc.)
         if let Expr::Ident(name) = callee {
+            if let Some(required) = Self::builtin_required_effect(name) {
+                self.enforce_required_effect(required, span.clone(), name);
+            }
             if let Some(return_type) = self.check_builtin_call(name, args, span.clone()) {
                 return return_type;
             }
@@ -1089,6 +1770,9 @@ impl TypeChecker {
                     "File" | "Time" | "System" | "Math" | "Str" | "Args"
                 ) {
                     let builtin_name = format!("{}__{}", name, field);
+                    if let Some(required) = Self::builtin_required_effect(&builtin_name) {
+                        self.enforce_required_effect(required, span.clone(), &builtin_name);
+                    }
                     if let Some(ret) = self.check_builtin_call(&builtin_name, args, span.clone()) {
                         return ret;
                     }
@@ -1129,12 +1813,23 @@ impl TypeChecker {
                 // Module dot syntax: `Module.func(...)` -> `Module__func(...)`
                 let mangled = format!("{}__{}", name, field);
                 if let Some(sig) = self.functions.get(&mangled).cloned() {
-                    if args.len() != sig.params.len() {
+                    self.enforce_call_effects(&sig, span.clone(), &mangled);
+                    let expected = sig.params.len();
+                    let bad_arity = if sig.is_variadic {
+                        args.len() < expected
+                    } else {
+                        args.len() != expected
+                    };
+                    if bad_arity {
                         self.error(
                             format!(
                                 "Function '{}' expects {} arguments, got {}",
                                 mangled,
-                                sig.params.len(),
+                                if sig.is_variadic {
+                                    format!("at least {}", expected)
+                                } else {
+                                    expected.to_string()
+                                },
                                 args.len()
                             ),
                             span.clone(),
@@ -1152,6 +1847,9 @@ impl TypeChecker {
                                 );
                             }
                         }
+                        if sig.is_variadic && sig.is_extern {
+                            self.check_variadic_ffi_tail_args(&mangled, args, expected);
+                        }
                     }
                     return sig.return_type;
                 }
@@ -1162,6 +1860,50 @@ impl TypeChecker {
         }
 
         // 3. Evaluate callee to see if it's a function type (handles global functions and local variables/params)
+        if let Expr::Ident(name) = callee {
+            if let Some(sig) = self.functions.get(name).cloned() {
+                self.enforce_call_effects(&sig, span.clone(), name);
+                let expected = sig.params.len();
+                let bad_arity = if sig.is_variadic {
+                    args.len() < expected
+                } else {
+                    args.len() != expected
+                };
+                if bad_arity {
+                    self.error(
+                        format!(
+                            "Function '{}' expects {} arguments, got {}",
+                            name,
+                            if sig.is_variadic {
+                                format!("at least {}", expected)
+                            } else {
+                                expected.to_string()
+                            },
+                            args.len()
+                        ),
+                        span.clone(),
+                    );
+                } else {
+                    for (arg, (_, param_type)) in args.iter().zip(sig.params.iter()) {
+                        let arg_type = self.check_expr(&arg.node, arg.span.clone());
+                        if !self.types_compatible(param_type, &arg_type) {
+                            self.error(
+                                format!(
+                                    "Argument type mismatch: expected {}, got {}",
+                                    param_type, arg_type
+                                ),
+                                arg.span.clone(),
+                            );
+                        }
+                    }
+                    if sig.is_variadic && sig.is_extern {
+                        self.check_variadic_ffi_tail_args(name, args, expected);
+                    }
+                }
+                return sig.return_type;
+            }
+        }
+
         let callee_type = self.check_expr(callee, span.clone());
         if let ResolvedType::Function(param_types, return_type) = callee_type {
             if args.len() != param_types.len() {
@@ -1197,6 +1939,26 @@ impl TypeChecker {
             );
         }
         ResolvedType::Unknown
+    }
+
+    fn check_variadic_ffi_tail_args(
+        &mut self,
+        callee: &str,
+        args: &[Spanned<Expr>],
+        fixed_count: usize,
+    ) {
+        for arg in args.iter().skip(fixed_count) {
+            let t = self.check_expr(&arg.node, arg.span.clone());
+            if !self.is_ffi_safe_type(&t) {
+                self.error(
+                    format!(
+                        "Variadic extern call '{}' received non-FFI-safe variadic argument type {}",
+                        callee, t
+                    ),
+                    arg.span.clone(),
+                );
+            }
+        }
     }
 
     /// Check built-in function calls
@@ -1802,6 +2564,7 @@ impl TypeChecker {
             ResolvedType::Class(name) => {
                 if let Some(class) = self.classes.get(name).cloned() {
                     if let Some(sig) = class.methods.get(method) {
+                        self.enforce_call_effects(sig, span.clone(), method);
                         if args.len() != sig.params.len() {
                             self.error(
                                 format!(
@@ -1859,6 +2622,40 @@ impl TypeChecker {
                 }
                 _ => {
                     self.error(format!("Unknown Range method: {}", method), span);
+                    ResolvedType::Unknown
+                }
+            },
+            ResolvedType::Task(inner) => match method {
+                "is_done" => {
+                    self.check_arg_count(method, args, 0, span);
+                    ResolvedType::Boolean
+                }
+                "cancel" => {
+                    self.check_arg_count(method, args, 0, span);
+                    ResolvedType::None
+                }
+                "await_timeout" => {
+                    self.check_arg_count(method, args, 1, span.clone());
+                    if let Some(arg) = args.first() {
+                        let t = self.check_expr(&arg.node, arg.span.clone());
+                        if !matches!(t, ResolvedType::Integer) {
+                            self.error(
+                                format!(
+                                    "Task.await_timeout() expects Integer milliseconds, got {}",
+                                    t
+                                ),
+                                arg.span.clone(),
+                            );
+                        }
+                    }
+                    ResolvedType::Option(Box::new((**inner).clone()))
+                }
+                "result_type" => {
+                    self.check_arg_count(method, args, 0, span);
+                    (**inner).clone()
+                }
+                _ => {
+                    self.error(format!("Unknown Task method: {}", method), span);
                     ResolvedType::Unknown
                 }
             },

@@ -44,6 +44,8 @@ pub enum Token<'src> {
     Import,
     #[token("package")]
     Package,
+    #[token("extern")]
+    Extern,
 
     #[token("true")]
     True,
@@ -147,6 +149,8 @@ pub enum Token<'src> {
     Pipe,
     #[token("@")]
     At,
+    #[token("...")]
+    Ellipsis,
     #[token("..=")]
     DotDotEq,
     #[token("..")]
