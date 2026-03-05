@@ -52,7 +52,14 @@ def parse_checksum(output: str) -> int:
     return int(line)
 
 
-def compile_apex(root: Path, bench: str, out: Path, build_env: Dict[str, str]) -> None:
+def compile_apex(
+    root: Path,
+    bench: str,
+    out: Path,
+    build_env: Dict[str, str],
+    opt_level: str,
+    target: str | None,
+) -> None:
     compiler = root / "target" / "release" / "apex-compiler"
     if not compiler.exists():
         raise RuntimeError(
@@ -60,7 +67,18 @@ def compile_apex(root: Path, bench: str, out: Path, build_env: Dict[str, str]) -
         )
 
     src = root / "benchmark" / "apex" / f"{bench}.apex"
-    cmd = [str(compiler), "compile", str(src), "-o", str(out)]
+    cmd = [
+        str(compiler),
+        "compile",
+        str(src),
+        "-o",
+        str(out),
+        "--no-check",
+        "--opt-level",
+        opt_level,
+    ]
+    if target:
+        cmd.extend(["--target", target])
     proc = run_cmd(cmd, root, env=build_env)
     if proc.returncode != 0:
         raise RuntimeError(f"Failed to compile Apex benchmark {bench}:\n{proc.stderr}")
@@ -115,6 +133,8 @@ def build_markdown(result: Dict) -> str:
     lines.append(f"- Generated: `{result['generated_at']}`")
     lines.append(f"- Repeats: `{result['repeats']}`")
     lines.append(f"- Warmup runs: `{result['warmup']}`")
+    lines.append(f"- Apex opt level: `{result.get('apex_opt_level', 'n/a')}`")
+    lines.append(f"- Apex target: `{result.get('apex_target') or 'native/default'}`")
     lines.append("")
 
     for bench in result["benchmarks"]:
@@ -169,6 +189,17 @@ def main() -> int:
     parser.add_argument("--repeats", type=int, default=5, help="Timed runs per benchmark/language")
     parser.add_argument("--warmup", type=int, default=1, help="Warmup runs per benchmark/language")
     parser.add_argument(
+        "--apex-opt-level",
+        choices=["0", "1", "2", "3", "s", "z", "fast"],
+        default="3",
+        help="Optimization level passed to `apex compile --opt-level`",
+    )
+    parser.add_argument(
+        "--apex-target",
+        default=None,
+        help="Optional target triple passed to `apex compile --target`",
+    )
+    parser.add_argument(
         "--bench",
         choices=[b.name for b in BENCHMARKS],
         default=None,
@@ -212,6 +243,8 @@ def main() -> int:
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S %Z"),
         "repeats": args.repeats,
         "warmup": args.warmup,
+        "apex_opt_level": args.apex_opt_level,
+        "apex_target": args.apex_target,
         "benchmarks": [],
     }
 
@@ -223,7 +256,14 @@ def main() -> int:
             "rust": bin_dir / f"{spec.name}_rust",
         }
 
-        compile_apex(root, spec.name, binaries["apex"], build_env)
+        compile_apex(
+            root,
+            spec.name,
+            binaries["apex"],
+            build_env,
+            args.apex_opt_level,
+            args.apex_target,
+        )
         compile_c(root, spec.name, binaries["c"])
         compile_rust(root, spec.name, binaries["rust"])
 

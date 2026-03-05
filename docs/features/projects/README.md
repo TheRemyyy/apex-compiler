@@ -93,6 +93,7 @@ Project Information
   Entry: src/main.apex
   Output: my_project
   Opt Level: 3
+  Target: native/default
   Root: /path/to/project
 
 Source Files:
@@ -105,6 +106,8 @@ Source Files:
 - Project builds (`apex build`, `apex run` in a project) use `opt_level` from `apex.toml`.
 - Valid values are: `0`, `1`, `2`, `3`, `s`, `z`, `fast`.
 - If `opt_level` is missing or invalid, Apex safely falls back to maximum-performance `-O3`.
+- If `target` is set in `apex.toml`, Apex forwards it to Clang as `--target <triple>`.
+- When `target` is set, host-native tuning flags are skipped to keep target/toolchain compatibility.
 - Single-file mode (`apex compile file.apex`, `apex run file.apex`) defaults to maximum-performance settings.
 
 ## How It Works

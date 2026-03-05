@@ -277,6 +277,14 @@ fn filter_out_main_function(source: &str) -> String {
     let mut in_main = false;
     let mut brace_depth = 0;
 
+    fn brace_delta(line: &str) -> i32 {
+        line.chars().fold(0, |acc, c| match c {
+            '{' => acc + 1,
+            '}' => acc - 1,
+            _ => acc,
+        })
+    }
+
     for line in source.lines() {
         let trimmed = line.trim();
 
@@ -288,21 +296,20 @@ fn filter_out_main_function(source: &str) -> String {
         // Detect main function start
         if trimmed.starts_with("function main()") && !in_main {
             in_main = true;
+            brace_depth = brace_delta(trimmed);
+            if brace_depth <= 0 {
+                in_main = false;
+                brace_depth = 0;
+            }
             continue;
         }
 
         if in_main {
-            // Track braces to find end of main
-            for c in trimmed.chars() {
-                if c == '{' {
-                    brace_depth += 1;
-                } else if c == '}' {
-                    brace_depth -= 1;
-                    if brace_depth == 0 {
-                        in_main = false;
-                        break;
-                    }
-                }
+            // Track braces to find end of main; include the opening brace on signature line.
+            brace_depth += brace_delta(trimmed);
+            if brace_depth <= 0 {
+                in_main = false;
+                brace_depth = 0;
             }
             continue;
         }
@@ -323,7 +330,7 @@ fn generate_suite_runner_with_mut(code: &mut String, suite: &TestSuite) {
     // BeforeAll
     if let Some(ref before_all_fn) = suite.before_all {
         code.push_str(&format!("    // @BeforeAll: {}\n", before_all_fn.name));
-        code.push_str(&format!("    {};\n", before_all_fn.name));
+        code.push_str(&format!("    {}();\n", before_all_fn.name));
         code.push_str("    println(\"\");\n\n");
     }
 
@@ -332,7 +339,7 @@ fn generate_suite_runner_with_mut(code: &mut String, suite: &TestSuite) {
         // BeforeEach
         if let Some(ref before_each_fn) = suite.before_each {
             code.push_str(&format!("    // @Before: {}\n", before_each_fn.name));
-            code.push_str(&format!("    {};\n", before_each_fn.name));
+            code.push_str(&format!("    {}();\n", before_each_fn.name));
         }
 
         // Test itself
@@ -352,7 +359,7 @@ fn generate_suite_runner_with_mut(code: &mut String, suite: &TestSuite) {
             // Run the test
             code.push_str("    tests_total = tests_total + 1;\n");
             code.push_str(&format!("    print(\"Running: {}... \");\n", test.name));
-            code.push_str(&format!("    {};\n", test.name));
+            code.push_str(&format!("    {}();\n", test.name));
             code.push_str("    tests_passed = tests_passed + 1;\n");
             code.push_str("    println(\"[PASS]\");\n");
         }
@@ -361,7 +368,7 @@ fn generate_suite_runner_with_mut(code: &mut String, suite: &TestSuite) {
         // AfterEach
         if let Some(ref after_each_fn) = suite.after_each {
             code.push_str(&format!("    // @After: {}\n", after_each_fn.name));
-            code.push_str(&format!("    {};\n", after_each_fn.name));
+            code.push_str(&format!("    {}();\n", after_each_fn.name));
             code.push_str("    println(\"\");\n\n");
         }
     }
@@ -369,7 +376,7 @@ fn generate_suite_runner_with_mut(code: &mut String, suite: &TestSuite) {
     // AfterAll
     if let Some(ref after_all_fn) = suite.after_all {
         code.push_str(&format!("    // @AfterAll: {}\n", after_all_fn.name));
-        code.push_str(&format!("    {};\n", after_all_fn.name));
+        code.push_str(&format!("    {}();\n", after_all_fn.name));
         code.push_str("    println(\"\");\n\n");
     }
 }
@@ -384,7 +391,7 @@ fn generate_suite_runner(code: &mut String, suite: &TestSuite) {
     // BeforeAll
     if let Some(ref before_all_fn) = suite.before_all {
         code.push_str(&format!("    // @BeforeAll: {}\n", before_all_fn.name));
-        code.push_str(&format!("    {};\n", before_all_fn.name));
+        code.push_str(&format!("    {}();\n", before_all_fn.name));
         code.push_str("    println(\"\");\n\n");
     }
 
@@ -393,7 +400,7 @@ fn generate_suite_runner(code: &mut String, suite: &TestSuite) {
         // BeforeEach
         if let Some(ref before_each_fn) = suite.before_each {
             code.push_str(&format!("    // @Before: {}\n", before_each_fn.name));
-            code.push_str(&format!("    {};\n", before_each_fn.name));
+            code.push_str(&format!("    {}();\n", before_each_fn.name));
         }
 
         // Test itself
@@ -413,7 +420,7 @@ fn generate_suite_runner(code: &mut String, suite: &TestSuite) {
             // Run the test
             code.push_str("    tests_total = tests_total + 1;\n");
             code.push_str(&format!("    print(\"Running: {}... \");\n", test.name));
-            code.push_str(&format!("    {};\n", test.name));
+            code.push_str(&format!("    {}();\n", test.name));
             code.push_str("    tests_passed = tests_passed + 1;\n");
             code.push_str("    println(\"[PASS]\");\n");
         }
@@ -422,7 +429,7 @@ fn generate_suite_runner(code: &mut String, suite: &TestSuite) {
         // AfterEach
         if let Some(ref after_each_fn) = suite.after_each {
             code.push_str(&format!("    // @After: {}\n", after_each_fn.name));
-            code.push_str(&format!("    {};\n", after_each_fn.name));
+            code.push_str(&format!("    {}();\n", after_each_fn.name));
             code.push_str("    println(\"\");\n\n");
         }
     }
@@ -430,7 +437,7 @@ fn generate_suite_runner(code: &mut String, suite: &TestSuite) {
     // AfterAll
     if let Some(ref after_all_fn) = suite.after_all {
         code.push_str(&format!("    // @AfterAll: {}\n", after_all_fn.name));
-        code.push_str(&format!("    {};\n", after_all_fn.name));
+        code.push_str(&format!("    {}();\n", after_all_fn.name));
         code.push_str("    println(\"\");\n\n");
     }
 }

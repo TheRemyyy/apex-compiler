@@ -4,6 +4,38 @@ All notable changes to the Apex Programming Language Compiler will be documented
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### ✨ Added
+
+- `apex compile` now supports:
+  - `--opt-level <0|1|2|3|s|z|fast>`
+  - `--target <triple>`
+- Benchmark runner improvements:
+  - `benchmark/run.py --apex-opt-level ...` (default: `3`)
+  - `benchmark/run.py --apex-target ...`
+  - Apex benchmark compile now uses `--no-check` for fair runtime-focused comparisons.
+
+### ♻️ Changed
+
+- Project builds now wire `target` from `apex.toml` into final Clang linking (`--target <triple>`).
+- `apex info` now displays `Target` value (`native/default` when not set).
+- Clang fallback flow now degrades native tuning more gracefully:
+  - tries `-march=native -mtune=native`
+  - then `-march=native`
+  - then baseline flags
+
+### 🐛 Fixed
+
+- Fixed `apex new` default config paths:
+  - `entry` is now `src/main.apex`
+  - `files` includes `src/main.apex`
+- Fixed test runner generation:
+  - generated hook/test invocations now call functions (`fn();`) instead of expression statements (`fn;`)
+  - `main()` stripping logic no longer over-consumes source after the main function.
+- Fixed `apex test --filter` summary counters:
+  - `total`/`ignored` now reflect the filtered subset, not the unfiltered discovery set.
+
 ## [1.3.4] - Async Runtime, FFI, Bindgen - 2026-03-05
 
 ### ✨ Added

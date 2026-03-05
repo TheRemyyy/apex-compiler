@@ -41,7 +41,24 @@ apex <command> [arguments] [flags]
 
 Optimization note:
 - In project mode, optimization level is controlled by `opt_level` in `apex.toml` (`0/1/2/3/s/z/fast`, default `3`).
-- In single-file mode (`apex compile file.apex` / `apex run file.apex`), Apex uses maximum-performance optimization by default.
+- In project mode, `target` in `apex.toml` is passed to Clang as `--target <triple>` when set.
+- In single-file mode (`apex compile file.apex` / `apex run file.apex`), Apex defaults to `-O3` and uses native tuning when available.
+
+## Compile Command Flags
+
+The `compile` command supports extra codegen controls for single-file workflows:
+
+```bash
+apex compile file.apex --opt-level 3
+apex compile file.apex --target x86_64-unknown-linux-gnu
+```
+
+| Flag | Description |
+| :--- | :--- |
+| `--opt-level <0|1|2|3|s|z|fast>` | Sets final Clang optimization level for the file compile. |
+| `--target <triple>` | Passes target triple to Clang (`--target <triple>`). |
+| `--emit-llvm` | Emits LLVM IR (`.ll`) instead of linking a binary. |
+| `--no-check` | Skips import/type/borrow checks before codegen. |
 
 ## Test Command
 
@@ -68,6 +85,9 @@ apex test --filter "math"
 | `--path <file>` | `-p` | Path to test file or directory. |
 | `--list` | `-l` | Lists tests without running them. |
 | `--filter <pattern>` | `-f` | Filters tests by name pattern. |
+
+Filter note:
+- When `--filter` is used, reported totals/ignored counts reflect only the filtered test set.
 
 ## Examples
 

@@ -48,8 +48,8 @@ impl Default for ProjectConfig {
         Self {
             name: "untitled".to_string(),
             version: "0.1.0".to_string(),
-            entry: "main.apex".to_string(),
-            files: vec!["main.apex".to_string()],
+            entry: "src/main.apex".to_string(),
+            files: vec!["src/main.apex".to_string()],
             output: default_output(),
             flags: vec![],
             dependencies: HashMap::new(),
@@ -86,8 +86,8 @@ impl ProjectConfig {
         Self {
             name: name.to_string(),
             version: "0.1.0".to_string(),
-            entry: "main.apex".to_string(),
-            files: vec!["main.apex".to_string()],
+            entry: "src/main.apex".to_string(),
+            files: vec!["src/main.apex".to_string()],
             output: name.to_string(),
             flags: vec![],
             dependencies: HashMap::new(),

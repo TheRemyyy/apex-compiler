@@ -84,6 +84,12 @@ enum Commands {
         /// Output file
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Optimization level: 0,1,2,3,s,z,fast (default: 3)
+        #[arg(long)]
+        opt_level: Option<String>,
+        /// Target triple passed to clang (example: x86_64-unknown-linux-gnu)
+        #[arg(long)]
+        target: Option<String>,
         /// Emit LLVM IR
         #[arg(long)]
         emit_llvm: bool,
@@ -157,9 +163,18 @@ fn main() {
         Commands::Compile {
             file,
             output,
+            opt_level,
+            target,
             emit_llvm,
             no_check,
-        } => compile_file(&file, output.as_deref(), emit_llvm, !no_check),
+        } => compile_file(
+            &file,
+            output.as_deref(),
+            emit_llvm,
+            !no_check,
+            opt_level.as_deref(),
+            target.as_deref(),
+        ),
         Commands::Check { file } => check_file(file.as_deref()),
         Commands::Info => show_project_info(),
         Commands::Lex { file } => lex_file(&file),
@@ -561,6 +576,7 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
         &output_path,
         emit_llvm,
         Some(&config.opt_level),
+        config.target.as_deref(),
     )?;
 
     println!(
@@ -1770,6 +1786,7 @@ fn compile_program_ast(
     output_path: &Path,
     emit_llvm: bool,
     opt_level: Option<&str>,
+    target: Option<&str>,
 ) -> Result<(), String> {
     let context = Context::create();
     let module_name = source_path
@@ -1789,7 +1806,7 @@ fn compile_program_ast(
     } else {
         let ir_path = output_path.with_extension("ll");
         codegen.write_ir(&ir_path)?;
-        compile_ir(&ir_path, output_path, opt_level)?;
+        compile_ir(&ir_path, output_path, opt_level, target)?;
         let _ = fs::remove_file(&ir_path);
     }
 
@@ -1838,7 +1855,7 @@ fn run_single_file(
     #[cfg(not(windows))]
     let output = file.with_extension("run");
 
-    compile_file(file, Some(&output), false, do_check)?;
+    compile_file(file, Some(&output), false, do_check, None, None)?;
 
     println!("{}", "Running...".cyan().bold());
     println!();
@@ -1867,6 +1884,8 @@ fn compile_file(
     output: Option<&Path>,
     emit_llvm: bool,
     do_check: bool,
+    opt_level: Option<&str>,
+    target: Option<&str>,
 ) -> Result<(), String> {
     // Check if we're in a project
     if let Some(project_root) = find_project_root(&std::env::current_dir().unwrap()) {
@@ -1892,7 +1911,15 @@ fn compile_file(
         }
     });
 
-    compile_source(&source, file, &output_path, emit_llvm, do_check, None)?;
+    compile_source(
+        &source,
+        file,
+        &output_path,
+        emit_llvm,
+        do_check,
+        opt_level,
+        target,
+    )?;
 
     println!("{} {}", "Output".green().bold(), output_path.display());
     Ok(())
@@ -1906,6 +1933,7 @@ fn compile_source(
     emit_llvm: bool,
     do_check: bool,
     opt_level: Option<&str>,
+    target: Option<&str>,
 ) -> Result<(), String> {
     let filename = source_path
         .file_name()
@@ -1967,7 +1995,7 @@ fn compile_source(
         let ir_path = output_path.with_extension("ll");
         codegen.write_ir(&ir_path)?;
 
-        compile_ir(&ir_path, output_path, opt_level)?;
+        compile_ir(&ir_path, output_path, opt_level, target)?;
         let _ = fs::remove_file(&ir_path);
     }
 
@@ -1992,9 +2020,14 @@ fn resolve_clang_opt_flag(opt_level: Option<&str>) -> &'static str {
 }
 
 /// Compile LLVM IR using clang
-fn compile_ir(ir_path: &Path, output_path: &Path, opt_level: Option<&str>) -> Result<(), String> {
+fn compile_ir(
+    ir_path: &Path,
+    output_path: &Path,
+    opt_level: Option<&str>,
+    target: Option<&str>,
+) -> Result<(), String> {
     let opt_flag = resolve_clang_opt_flag(opt_level);
-    let run_clang = |tuned: bool| {
+    let run_clang = |march_native: bool, mtune_native: bool| {
         let mut cmd = Command::new("clang");
         cmd.arg(ir_path)
             .arg("-o")
@@ -2002,8 +2035,17 @@ fn compile_ir(ir_path: &Path, output_path: &Path, opt_level: Option<&str>) -> Re
             .arg("-Wno-override-module")
             .arg(opt_flag);
 
-        if tuned {
-            cmd.arg("-march=native").arg("-mtune=native");
+        if let Some(target_triple) = target {
+            cmd.arg("--target").arg(target_triple);
+        }
+
+        if target.is_none() {
+            if march_native {
+                cmd.arg("-march=native");
+            }
+            if mtune_native {
+                cmd.arg("-mtune=native");
+            }
         }
 
         #[cfg(windows)]
@@ -2015,36 +2057,33 @@ fn compile_ir(ir_path: &Path, output_path: &Path, opt_level: Option<&str>) -> Re
         cmd.output()
     };
 
-    // Prefer native-tuned binaries for maximum local performance, but keep a safe fallback.
-    let tuned = run_clang(true);
-    match tuned {
-        Ok(output) if output.status.success() => Ok(()),
-        Ok(_) => {
-            let fallback = run_clang(false);
-            match fallback {
-                Ok(output) => {
-                    if output.status.success() {
-                        Ok(())
-                    } else {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        Err(format!(
-                            "{}: Clang failed: {}",
-                            "error".red().bold(),
-                            stderr
-                        ))
-                    }
-                }
-                Err(_) => Err(format!(
+    // Keep aggressive native tuning, but degrade gracefully if one native flag is unsupported.
+    let mut attempts: Vec<(bool, bool)> = vec![(true, true), (true, false), (false, false)];
+    if target.is_some() {
+        attempts = vec![(false, false)];
+    }
+
+    let mut last_stderr = String::new();
+    for (march_native, mtune_native) in attempts {
+        match run_clang(march_native, mtune_native) {
+            Ok(output) if output.status.success() => return Ok(()),
+            Ok(output) => {
+                last_stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            }
+            Err(_) => {
+                return Err(format!(
                     "{}: Clang not found. Install clang to compile.",
                     "error".red().bold()
-                )),
+                ));
             }
         }
-        Err(_) => Err(format!(
-            "{}: Clang not found. Install clang to compile.",
-            "error".red().bold()
-        )),
     }
+
+    Err(format!(
+        "{}: Clang failed: {}",
+        "error".red().bold(),
+        last_stderr
+    ))
 }
 
 /// Check a single file
@@ -2148,6 +2187,11 @@ fn show_project_info() -> Result<(), String> {
     println!("  {}: {}", "Entry".dimmed(), config.entry);
     println!("  {}: {}", "Output".dimmed(), config.output);
     println!("  {}: {}", "Opt Level".dimmed(), config.opt_level);
+    println!(
+        "  {}: {}",
+        "Target".dimmed(),
+        config.target.as_deref().unwrap_or("native/default")
+    );
     println!("  {}: {}", "Root".dimmed(), project_root.display());
 
     println!("\n{}", "Source Files:".dimmed());
@@ -2318,10 +2362,16 @@ fn run_tests(
             continue;
         }
 
+        let filtered_total_tests: usize = filtered_suites.iter().map(|s| s.tests.len()).sum();
+        let filtered_ignored_tests: usize = filtered_suites
+            .iter()
+            .map(|s| s.tests.iter().filter(|t| t.ignore_reason.is_some()).count())
+            .sum();
+
         let filtered_discovery = test_runner::TestDiscovery {
             suites: filtered_suites,
-            total_tests: discovery.total_tests,
-            ignored_tests: discovery.ignored_tests,
+            total_tests: filtered_total_tests,
+            ignored_tests: filtered_ignored_tests,
         };
 
         // List or run tests
@@ -2386,7 +2436,7 @@ fn compile_and_run_test(source_path: &Path, exe_path: &Path) -> Result<(), Strin
     let source = fs::read_to_string(source_path)
         .map_err(|e| format!("Failed to read test runner: {}", e))?;
 
-    compile_source(&source, source_path, exe_path, false, true, None)?;
+    compile_source(&source, source_path, exe_path, false, true, None, None)?;
 
     // Run the compiled test
     println!("\n{}", "Running tests...".cyan().bold());
