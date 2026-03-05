@@ -31,6 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Namespace Collisions**: Collision handling now fails early with clear function+namespace diagnostics.
 - **Documentation Consistency**: Updated `apex` CLI usage, module syntax notes, and compiler architecture file map.
 - **Class/Module Collisions**: Top-level class and module name collisions now fail early across namespaces.
+- **List Capacity Growth**: Fixed `List.push()` codegen to grow backing storage with `realloc` when `length >= capacity`, preventing heap corruption (`malloc(): corrupted top size`) in large workloads like `benchmark/apex/matrix_mul.apex`.
 
 ## [1.3.2] - Range Types - 2026-02-22
 

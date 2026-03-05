@@ -870,9 +870,23 @@ impl<'ctx> Codegen<'ctx> {
 
         match method {
             "push" => {
-                // Get current length and capacity
                 let i32_type = self.context.i32_type();
+                let i64_type = self.context.i64_type();
                 let zero = i32_type.const_int(0, false);
+                let one_i64 = i64_type.const_int(1, false);
+                let eight_i64 = i64_type.const_int(8, false);
+
+                // Get current capacity/length/data pointers.
+                let capacity_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(0, false)],
+                            "cap_ptr",
+                        )
+                        .unwrap()
+                };
                 let length_ptr = unsafe {
                     self.builder
                         .build_gep(
@@ -883,13 +897,6 @@ impl<'ctx> Codegen<'ctx> {
                         )
                         .unwrap()
                 };
-                let length = self
-                    .builder
-                    .build_load(self.context.i64_type(), length_ptr, "len")
-                    .unwrap()
-                    .into_int_value();
-
-                // Get data pointer
                 let data_ptr_ptr = unsafe {
                     self.builder
                         .build_gep(
@@ -900,6 +907,66 @@ impl<'ctx> Codegen<'ctx> {
                         )
                         .unwrap()
                 };
+
+                let capacity = self
+                    .builder
+                    .build_load(i64_type, capacity_ptr, "cap")
+                    .unwrap()
+                    .into_int_value();
+                let length = self
+                    .builder
+                    .build_load(i64_type, length_ptr, "len")
+                    .unwrap()
+                    .into_int_value();
+
+                // Grow backing storage when length reaches capacity.
+                let need_grow = self
+                    .builder
+                    .build_int_compare(IntPredicate::SGE, length, capacity, "need_grow")
+                    .unwrap();
+                let function = self
+                    .current_function
+                    .ok_or_else(|| CodegenError::new("No current function for list push"))?;
+                let grow_bb = self.context.append_basic_block(function, "list_grow");
+                let cont_bb = self.context.append_basic_block(function, "list_push_cont");
+                self.builder
+                    .build_conditional_branch(need_grow, grow_bb, cont_bb)
+                    .unwrap();
+
+                self.builder.position_at_end(grow_bb);
+                let new_capacity = self
+                    .builder
+                    .build_int_mul(capacity, i64_type.const_int(2, false), "new_cap")
+                    .unwrap();
+                let new_size = self
+                    .builder
+                    .build_int_mul(new_capacity, eight_i64, "new_size")
+                    .unwrap();
+                let old_data = self
+                    .builder
+                    .build_load(
+                        self.context.ptr_type(AddressSpace::default()),
+                        data_ptr_ptr,
+                        "old_data",
+                    )
+                    .unwrap()
+                    .into_pointer_value();
+                let realloc = self.get_or_declare_realloc();
+                let grown_call = self
+                    .builder
+                    .build_call(realloc, &[old_data.into(), new_size.into()], "grown_data")
+                    .unwrap();
+                let grown_data = match grown_call.try_as_basic_value() {
+                    ValueKind::Basic(v) => v,
+                    _ => panic!("realloc should return a value"),
+                };
+                self.builder.build_store(data_ptr_ptr, grown_data).unwrap();
+                self.builder
+                    .build_store(capacity_ptr, new_capacity)
+                    .unwrap();
+                self.builder.build_unconditional_branch(cont_bb).unwrap();
+
+                self.builder.position_at_end(cont_bb);
                 let data_ptr = self
                     .builder
                     .build_load(
@@ -913,11 +980,7 @@ impl<'ctx> Codegen<'ctx> {
                 // Calculate element pointer: data + length * 8
                 let offset = self
                     .builder
-                    .build_int_mul(
-                        length,
-                        self.context.i64_type().const_int(8, false),
-                        "offset",
-                    )
+                    .build_int_mul(length, eight_i64, "offset")
                     .unwrap();
                 let elem_ptr = unsafe {
                     self.builder
@@ -932,11 +995,7 @@ impl<'ctx> Codegen<'ctx> {
                 // Increment length
                 let new_length = self
                     .builder
-                    .build_int_add(
-                        length,
-                        self.context.i64_type().const_int(1, false),
-                        "new_len",
-                    )
+                    .build_int_add(length, one_i64, "new_len")
                     .unwrap();
                 self.builder.build_store(length_ptr, new_length).unwrap();
 
@@ -1149,6 +1208,20 @@ impl<'ctx> Codegen<'ctx> {
 
         match method {
             "push" => {
+                let i64_type = self.context.i64_type();
+                let one_i64 = i64_type.const_int(1, false);
+                let eight_i64 = i64_type.const_int(8, false);
+
+                let capacity_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(0, false)],
+                            "cap_ptr",
+                        )
+                        .unwrap()
+                };
                 let length_ptr = unsafe {
                     self.builder
                         .build_gep(
@@ -1159,12 +1232,6 @@ impl<'ctx> Codegen<'ctx> {
                         )
                         .unwrap()
                 };
-                let length = self
-                    .builder
-                    .build_load(self.context.i64_type(), length_ptr, "len")
-                    .unwrap()
-                    .into_int_value();
-
                 let data_ptr_ptr = unsafe {
                     self.builder
                         .build_gep(
@@ -1175,6 +1242,65 @@ impl<'ctx> Codegen<'ctx> {
                         )
                         .unwrap()
                 };
+
+                let capacity = self
+                    .builder
+                    .build_load(i64_type, capacity_ptr, "cap")
+                    .unwrap()
+                    .into_int_value();
+                let length = self
+                    .builder
+                    .build_load(i64_type, length_ptr, "len")
+                    .unwrap()
+                    .into_int_value();
+
+                let need_grow = self
+                    .builder
+                    .build_int_compare(IntPredicate::SGE, length, capacity, "need_grow")
+                    .unwrap();
+                let function = self
+                    .current_function
+                    .ok_or_else(|| CodegenError::new("No current function for list push"))?;
+                let grow_bb = self.context.append_basic_block(function, "list_grow");
+                let cont_bb = self.context.append_basic_block(function, "list_push_cont");
+                self.builder
+                    .build_conditional_branch(need_grow, grow_bb, cont_bb)
+                    .unwrap();
+
+                self.builder.position_at_end(grow_bb);
+                let new_capacity = self
+                    .builder
+                    .build_int_mul(capacity, i64_type.const_int(2, false), "new_cap")
+                    .unwrap();
+                let new_size = self
+                    .builder
+                    .build_int_mul(new_capacity, eight_i64, "new_size")
+                    .unwrap();
+                let old_data = self
+                    .builder
+                    .build_load(
+                        self.context.ptr_type(AddressSpace::default()),
+                        data_ptr_ptr,
+                        "old_data",
+                    )
+                    .unwrap()
+                    .into_pointer_value();
+                let realloc = self.get_or_declare_realloc();
+                let grown_call = self
+                    .builder
+                    .build_call(realloc, &[old_data.into(), new_size.into()], "grown_data")
+                    .unwrap();
+                let grown_data = match grown_call.try_as_basic_value() {
+                    ValueKind::Basic(v) => v,
+                    _ => panic!("realloc should return a value"),
+                };
+                self.builder.build_store(data_ptr_ptr, grown_data).unwrap();
+                self.builder
+                    .build_store(capacity_ptr, new_capacity)
+                    .unwrap();
+                self.builder.build_unconditional_branch(cont_bb).unwrap();
+
+                self.builder.position_at_end(cont_bb);
                 let data_ptr = self
                     .builder
                     .build_load(
@@ -1187,11 +1313,7 @@ impl<'ctx> Codegen<'ctx> {
 
                 let offset = self
                     .builder
-                    .build_int_mul(
-                        length,
-                        self.context.i64_type().const_int(8, false),
-                        "offset",
-                    )
+                    .build_int_mul(length, eight_i64, "offset")
                     .unwrap();
                 let elem_ptr = unsafe {
                     self.builder
@@ -1204,11 +1326,7 @@ impl<'ctx> Codegen<'ctx> {
 
                 let new_length = self
                     .builder
-                    .build_int_add(
-                        length,
-                        self.context.i64_type().const_int(1, false),
-                        "new_len",
-                    )
+                    .build_int_add(length, one_i64, "new_len")
                     .unwrap();
                 self.builder.build_store(length_ptr, new_length).unwrap();
 
