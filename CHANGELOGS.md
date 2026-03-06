@@ -55,6 +55,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### ♻️ Changed
 
+- Switched internal stdlib metadata access to a shared lazy registry (`OnceLock`) instead of repeated `StdLib::new()` construction in hot paths (type checker, borrow checker, rewrite, codegen, and import-check entry points).
 - Project object compilation for cache misses now runs in parallel (per-file LLVM context + codegen instance), then links sequentially.
 - LSP rename/references now resolve symbol locations from parsed AST spans instead of raw text search.
 - LSP rename/references now resolve occurrences by cursor-selected lexical binding (scope-aware), preventing cross-scope over-rename of same-name symbols.

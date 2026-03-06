@@ -37,7 +37,7 @@ use crate::codegen::Codegen;
 use crate::import_check::ImportChecker;
 use crate::parser::Parser;
 use crate::project::{find_project_root, OutputKind, ProjectConfig};
-use crate::stdlib::StdLib;
+use crate::stdlib::stdlib_registry;
 use crate::test_runner::{discover_tests, generate_test_runner_with_source, print_discovery};
 use crate::typeck::TypeChecker;
 
@@ -1205,7 +1205,6 @@ fn build_project(
     if do_check {
         println!("{} Checking imports...", "→".cyan());
         let shared_function_map = Arc::new(global_function_map.clone());
-        let stdlib = StdLib::new();
 
         let import_results: Vec<Result<(), String>> = parsed_files
             .par_iter()
@@ -1214,7 +1213,7 @@ fn build_project(
                     Arc::clone(&shared_function_map),
                     unit.namespace.clone(),
                     unit.imports.clone(),
-                    &stdlib,
+                    stdlib_registry(),
                 );
 
                 if let Err(errors) = checker.check_program(&unit.program) {
@@ -1696,10 +1695,13 @@ fn compile_source(
         // Import check
         let namespace = extract_namespace(&program);
         let imports = extract_imports(&program);
-        let stdlib = StdLib::new();
         let function_namespaces = import_check::extract_function_namespaces(&program, &namespace);
-        let mut import_checker =
-            ImportChecker::new(Arc::new(function_namespaces), namespace, imports, &stdlib);
+        let mut import_checker = ImportChecker::new(
+            Arc::new(function_namespaces),
+            namespace,
+            imports,
+            stdlib_registry(),
+        );
         if let Err(errors) = import_checker.check_program(&program) {
             eprintln!("{} Import errors:", "error".red().bold());
             for err in errors {
@@ -2064,10 +2066,13 @@ fn check_file(file: Option<&Path>) -> Result<(), String> {
     // Run import checker
     let namespace = extract_namespace(&program);
     let imports = extract_imports(&program);
-    let stdlib = StdLib::new();
     let function_namespaces = import_check::extract_function_namespaces(&program, &namespace);
-    let mut import_checker =
-        ImportChecker::new(Arc::new(function_namespaces), namespace, imports, &stdlib);
+    let mut import_checker = ImportChecker::new(
+        Arc::new(function_namespaces),
+        namespace,
+        imports,
+        stdlib_registry(),
+    );
     if let Err(errors) = import_checker.check_program(&program) {
         eprintln!("{} Import errors:", "error".red().bold());
         for err in errors {

@@ -9,7 +9,7 @@
 #![allow(dead_code)]
 
 use crate::ast::*;
-use crate::stdlib::StdLib;
+use crate::stdlib::stdlib_registry;
 use std::collections::HashMap;
 
 /// Type checking error with source location
@@ -230,7 +230,7 @@ impl TypeChecker {
             return None;
         }
         let namespace_path = self.import_aliases.get(alias_ident)?;
-        StdLib::new().resolve_alias_call(namespace_path, member)
+        stdlib_registry().resolve_alias_call(namespace_path, member)
     }
 
     fn resolve_import_alias_symbol(&self, alias_ident: &str) -> Option<String> {
@@ -245,7 +245,7 @@ impl TypeChecker {
         let mut parts = path.split('.').collect::<Vec<_>>();
         let symbol = parts.pop()?;
         let namespace = parts.join(".");
-        if StdLib::new()
+        if stdlib_registry()
             .get_namespace(symbol)
             .is_some_and(|owner| owner == &namespace)
         {

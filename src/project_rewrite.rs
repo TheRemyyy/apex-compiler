@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{self, Decl, Expr, ImportDecl, Program, Stmt};
-use crate::stdlib::StdLib;
+use crate::stdlib::stdlib_registry;
 
 type ImportedMap = HashMap<String, (String, String)>;
 
@@ -935,7 +935,7 @@ fn rewrite_expr_calls_for_project(
                     if let Some((ns, symbol_name)) = imported_modules.get(module_alias) {
                         let namespace_path = format!("{}.{}", ns, symbol_name);
                         if let Some(canonical) =
-                            StdLib::new().resolve_alias_call(&namespace_path, field)
+                            stdlib_registry().resolve_alias_call(&namespace_path, field)
                         {
                             if let Some((owner, method)) = canonical.split_once("__") {
                                 Expr::Field {
@@ -993,7 +993,7 @@ fn rewrite_expr_calls_for_project(
                             name,
                         ))
                     } else if let Some((ns, symbol_name)) = imported_map.get(name) {
-                        if StdLib::new()
+                        if stdlib_registry()
                             .get_namespace(symbol_name)
                             .is_some_and(|owner| owner == ns)
                         {

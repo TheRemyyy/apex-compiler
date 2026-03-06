@@ -9,7 +9,7 @@
 #![allow(dead_code)]
 
 use crate::ast::*;
-use crate::stdlib::StdLib;
+use crate::stdlib::stdlib_registry;
 use std::collections::{HashMap, HashSet};
 
 /// Borrow checking error
@@ -116,7 +116,7 @@ impl BorrowChecker {
             borrows: Vec::new(),
             functions: HashMap::new(),
             classes: HashMap::new(),
-            stdlib_functions: StdLib::new().get_functions().keys().cloned().collect(),
+            stdlib_functions: stdlib_registry().get_functions().keys().cloned().collect(),
             import_aliases: HashMap::new(),
             scope_depth: 0,
             errors: Vec::new(),
@@ -1013,7 +1013,7 @@ impl BorrowChecker {
             return None;
         }
         let namespace_path = self.import_aliases.get(alias_ident)?;
-        StdLib::new().resolve_alias_call(namespace_path, member)
+        stdlib_registry().resolve_alias_call(namespace_path, member)
     }
 
     fn infer_expr_class(&self, expr: &Expr) -> Option<String> {

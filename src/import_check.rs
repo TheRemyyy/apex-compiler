@@ -607,6 +607,7 @@ mod tests {
     use super::*;
     use crate::lexer::tokenize;
     use crate::parser::Parser;
+    use crate::stdlib::stdlib_registry;
 
     fn check_import_errors(source: &str) -> Vec<ImportError> {
         let tokens = tokenize(source).expect("tokenize");
@@ -625,9 +626,12 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let function_namespaces = extract_function_namespaces(&program, &namespace);
-        let stdlib = StdLib::new();
-        let mut checker =
-            ImportChecker::new(Arc::new(function_namespaces), namespace, imports, &stdlib);
+        let mut checker = ImportChecker::new(
+            Arc::new(function_namespaces),
+            namespace,
+            imports,
+            stdlib_registry(),
+        );
 
         checker.check_program(&program).err().unwrap_or_default()
     }

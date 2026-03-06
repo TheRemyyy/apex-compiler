@@ -56,6 +56,8 @@ This document describes the internal architecture of the Apex compiler.
 - **Alias resolution hardening**:
   - Specific-symbol aliases (for example `import std.math.Math__abs as abs_fn`) are resolved across type checking and code generation, so aliased calls compile and execute correctly.
   - Alias canonicalization now uses symbol-table/registry lookups instead of brittle namespace-prefix checks.
+- **Shared stdlib registry**:
+  - Compiler stages now reuse a single lazy-initialized stdlib registry (`OnceLock`) instead of repeatedly constructing stdlib lookup maps during hot-path analysis and lowering.
 - **Lint scope analysis hardening**:
   - Shadowing diagnostics now account for parameters and `for`-loop variables.
   - Unused-variable diagnostics now include unused `for`-loop iterator variables.

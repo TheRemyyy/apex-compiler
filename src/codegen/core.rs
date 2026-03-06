@@ -16,7 +16,7 @@ use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
-use crate::stdlib::StdLib;
+use crate::stdlib::stdlib_registry;
 
 /// Codegen error
 #[derive(Debug)]
@@ -273,7 +273,7 @@ impl<'ctx> Codegen<'ctx> {
     fn resolve_module_alias(&self, name: &str) -> String {
         if let Some(path) = self.import_aliases.get(name) {
             let mut owner: Option<String> = None;
-            for (func, ns) in StdLib::new().get_functions() {
+            for (func, ns) in stdlib_registry().get_functions() {
                 if ns == path {
                     if let Some((candidate_owner, _)) = func.split_once("__") {
                         let candidate_owner = candidate_owner.to_string();
@@ -307,7 +307,7 @@ impl<'ctx> Codegen<'ctx> {
         };
         let namespace = parts.join(".");
 
-        if StdLib::new()
+        if stdlib_registry()
             .get_namespace(symbol)
             .is_some_and(|owner| owner == &namespace)
             || self.functions.contains_key(symbol)

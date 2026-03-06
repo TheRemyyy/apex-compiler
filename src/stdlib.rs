@@ -8,6 +8,13 @@
 //! - std.string - String utilities
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
+
+static STDLIB_REGISTRY: OnceLock<StdLib> = OnceLock::new();
+
+pub fn stdlib_registry() -> &'static StdLib {
+    STDLIB_REGISTRY.get_or_init(StdLib::new)
+}
 
 /// Standard library function registry
 pub struct StdLib {
