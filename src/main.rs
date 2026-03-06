@@ -20,6 +20,7 @@ mod typeck;
 use clap::{Parser as ClapParser, Subcommand};
 use colored::*;
 use inkwell::context::Context;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -371,6 +372,18 @@ struct ParsedFileCacheEntry {
     imports: Vec<ImportDecl>,
 }
 
+#[derive(Debug, Clone)]
+struct ParsedProjectUnit {
+    file: PathBuf,
+    namespace: String,
+    program: Program,
+    imports: Vec<ImportDecl>,
+    function_names: Vec<String>,
+    class_names: Vec<String>,
+    module_names: Vec<String>,
+    from_parse_cache: bool,
+}
+
 fn parsed_file_cache_path(project_root: &Path, file: &Path) -> PathBuf {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     file.hash(&mut hasher);
@@ -457,6 +470,94 @@ fn save_parsed_file_cache(
             path.display(),
             e
         )
+    })
+}
+
+fn parse_project_unit(project_root: &Path, file: &Path) -> Result<ParsedProjectUnit, String> {
+    let source = fs::read_to_string(file).map_err(|e| {
+        format!(
+            "{}: Failed to read '{}': {}",
+            "error".red().bold(),
+            file.display(),
+            e
+        )
+    })?;
+
+    let filename = file
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown.apex");
+
+    let source_fp = source_fingerprint(&source);
+    let (namespace, program, imports, from_parse_cache) =
+        if let Some(cache) = load_parsed_file_cache(project_root, file, &source_fp)? {
+            (cache.namespace, cache.program, cache.imports, true)
+        } else {
+            let tokens = lexer::tokenize(&source).map_err(|e| {
+                format!(
+                    "{}: Lexer error in {}: {}",
+                    "error".red().bold(),
+                    filename,
+                    e
+                )
+            })?;
+            let mut parser = Parser::new(tokens);
+            let program = parser.parse_program().map_err(|e| {
+                format!(
+                    "{}: Parse error in {}: {}",
+                    "error".red().bold(),
+                    filename,
+                    e.message
+                )
+            })?;
+
+            let namespace = program
+                .package
+                .clone()
+                .unwrap_or_else(|| "global".to_string());
+            let imports: Vec<ImportDecl> = program
+                .declarations
+                .iter()
+                .filter_map(|d| match &d.node {
+                    Decl::Import(import) => Some(import.clone()),
+                    _ => None,
+                })
+                .collect();
+
+            let cache_entry = ParsedFileCacheEntry {
+                schema: PARSE_CACHE_SCHEMA.to_string(),
+                compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+                source_fingerprint: source_fp,
+                namespace: namespace.clone(),
+                program: program.clone(),
+                imports: imports.clone(),
+            };
+            save_parsed_file_cache(project_root, file, &cache_entry)?;
+
+            (namespace, program, imports, false)
+        };
+
+    let mut function_names = Vec::new();
+    let mut class_names = Vec::new();
+    let mut module_names = Vec::new();
+    for decl in &program.declarations {
+        match &decl.node {
+            Decl::Function(func) => function_names.push(func.name.clone()),
+            Decl::Class(class) => class_names.push(class.name.clone()),
+            Decl::Module(module) => module_names.push(module.name.clone()),
+            _ => {}
+        }
+    }
+
+    Ok(ParsedProjectUnit {
+        file: file.to_path_buf(),
+        namespace,
+        program,
+        imports,
+        function_names,
+        class_names,
+        module_names,
+        from_parse_cache,
     })
 }
 
@@ -623,7 +724,7 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
         config.version.dimmed()
     );
 
-    // Phase 1: Parse all files and extract namespace information
+    // Phase 1: Parse all files (parallel) and extract namespace information
     let files = config.get_source_files(&project_root);
     let mut parsed_files: Vec<(PathBuf, String, Program, Vec<ImportDecl>)> = Vec::new();
     let mut global_function_map: HashMap<String, String> = HashMap::new(); // func_name -> namespace
@@ -636,124 +737,68 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
     let mut module_collisions: Vec<(String, String, String)> = Vec::new();
     let mut parse_cache_hits: usize = 0;
 
-    for file in &files {
-        let source = fs::read_to_string(file).map_err(|e| {
-            format!(
-                "{}: Failed to read '{}': {}",
-                "error".red().bold(),
-                file.display(),
-                e
-            )
-        })?;
+    let mut parsed_units: Vec<ParsedProjectUnit> = files
+        .par_iter()
+        .map(|file| parse_project_unit(&project_root, file))
+        .collect::<Result<Vec<_>, String>>()?;
+    parsed_units.sort_by(|a, b| a.file.cmp(&b.file));
 
-        let filename = file
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown.apex");
-
-        let source_fp = source_fingerprint(&source);
-        let (namespace, program, imports) =
-            if let Some(cache) = load_parsed_file_cache(&project_root, file, &source_fp)? {
-                parse_cache_hits += 1;
-                (cache.namespace, cache.program, cache.imports)
-            } else {
-                // Parse the file
-                let tokens = lexer::tokenize(&source).map_err(|e| {
-                    format!(
-                        "{}: Lexer error in {}: {}",
-                        "error".red().bold(),
-                        filename,
-                        e
-                    )
-                })?;
-
-                let mut parser = Parser::new(tokens);
-                let program = parser.parse_program().map_err(|e| {
-                    format!(
-                        "{}: Parse error in {}: {}",
-                        "error".red().bold(),
-                        filename,
-                        e.message
-                    )
-                })?;
-
-                let namespace = program
-                    .package
-                    .clone()
-                    .unwrap_or_else(|| "global".to_string());
-                let imports: Vec<ImportDecl> = program
-                    .declarations
-                    .iter()
-                    .filter_map(|d| match &d.node {
-                        Decl::Import(import) => Some(import.clone()),
-                        _ => None,
-                    })
-                    .collect();
-
-                let cache_entry = ParsedFileCacheEntry {
-                    schema: PARSE_CACHE_SCHEMA.to_string(),
-                    compiler_version: env!("CARGO_PKG_VERSION").to_string(),
-                    source_fingerprint: source_fp,
-                    namespace: namespace.clone(),
-                    program: program.clone(),
-                    imports: imports.clone(),
-                };
-                save_parsed_file_cache(&project_root, file, &cache_entry)?;
-
-                (namespace, program, imports)
-            };
+    for unit in parsed_units {
+        if unit.from_parse_cache {
+            parse_cache_hits += 1;
+        }
 
         // Extract symbol definitions for global maps
-        let class_entry = namespace_class_map.entry(namespace.clone()).or_default();
-        let module_entry = namespace_module_map.entry(namespace.clone()).or_default();
-        for decl in &program.declarations {
-            match &decl.node {
-                Decl::Function(func) => {
-                    if let Some(existing_ns) = global_function_map.get(&func.name) {
-                        if existing_ns != &namespace {
-                            function_collisions.push((
-                                func.name.clone(),
-                                existing_ns.clone(),
-                                namespace.clone(),
-                            ));
-                        }
-                    } else {
-                        global_function_map.insert(func.name.clone(), namespace.clone());
-                    }
+        let class_entry = namespace_class_map
+            .entry(unit.namespace.clone())
+            .or_default();
+        let module_entry = namespace_module_map
+            .entry(unit.namespace.clone())
+            .or_default();
+
+        for func_name in &unit.function_names {
+            if let Some(existing_ns) = global_function_map.get(func_name) {
+                if existing_ns != &unit.namespace {
+                    function_collisions.push((
+                        func_name.clone(),
+                        existing_ns.clone(),
+                        unit.namespace.clone(),
+                    ));
                 }
-                Decl::Class(class) => {
-                    class_entry.insert(class.name.clone());
-                    if let Some(existing_ns) = global_class_map.get(&class.name) {
-                        if existing_ns != &namespace {
-                            class_collisions.push((
-                                class.name.clone(),
-                                existing_ns.clone(),
-                                namespace.clone(),
-                            ));
-                        }
-                    } else {
-                        global_class_map.insert(class.name.clone(), namespace.clone());
-                    }
+            } else {
+                global_function_map.insert(func_name.clone(), unit.namespace.clone());
+            }
+        }
+        for class_name in &unit.class_names {
+            class_entry.insert(class_name.clone());
+            if let Some(existing_ns) = global_class_map.get(class_name) {
+                if existing_ns != &unit.namespace {
+                    class_collisions.push((
+                        class_name.clone(),
+                        existing_ns.clone(),
+                        unit.namespace.clone(),
+                    ));
                 }
-                Decl::Module(module) => {
-                    module_entry.insert(module.name.clone());
-                    if let Some(existing_ns) = global_module_map.get(&module.name) {
-                        if existing_ns != &namespace {
-                            module_collisions.push((
-                                module.name.clone(),
-                                existing_ns.clone(),
-                                namespace.clone(),
-                            ));
-                        }
-                    } else {
-                        global_module_map.insert(module.name.clone(), namespace.clone());
-                    }
+            } else {
+                global_class_map.insert(class_name.clone(), unit.namespace.clone());
+            }
+        }
+        for module_name in &unit.module_names {
+            module_entry.insert(module_name.clone());
+            if let Some(existing_ns) = global_module_map.get(module_name) {
+                if existing_ns != &unit.namespace {
+                    module_collisions.push((
+                        module_name.clone(),
+                        existing_ns.clone(),
+                        unit.namespace.clone(),
+                    ));
                 }
-                _ => {}
+            } else {
+                global_module_map.insert(module_name.clone(), unit.namespace.clone());
             }
         }
 
-        parsed_files.push((file.clone(), namespace, program, imports));
+        parsed_files.push((unit.file, unit.namespace, unit.program, unit.imports));
     }
 
     if parse_cache_hits > 0 {

@@ -19,6 +19,9 @@ This document describes the internal architecture of the Apex compiler.
 - **Parsed file cache** (`.apexcache/parsed/*.json`):
   - Stores parsed AST + namespace/import metadata keyed by source fingerprint.
   - On incremental edits, unchanged files bypass tokenization/parsing and reuse cached AST.
+- **Parallel project parse phase**:
+  - Multi-file project parsing now runs in parallel workers (file read + lex + parse/cache lookup).
+  - Symbol map/collision resolution still runs deterministically after parse collection.
 
 ## Directory Structure
 
