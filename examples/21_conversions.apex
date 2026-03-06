@@ -2,6 +2,8 @@
 // Tests: to_int, to_float, to_string
 
 import std.io.*;
+import std.math.*;
+import std.string.*;
 
 function main(): None {
     println("=== Type Conversion Tests ===");

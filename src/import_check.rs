@@ -95,6 +95,8 @@ pub struct ImportChecker<'a> {
     /// All imports (for wildcard resolution)
     #[allow(dead_code)]
     wildcard_imports: Vec<String>, // e.g., ["utils.math", "utils.strings"]
+    /// Namespace aliases from imports (`import std.io as io`)
+    namespace_aliases: HashMap<String, String>,
     /// Standard library registry
     stdlib: &'a StdLib,
     /// Available function names for suggestions
@@ -114,9 +116,32 @@ impl<'a> ImportChecker<'a> {
     ) -> Self {
         let mut imported_functions = HashSet::new();
         let mut wildcard_imports = Vec::new();
+        let mut namespace_aliases = HashMap::new();
 
         for import in imports {
             let path = import.path;
+            let alias = import.alias;
+
+            if let Some(alias_name) = alias {
+                // Alias import acts like importing a namespace and accessing through alias.
+                namespace_aliases.insert(alias_name, path.clone());
+                wildcard_imports.push(path.clone());
+
+                // Import all functions from aliased namespace (user-defined)
+                for (func, func_ns) in function_namespaces.iter() {
+                    if func_ns == &path {
+                        imported_functions.insert(func.clone());
+                    }
+                }
+
+                // Import all stdlib functions from aliased namespace
+                for (func, func_ns) in stdlib.get_functions() {
+                    if func_ns == &path {
+                        imported_functions.insert(func.clone());
+                    }
+                }
+                continue;
+            }
 
             if path.ends_with(".*") {
                 // Wildcard import: utils.math.*
@@ -154,6 +179,7 @@ impl<'a> ImportChecker<'a> {
             current_namespace,
             imported_functions,
             wildcard_imports,
+            namespace_aliases,
             stdlib,
             available_functions,
             local_functions: HashSet::new(),
@@ -191,6 +217,31 @@ impl<'a> ImportChecker<'a> {
             .next()
             .map(|tail| tail.eq_ignore_ascii_case(module_hint))
             .unwrap_or(false)
+    }
+
+    fn resolve_stdlib_call_in_namespace(&self, namespace: &str, field: &str) -> Option<String> {
+        // Direct form: println / print / read_line
+        if self
+            .stdlib
+            .get_namespace(field)
+            .is_some_and(|ns| ns == namespace)
+        {
+            return Some(field.to_string());
+        }
+
+        // Module-mangled form: Math__abs / Str__len / System__os ...
+        let suffix = format!("__{}", field);
+        let mut found: Option<String> = None;
+        for (func, ns) in self.stdlib.get_functions() {
+            if ns == namespace && func.ends_with(&suffix) {
+                if found.is_some() {
+                    // Ambiguous, keep conservative and do not resolve.
+                    return None;
+                }
+                found = Some(func.clone());
+            }
+        }
+        found
     }
 
     /// Check if a function call is valid (imported or local)
@@ -257,6 +308,15 @@ impl<'a> ImportChecker<'a> {
                     // Module-style call: Module.func(...)
                     Expr::Field { object, field } => {
                         if let Expr::Ident(module_or_type) = &object.node {
+                            if let Some(ns) = self.namespace_aliases.get(module_or_type) {
+                                if let Some(canonical_name) =
+                                    self.resolve_stdlib_call_in_namespace(ns, field)
+                                {
+                                    self.check_function_call(&canonical_name, callee.span.clone());
+                                    return;
+                                }
+                            }
+
                             let mangled = format!("{}__{}", module_or_type, field);
                             // Only treat as import-checkable function when known.
                             if self.local_functions.contains(&mangled)
@@ -467,5 +527,23 @@ function main(): None {
         let errors = check_import_errors(source);
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].function_name, "Math__abs");
+    }
+
+    #[test]
+    fn alias_import_allows_namespaced_stdlib_calls() {
+        let source = r#"
+import std.io as io;
+import std.math as math;
+import std.string as str;
+
+function main(): None {
+    io.println("x");
+    y: Integer = math.abs(-2);
+    z: Integer = str.len("ok");
+    return None;
+}
+"#;
+        let errors = check_import_errors(source);
+        assert!(errors.is_empty());
     }
 }

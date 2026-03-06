@@ -2,6 +2,7 @@
 // Tests all major Apex features in one file
 
 import std.io.*;
+import std.math.*;
 
 // === Module ===
 module Utils {

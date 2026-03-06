@@ -3,6 +3,7 @@
 
 import std.io.*;
 import std.fs.*;
+import std.string.*;
 
 class NoteManager {
     filename: String;

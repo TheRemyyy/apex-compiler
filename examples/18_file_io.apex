@@ -3,6 +3,7 @@
 
 import std.io.*;
 import std.fs.*;
+import std.string.*;
 
 function main(): None {
     println("=== File I/O Tests ===");

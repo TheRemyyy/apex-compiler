@@ -2,6 +2,7 @@
 // Tests: +, -, *, /, %, comparisons, unary operators, built-in math functions
 
 import std.io.*;
+import std.math.*;
 
 function main(): None {
     // Basic arithmetic with integers

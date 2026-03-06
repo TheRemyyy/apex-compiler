@@ -2,6 +2,9 @@
 // Tests: all built-in functions in Apex
 
 import std.io.*;
+import std.math.*;
+import std.string.*;
+import std.system.*;
 
 function testPrintFunctions(): None {
     println("=== Print Functions ===");

@@ -2,6 +2,7 @@
 // Tests: lambda expressions, closures, function types, higher-order functions
 
 import std.io.*;
+import std.string.*;
 
 // Function that takes a function as parameter
 function applyTwice(x: Integer, f: (Integer) -> Integer): Integer {

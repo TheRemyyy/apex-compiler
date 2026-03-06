@@ -2,6 +2,7 @@
 // Tests: System.os, System.cwd, exit
 
 import std.io.*;
+import std.system.*;
 
 function main(): None {
     println("=== System Tests ===");
