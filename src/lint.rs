@@ -1,6 +1,6 @@
-use crate::ast::{Decl, Expr, ImportDecl, Program, Span, Stmt, Type};
+use crate::ast::{Decl, Expr, ImportDecl, Parameter, Program, Span, Stmt, Type};
 use crate::parser::Parser;
-use crate::{lexer, stdlib::StdLib};
+use crate::lexer;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,7 +124,6 @@ fn check_unused_specific_imports(program: &Program) -> Vec<LintFinding> {
     let mut used_names = HashSet::new();
     collect_used_names(program, &mut used_names);
 
-    let stdlib = StdLib::new();
     let mut findings = Vec::new();
     for decl in &program.declarations {
         let Decl::Import(import) = &decl.node else {
@@ -138,9 +137,7 @@ fn check_unused_specific_imports(program: &Program) -> Vec<LintFinding> {
             continue;
         };
 
-        if !used_names.contains(imported_name)
-            && !stdlib.get_functions().contains_key(imported_name)
-        {
+        if !used_names.contains(imported_name) {
             findings.push(LintFinding {
                 code: "L003",
                 level: LintLevel::Warning,
@@ -253,7 +250,10 @@ fn collect_declared_and_used_in_stmt(
             collect_expr_idents(&condition.node, used);
             collect_declared_and_used_in_block(body, declared, used);
         }
-        Stmt::For { iterable, body, .. } => {
+        Stmt::For {
+            var, iterable, body, ..
+        } => {
+            declared.push((var.clone(), stmt.span.clone()));
             collect_expr_idents(&iterable.node, used);
             collect_declared_and_used_in_block(body, declared, used);
         }
@@ -357,12 +357,13 @@ fn check_shadowed_variables(program: &Program) -> Vec<LintFinding> {
     for decl in &program.declarations {
         match &decl.node {
             Decl::Function(func) => {
-                let mut scopes = vec![HashMap::<String, Span>::new()];
+                let mut scopes = vec![scope_with_params(&func.params), HashMap::<String, Span>::new()];
                 check_shadowed_in_block(&func.body, &mut scopes, &mut findings);
             }
             Decl::Class(class) => {
                 if let Some(ctor) = &class.constructor {
-                    let mut scopes = vec![HashMap::<String, Span>::new()];
+                    let mut scopes =
+                        vec![scope_with_params(&ctor.params), HashMap::<String, Span>::new()];
                     check_shadowed_in_block(&ctor.body, &mut scopes, &mut findings);
                 }
                 if let Some(dtor) = &class.destructor {
@@ -370,7 +371,8 @@ fn check_shadowed_variables(program: &Program) -> Vec<LintFinding> {
                     check_shadowed_in_block(&dtor.body, &mut scopes, &mut findings);
                 }
                 for method in &class.methods {
-                    let mut scopes = vec![HashMap::<String, Span>::new()];
+                    let mut scopes =
+                        vec![scope_with_params(&method.params), HashMap::<String, Span>::new()];
                     check_shadowed_in_block(&method.body, &mut scopes, &mut findings);
                 }
             }
@@ -385,6 +387,15 @@ fn check_shadowed_variables(program: &Program) -> Vec<LintFinding> {
         }
     }
     findings
+}
+
+fn scope_with_params(params: &[Parameter]) -> HashMap<String, Span> {
+    let mut scope = HashMap::new();
+    for param in params {
+        // Parameter spans are not tracked separately in the AST.
+        scope.insert(param.name.clone(), 0..0);
+    }
+    scope
 }
 
 fn check_shadowed_in_block(
@@ -435,8 +446,28 @@ fn check_shadowed_in_block(
                 check_shadowed_in_block(body, scopes, findings);
                 scopes.pop();
             }
-            Stmt::For { body, .. } => {
+            Stmt::For { var, body, .. } => {
                 scopes.push(HashMap::new());
+                if let Some(parent_span) = scopes
+                    .iter()
+                    .rev()
+                    .skip(1)
+                    .find_map(|scope| scope.get(var))
+                {
+                    findings.push(LintFinding {
+                        code: "L005",
+                        level: LintLevel::Warning,
+                        message: format!(
+                            "Variable '{}' shadows an outer variable declared at offset {}",
+                            var, parent_span.start
+                        ),
+                        suggestion: Some("rename inner variable for clarity".to_string()),
+                        span: Some(stmt.span.clone()),
+                    });
+                }
+                if let Some(current) = scopes.last_mut() {
+                    current.insert(var.clone(), stmt.span.clone());
+                }
                 check_shadowed_in_block(body, scopes, findings);
                 scopes.pop();
             }
@@ -959,5 +990,68 @@ function main(): None { return None; }
         let result = lint_source(source, true).expect("lint succeeds");
         let fixed = result.fixed_source.expect("fixed source");
         assert!(fixed.starts_with("#!/usr/bin/env apex\n"));
+    }
+
+    #[test]
+    fn flags_unused_stdlib_specific_imports() {
+        let source = r#"import std.math.abs;
+import std.io.*;
+
+function main(): None {
+    println("ok");
+    return None;
+}
+"#;
+        let result = lint_source(source, false).expect("lint succeeds");
+        assert!(result.findings.iter().any(|f| {
+            f.code == "L003" && f.message.contains("specific import 'std.math.abs' appears unused")
+        }));
+    }
+
+    #[test]
+    fn flags_shadowing_function_parameter() {
+        let source = r#"function main(x: Integer): None {
+    x: Integer = 1;
+    return None;
+}
+"#;
+        let result = lint_source(source, false).expect("lint succeeds");
+        assert!(result
+            .findings
+            .iter()
+            .any(|f| f.code == "L005" && f.message.contains("Variable 'x' shadows an outer variable")));
+    }
+
+    #[test]
+    fn flags_shadowing_for_loop_variable() {
+        let source = r#"function main(): None {
+    i: Integer = 10;
+    for (i in range(0, 3)) {
+        println(to_string(i));
+    }
+    return None;
+}
+"#;
+        let result = lint_source(source, false).expect("lint succeeds");
+        assert!(result
+            .findings
+            .iter()
+            .any(|f| f.code == "L005" && f.message.contains("Variable 'i' shadows an outer variable")));
+    }
+
+    #[test]
+    fn flags_unused_for_loop_variable() {
+        let source = r#"function main(): None {
+    for (i in range(0, 3)) {
+        println("x");
+    }
+    return None;
+}
+"#;
+        let result = lint_source(source, false).expect("lint succeeds");
+        assert!(result
+            .findings
+            .iter()
+            .any(|f| f.code == "L004" && f.message.contains("Variable 'i' is declared but never used")));
     }
 }

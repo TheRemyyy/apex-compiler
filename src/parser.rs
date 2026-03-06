@@ -831,6 +831,9 @@ impl<'src> Parser<'src> {
                 "Arc" if type_args.len() == 1 => {
                     Ok(Type::Arc(Box::new(type_args.into_iter().next().unwrap())))
                 }
+                "Ptr" if type_args.len() == 1 => {
+                    Ok(Type::Ptr(Box::new(type_args.into_iter().next().unwrap())))
+                }
                 "Task" if type_args.len() == 1 => {
                     Ok(Type::Task(Box::new(type_args.into_iter().next().unwrap())))
                 }
@@ -2832,5 +2835,20 @@ mod tests {
             }
         "#;
         parse_source(source).expect("Should parse float/char/negative patterns");
+    }
+
+    #[test]
+    fn test_parse_enum_named_field_with_ptr_type() {
+        let source = r#"
+            enum Handle {
+                Raw(ptr: Ptr<Char>)
+            }
+        "#;
+        let program = parse_source(source).expect("Should parse Ptr in named enum fields");
+        let Decl::Enum(en) = &program.declarations[0].node else {
+            panic!("Expected enum declaration");
+        };
+        let field = &en.variants[0].fields[0];
+        assert!(matches!(field.ty, Type::Ptr(_)));
     }
 }

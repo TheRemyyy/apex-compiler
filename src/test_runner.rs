@@ -171,10 +171,10 @@ pub fn generate_test_runner(discovery: &TestDiscovery) -> String {
 
     // Local test counters
     code.push_str("    // Test execution tracking\n");
-    code.push_str("    tests_total: Integer = 0;\n");
-    code.push_str("    tests_passed: Integer = 0;\n");
-    code.push_str("    tests_failed: Integer = 0;\n");
-    code.push_str("    tests_ignored: Integer = 0;\n\n");
+    code.push_str("    mut tests_total: Integer = 0;\n");
+    code.push_str("    mut tests_passed: Integer = 0;\n");
+    code.push_str("    mut tests_failed: Integer = 0;\n");
+    code.push_str("    mut tests_ignored: Integer = 0;\n\n");
 
     code.push_str("    println(\"========================================\");\n");
     code.push_str("    println(\"         Apex Test Runner\");\n");
@@ -310,7 +310,7 @@ fn filter_out_main_function(source: &str) -> String {
         }
 
         // Detect main function start
-        if trimmed.starts_with("function main()") && !in_main {
+        if trimmed.contains("function main(") && !in_main {
             in_main = true;
             brace_depth = brace_delta(trimmed);
             if brace_depth <= 0 {
@@ -340,7 +340,10 @@ fn filter_out_main_function(source: &str) -> String {
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
-    use super::{ensure_test_runner_imports, generate_test_runner_with_source, TestDiscovery};
+    use super::{
+        ensure_test_runner_imports, generate_test_runner, generate_test_runner_with_source,
+        TestDiscovery,
+    };
 
     #[test]
     fn injects_stdio_import_when_missing() {
@@ -369,6 +372,36 @@ mod tests {
             "function helper(): None { return None; }\n",
         );
         assert!(generated.contains("import std.io.*;"));
+    }
+
+    #[test]
+    fn generated_runner_uses_mutable_counters() {
+        let discovery = TestDiscovery {
+            suites: vec![],
+            total_tests: 0,
+            ignored_tests: 0,
+        };
+        let generated = generate_test_runner(&discovery);
+        assert!(generated.contains("mut tests_total: Integer = 0;"));
+        assert!(generated.contains("mut tests_passed: Integer = 0;"));
+    }
+
+    #[test]
+    fn strips_public_main_function_from_source() {
+        let discovery = TestDiscovery {
+            suites: vec![],
+            total_tests: 0,
+            ignored_tests: 0,
+        };
+        let source = r#"
+public function main(): Integer {
+    return 0;
+}
+function helper(): None { return None; }
+"#;
+        let generated = generate_test_runner_with_source(&discovery, source);
+        assert!(!generated.contains("public function main(): Integer"));
+        assert!(generated.contains("function helper(): None"));
     }
 }
 

@@ -194,17 +194,18 @@ impl<'a> ImportChecker<'a> {
     }
 
     fn collect_local_functions(&mut self, program: &Program) {
-        fn walk_decl(out: &mut HashSet<String>, decl: &Decl) {
+        fn walk_decl(out: &mut HashSet<String>, decl: &Decl, module_prefix: Option<&str>) {
             match decl {
                 Decl::Function(func) => {
-                    out.insert(func.name.clone());
+                    if let Some(module) = module_prefix {
+                        out.insert(format!("{}__{}", module, func.name));
+                    } else {
+                        out.insert(func.name.clone());
+                    }
                 }
                 Decl::Module(module) => {
                     for inner in &module.declarations {
-                        if let Decl::Function(func) = &inner.node {
-                            out.insert(format!("{}__{}", module.name, func.name));
-                        }
-                        walk_decl(out, &inner.node);
+                        walk_decl(out, &inner.node, Some(&module.name));
                     }
                 }
                 _ => {}
@@ -213,7 +214,7 @@ impl<'a> ImportChecker<'a> {
 
         self.local_functions.clear();
         for decl in &program.declarations {
-            walk_decl(&mut self.local_functions, &decl.node);
+            walk_decl(&mut self.local_functions, &decl.node, None);
         }
     }
 
@@ -242,6 +243,19 @@ impl<'a> ImportChecker<'a> {
             if ns == namespace && func.ends_with(&suffix) {
                 if found.is_some() {
                     // Ambiguous, keep conservative and do not resolve.
+                    return None;
+                }
+                found = Some(func.clone());
+            }
+        }
+        found
+    }
+
+    fn resolve_user_call_in_namespace(&self, namespace: &str, field: &str) -> Option<String> {
+        let mut found: Option<String> = None;
+        for (func, ns) in self.function_namespaces.iter() {
+            if ns == namespace && (func == field || func.ends_with(&format!("__{}", field))) {
+                if found.is_some() {
                     return None;
                 }
                 found = Some(func.clone());
@@ -318,6 +332,11 @@ impl<'a> ImportChecker<'a> {
                             if let Some(ns) = self.namespace_aliases.get(module_or_type) {
                                 if let Some(canonical_name) =
                                     self.resolve_stdlib_call_in_namespace(ns, field)
+                                {
+                                    self.check_function_call(&canonical_name, callee.span.clone());
+                                    handled_alias_call = true;
+                                } else if let Some(canonical_name) =
+                                    self.resolve_user_call_in_namespace(ns, field)
                                 {
                                     self.check_function_call(&canonical_name, callee.span.clone());
                                     handled_alias_call = true;
@@ -499,14 +518,52 @@ impl<'a> ImportChecker<'a> {
 
     /// Check entire program for import violations
     pub fn check_program(&mut self, program: &Program) -> Result<(), Vec<ImportError>> {
+        fn check_decl(checker: &mut ImportChecker<'_>, decl: &Decl) {
+            match decl {
+                Decl::Function(func) => {
+                    for stmt in &func.body {
+                        checker.check_stmt(&stmt.node);
+                    }
+                }
+                Decl::Class(class) => {
+                    if let Some(ctor) = &class.constructor {
+                        for stmt in &ctor.body {
+                            checker.check_stmt(&stmt.node);
+                        }
+                    }
+                    if let Some(dtor) = &class.destructor {
+                        for stmt in &dtor.body {
+                            checker.check_stmt(&stmt.node);
+                        }
+                    }
+                    for method in &class.methods {
+                        for stmt in &method.body {
+                            checker.check_stmt(&stmt.node);
+                        }
+                    }
+                }
+                Decl::Module(module) => {
+                    for inner in &module.declarations {
+                        check_decl(checker, &inner.node);
+                    }
+                }
+                Decl::Interface(interface) => {
+                    for method in &interface.methods {
+                        if let Some(default_impl) = &method.default_impl {
+                            for stmt in default_impl {
+                                checker.check_stmt(&stmt.node);
+                            }
+                        }
+                    }
+                }
+                Decl::Enum(_) | Decl::Import(_) => {}
+            }
+        }
+
         self.collect_local_functions(program);
 
         for decl in &program.declarations {
-            if let Decl::Function(func) = &decl.node {
-                for stmt in &func.body {
-                    self.check_stmt(&stmt.node);
-                }
-            }
+            check_decl(self, &decl.node);
         }
 
         if self.errors.is_empty() {
@@ -522,10 +579,30 @@ impl<'a> ImportChecker<'a> {
 pub fn extract_function_namespaces(program: &Program, namespace: &str) -> HashMap<String, String> {
     let mut result = HashMap::new();
 
-    for decl in &program.declarations {
-        if let Decl::Function(func) = &decl.node {
-            result.insert(func.name.clone(), namespace.to_string());
+    fn walk_decl(
+        out: &mut HashMap<String, String>,
+        decl: &Decl,
+        namespace: &str,
+        module_prefix: Option<&str>,
+    ) {
+        match decl {
+            Decl::Function(func) => {
+                if let Some(module) = module_prefix {
+                    out.insert(format!("{}__{}", module, func.name), namespace.to_string());
+                } else {
+                    out.insert(func.name.clone(), namespace.to_string());
+                }
+            }
+            Decl::Module(module) => {
+                for inner in &module.declarations {
+                    walk_decl(out, &inner.node, namespace, Some(&module.name));
+                }
+            }
+            Decl::Class(_) | Decl::Enum(_) | Decl::Interface(_) | Decl::Import(_) => {}
         }
+    }
+    for decl in &program.declarations {
+        walk_decl(&mut result, &decl.node, namespace, None);
     }
 
     result
@@ -670,5 +747,76 @@ function main(): None {
         let errors = check_import_errors(source);
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].function_name, "Math__abs");
+    }
+
+    #[test]
+    fn class_method_checks_missing_imports() {
+        let source = r#"
+class C {
+    function compute(): Float {
+        return Math.abs(-1.0);
+    }
+}
+"#;
+        let errors = check_import_errors(source);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].function_name, "Math__abs");
+    }
+
+    #[test]
+    fn constructor_checks_missing_imports() {
+        let source = r#"
+class C {
+    constructor() {
+        x: Float = Math.abs(-2.0);
+    }
+}
+"#;
+        let errors = check_import_errors(source);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].function_name, "Math__abs");
+    }
+
+    #[test]
+    fn module_function_checks_missing_imports() {
+        let source = r#"
+module Utils {
+    function f(): Float {
+        return Math.abs(-3.0);
+    }
+}
+"#;
+        let errors = check_import_errors(source);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].function_name, "Math__abs");
+    }
+
+    #[test]
+    fn interface_default_impl_checks_missing_imports() {
+        let source = r#"
+interface I {
+    function f(): Float {
+        return Math.abs(-4.0);
+    }
+}
+"#;
+        let errors = check_import_errors(source);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].function_name, "Math__abs");
+    }
+
+    #[test]
+    fn extracts_module_functions_as_mangled_namespaces() {
+        let source = r#"
+module MathEx {
+    function addOne(x: Integer): Integer { return x + 1; }
+}
+"#;
+        let tokens = tokenize(source).expect("tokenize");
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse_program().expect("parse");
+        let map = extract_function_namespaces(&program, "demo");
+        assert!(map.contains_key("MathEx__addOne"));
+        assert!(!map.contains_key("addOne"));
     }
 }

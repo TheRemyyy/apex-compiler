@@ -148,6 +148,10 @@ apex test --list
 apex test --filter "math"
 ```
 
+Notes:
+- The test runner auto-injects `import std.io.*;` when needed.
+- Existing user `main(...)` entrypoints are removed from runner input before generation (including `public function main(...)`) so the generated test entrypoint remains unique.
+
 ## Complete Example
 
 ```apex

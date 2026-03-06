@@ -49,6 +49,12 @@ This document describes the internal architecture of the Apex compiler.
 - **Match-expression correctness checks**:
   - Type checker now validates compatible result types across all match-expression arms.
   - Exhaustiveness checks are enforced for `Boolean`, `Option<T>`, and `Result<T, E>` unless a catch-all arm exists.
+- **Import-check traversal hardening**:
+  - Import checking now traverses class constructors/destructors/methods, module functions, and interface default implementations (not only top-level functions).
+  - Module function namespace extraction uses mangled names consistently (`Module__func`) during import resolution.
+- **Lint scope analysis hardening**:
+  - Shadowing diagnostics now account for parameters and `for`-loop variables.
+  - Unused-variable diagnostics now include unused `for`-loop iterator variables.
 
 ## Directory Structure
 
