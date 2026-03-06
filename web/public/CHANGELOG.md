@@ -145,6 +145,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed parser string interpolation fallback for unclosed `{...` sequences so they remain literal text instead of being interpreted as expressions.
 - Fixed project namespace alias call lowering so valid imports like `import math_utils as mu; mu.factorial(...)` compile and run in multi-file projects.
 - Fixed import checker diagnostics for unknown namespace aliases so invalid alias usage is reported during import checking (instead of surfacing later as generic undefined-variable/codegen failures).
+- Fixed unknown namespace-alias import-check hint text to be actionable (`import <namespace> as <alias>;`) instead of emitting invalid synthetic import suggestions.
 - Fixed parser handling of empty interpolation braces (`{}`) to preserve braces as literal text.
 - Fixed parser string interpolation normalization so all-literal interpolation parts are merged back into plain string literals.
 - Fixed import checker alias semantics: namespace alias imports no longer implicitly import all symbols as unqualified calls.

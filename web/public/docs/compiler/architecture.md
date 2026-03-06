@@ -59,6 +59,7 @@ This document describes the internal architecture of the Apex compiler.
   - Project rewrite now resolves namespace-only alias imports (`import math_utils as mu`) for module-style calls (`mu.factorial(...)`) to correct mangled symbols.
 - **Import alias diagnostics hardening**:
   - Unknown namespace aliases are now surfaced during import checking when used in module-style calls, reducing delayed downstream failures.
+  - Unknown alias diagnostics now emit actionable guidance for valid alias imports instead of suggesting invalid synthetic import paths.
 - **Shared stdlib registry**:
   - Compiler stages now reuse a single lazy-initialized stdlib registry (`OnceLock`) instead of repeatedly constructing stdlib lookup maps during hot-path analysis and lowering.
 - **Lint scope analysis hardening**:

@@ -18,6 +18,14 @@ pub struct ImportError {
 
 impl ImportError {
     pub fn format(&self) -> String {
+        if self.defined_in == "<unknown namespace alias>" {
+            return format!(
+                "Unknown namespace alias usage '{}' in '{}'\n  \
+                 Hint: Import an existing namespace with 'import <namespace> as <alias>;'",
+                self.function_name, self.used_in
+            );
+        }
+
         let import_hint = if self.function_name.contains("__") {
             format!("import {}.*;", self.defined_in)
         } else {
@@ -723,6 +731,22 @@ function main(): None {
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].function_name, "dne.print");
         assert_eq!(errors[0].defined_in, "<unknown namespace alias>");
+    }
+
+    #[test]
+    fn invalid_namespace_alias_format_message_is_actionable() {
+        let err = ImportError {
+            function_name: "dne.print".to_string(),
+            defined_in: "<unknown namespace alias>".to_string(),
+            used_in: "app".to_string(),
+            span: 0..0,
+            suggestion: None,
+        };
+
+        let rendered = err.format();
+        assert!(rendered.contains("Unknown namespace alias usage 'dne.print'"));
+        assert!(rendered.contains("import <namespace> as <alias>;"));
+        assert!(!rendered.contains("<unknown namespace alias>.dne.print"));
     }
 
     #[test]
