@@ -10,12 +10,15 @@ target/
 benchmark/bin/matrix_mul_apex
 benchmark/bin/matrix_mul_c
 benchmark/bin/matrix_mul_rust
+benchmark/bin/matrix_mul_go
 benchmark/bin/prime_count_apex
 benchmark/bin/prime_count_c
 benchmark/bin/prime_count_rust
+benchmark/bin/prime_count_go
 benchmark/bin/sum_loop_apex
 benchmark/bin/sum_loop_c
 benchmark/bin/sum_loop_rust
+benchmark/bin/sum_loop_go
 benchmark/results/latest.json
 benchmark/results/latest.md
 

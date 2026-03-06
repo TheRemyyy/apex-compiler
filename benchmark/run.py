@@ -24,7 +24,7 @@ BENCHMARKS: List[BenchmarkSpec] = [
     BenchmarkSpec("matrix_mul", "Dense matrix multiplication (100x100)"),
 ]
 
-LANGUAGES = ("apex", "c", "rust")
+LANGUAGES = ("apex", "c", "rust", "go")
 
 
 def run_cmd(cmd: List[str], cwd: Path, env: Dict[str, str] | None = None) -> subprocess.CompletedProcess:
@@ -100,6 +100,14 @@ def compile_rust(root: Path, bench: str, out: Path) -> None:
         raise RuntimeError(f"Failed to compile Rust benchmark {bench}:\n{proc.stderr}")
 
 
+def compile_go(root: Path, bench: str, out: Path) -> None:
+    src = root / "benchmark" / "go" / f"{bench}.go"
+    cmd = ["go", "build", "-trimpath", "-ldflags", "-s -w", "-o", str(out), str(src)]
+    proc = run_cmd(cmd, root, env={"GO111MODULE": "off"})
+    if proc.returncode != 0:
+        raise RuntimeError(f"Failed to compile Go benchmark {bench}:\n{proc.stderr}")
+
+
 def timed_run(binary: Path, cwd: Path) -> (float, int):
     start = time.perf_counter()
     proc = run_cmd([str(binary)], cwd)
@@ -156,8 +164,12 @@ def build_markdown(result: Dict) -> str:
         lines.append("")
         lines.append("| Relative to Apex (mean) | Value |")
         lines.append("|---|---:|")
-        lines.append(f"| C speedup | {bench['speedup_vs_apex']['c']:.3f}x |")
-        lines.append(f"| Rust speedup | {bench['speedup_vs_apex']['rust']:.3f}x |")
+        for lang in LANGUAGES:
+            if lang == "apex":
+                continue
+            lines.append(
+                f"| {lang.capitalize()} speedup | {bench['speedup_vs_apex'][lang]:.3f}x |"
+            )
         lines.append("")
 
     return "\n".join(lines) + "\n"
@@ -228,6 +240,7 @@ def main() -> int:
     ensure_tool("python3")
     ensure_tool("clang")
     ensure_tool("rustc")
+    ensure_tool("go")
     ensure_tool("cargo")
     c_compiler = "clang"
 
@@ -257,6 +270,7 @@ def main() -> int:
             "apex": bin_dir / f"{spec.name}_apex",
             "c": bin_dir / f"{spec.name}_c",
             "rust": bin_dir / f"{spec.name}_rust",
+            "go": bin_dir / f"{spec.name}_go",
         }
 
         compile_apex(
@@ -269,6 +283,7 @@ def main() -> int:
         )
         compile_c(root, spec.name, binaries["c"], c_compiler)
         compile_rust(root, spec.name, binaries["rust"])
+        compile_go(root, spec.name, binaries["go"])
 
         lang_data: Dict[str, Dict] = {}
         reference_checksum = None
@@ -307,8 +322,9 @@ def main() -> int:
 
         apex_mean = lang_data["apex"]["stats"]["mean_s"]
         speedups = {
-            "c": apex_mean / lang_data["c"]["stats"]["mean_s"],
-            "rust": apex_mean / lang_data["rust"]["stats"]["mean_s"],
+            lang: apex_mean / lang_data[lang]["stats"]["mean_s"]
+            for lang in LANGUAGES
+            if lang != "apex"
         }
 
         report["benchmarks"].append(
