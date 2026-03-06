@@ -19,9 +19,16 @@ This document describes the internal architecture of the Apex compiler.
 - **Parsed file cache** (`.apexcache/parsed/*.json`):
   - Stores parsed AST + namespace/import metadata keyed by source fingerprint.
   - On incremental edits, unchanged files bypass tokenization/parsing and reuse cached AST.
+- **Rewritten file cache** (`.apexcache/rewritten/*.json`):
+  - Stores namespace-rewritten AST fragments keyed by source fingerprint + global rewrite context fingerprint.
+  - On incremental edits, unchanged files bypass rewrite phase and are stitched directly into combined AST.
+- **Object file cache** (`.apexcache/objects/*.{o|obj}` + `*.json`):
+  - Stores per-file compiled objects keyed by source fingerprint + rewrite-context fingerprint + build options (`opt_level`, `target`, compiler version).
+  - On incremental edits, unchanged files reuse cached object files and final build performs fast relink from cached + rebuilt objects.
 - **Parallel project parse phase**:
   - Multi-file project parsing now runs in parallel workers (file read + lex + parse/cache lookup).
-  - Symbol map/collision resolution still runs deterministically after parse collection.
+  - Import checks and rewrite/cache resolution run in parallel per file.
+  - Symbol map/collision resolution and final declaration merge still run deterministically.
 
 ## Directory Structure
 

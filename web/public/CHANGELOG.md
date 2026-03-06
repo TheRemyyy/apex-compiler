@@ -66,7 +66,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Project builds now use `.apexcache` with:
   - early up-to-date skip via project fingerprint cache
   - parser-level per-file AST cache reuse for unchanged files in changed builds
+  - rewrite-level per-file AST cache reuse for unchanged files in changed builds
+  - object-level per-file cache reuse for unchanged files plus relink-only final stage
   - parallel multi-file parse pipeline for lower front-end wall time on larger projects
+  - parallel import-check and rewrite/cache resolution pass
 
 ### 🐛 Fixed
 

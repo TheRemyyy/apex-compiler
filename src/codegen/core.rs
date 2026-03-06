@@ -155,8 +155,26 @@ impl<'ctx> Codegen<'ctx> {
         )
     }
 
-    /// Compile program
+    /// Compile full program.
     pub fn compile(&mut self, program: &Program) -> Result<()> {
+        self.compile_internal(program, None)
+    }
+
+    /// Compile program while only emitting bodies for selected top-level symbols.
+    /// Declarations are still emitted for the whole program to keep cross-file references valid.
+    pub fn compile_filtered(
+        &mut self,
+        program: &Program,
+        active_symbols: &HashSet<String>,
+    ) -> Result<()> {
+        self.compile_internal(program, Some(active_symbols))
+    }
+
+    fn compile_internal(
+        &mut self,
+        program: &Program,
+        active_symbols: Option<&HashSet<String>>,
+    ) -> Result<()> {
         self.import_aliases.clear();
         for decl in &program.declarations {
             if let Decl::Import(import) = &decl.node {
@@ -190,17 +208,65 @@ impl<'ctx> Codegen<'ctx> {
 
         // Second pass: compile function bodies
         for decl in &program.declarations {
+            let should_compile = active_symbols
+                .map(|symbols| self.should_compile_decl(&decl.node, symbols))
+                .unwrap_or(true);
+            if !should_compile {
+                continue;
+            }
             match &decl.node {
                 Decl::Function(func) => self.compile_function(func)?,
                 Decl::Class(class) => self.compile_class(class)?,
                 Decl::Enum(_) => {}
                 Decl::Interface(_) => {} // Interfaces don't generate code
-                Decl::Module(module) => self.compile_module(module)?,
+                Decl::Module(module) => {
+                    if let Some(symbols) = active_symbols {
+                        self.compile_module_filtered(module, symbols)?;
+                    } else {
+                        self.compile_module(module)?;
+                    }
+                }
                 Decl::Import(_) => {} // Handled at file level
             }
         }
 
         Ok(())
+    }
+
+    fn should_compile_decl(&self, decl: &Decl, active_symbols: &HashSet<String>) -> bool {
+        match decl {
+            Decl::Function(func) => active_symbols.contains(&func.name),
+            Decl::Class(class) => active_symbols.contains(&class.name),
+            Decl::Module(module) => {
+                if active_symbols.contains(&module.name) {
+                    return true;
+                }
+                for inner in &module.declarations {
+                    match &inner.node {
+                        Decl::Function(func) => {
+                            if active_symbols.contains(&format!("{}__{}", module.name, func.name)) {
+                                return true;
+                            }
+                        }
+                        Decl::Class(class) => {
+                            if active_symbols.contains(&format!("{}__{}", module.name, class.name))
+                            {
+                                return true;
+                            }
+                        }
+                        Decl::Enum(en) => {
+                            if active_symbols.contains(&format!("{}__{}", module.name, en.name)) {
+                                return true;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                false
+            }
+            Decl::Enum(en) => active_symbols.contains(&en.name),
+            Decl::Interface(_) | Decl::Import(_) => false,
+        }
     }
 
     fn resolve_module_alias(&self, name: &str) -> String {
@@ -314,6 +380,36 @@ impl<'ctx> Codegen<'ctx> {
                     let mut prefixed_class = class.clone();
                     prefixed_class.name = format!("{}__{}", module.name, class.name);
                     self.compile_class(&prefixed_class)?;
+                }
+                Decl::Enum(_) => {}
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_module_filtered(
+        &mut self,
+        module: &ModuleDecl,
+        active_symbols: &HashSet<String>,
+    ) -> Result<()> {
+        for decl in &module.declarations {
+            match &decl.node {
+                Decl::Function(func) => {
+                    let prefixed = format!("{}__{}", module.name, func.name);
+                    if active_symbols.contains(&module.name) || active_symbols.contains(&prefixed) {
+                        let mut prefixed_func = func.clone();
+                        prefixed_func.name = prefixed;
+                        self.compile_function(&prefixed_func)?;
+                    }
+                }
+                Decl::Class(class) => {
+                    let prefixed = format!("{}__{}", module.name, class.name);
+                    if active_symbols.contains(&module.name) || active_symbols.contains(&prefixed) {
+                        let mut prefixed_class = class.clone();
+                        prefixed_class.name = prefixed;
+                        self.compile_class(&prefixed_class)?;
+                    }
                 }
                 Decl::Enum(_) => {}
                 _ => {}

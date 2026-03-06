@@ -378,10 +378,20 @@ struct ParsedProjectUnit {
     namespace: String,
     program: Program,
     imports: Vec<ImportDecl>,
+    source_fingerprint: String,
     function_names: Vec<String>,
     class_names: Vec<String>,
     module_names: Vec<String>,
     from_parse_cache: bool,
+}
+
+#[derive(Debug, Clone)]
+struct RewrittenProjectUnit {
+    file: PathBuf,
+    program: Program,
+    source_fingerprint: String,
+    active_symbols: HashSet<String>,
+    from_rewrite_cache: bool,
 }
 
 fn parsed_file_cache_path(project_root: &Path, file: &Path) -> PathBuf {
@@ -473,6 +483,329 @@ fn save_parsed_file_cache(
     })
 }
 
+const REWRITE_CACHE_SCHEMA: &str = "v1";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RewrittenFileCacheEntry {
+    schema: String,
+    compiler_version: String,
+    source_fingerprint: String,
+    rewrite_context_fingerprint: String,
+    rewritten_program: Program,
+}
+
+const OBJECT_CACHE_SCHEMA: &str = "v1";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ObjectCacheEntry {
+    schema: String,
+    compiler_version: String,
+    source_fingerprint: String,
+    rewrite_context_fingerprint: String,
+    object_build_fingerprint: String,
+}
+
+fn rewritten_file_cache_path(project_root: &Path, file: &Path) -> PathBuf {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    file.hash(&mut hasher);
+    project_root
+        .join(".apexcache")
+        .join("rewritten")
+        .join(format!("{:016x}.json", hasher.finish()))
+}
+
+fn hash_sorted_map(
+    map: &HashMap<String, String>,
+    hasher: &mut std::collections::hash_map::DefaultHasher,
+) {
+    let mut entries = map.iter().collect::<Vec<_>>();
+    entries.sort_by(|a, b| a.0.cmp(b.0).then_with(|| a.1.cmp(b.1)));
+    for (k, v) in entries {
+        k.hash(hasher);
+        v.hash(hasher);
+    }
+}
+
+fn hash_sorted_map_of_sets(
+    map: &HashMap<String, HashSet<String>>,
+    hasher: &mut std::collections::hash_map::DefaultHasher,
+) {
+    let mut entries = map.iter().collect::<Vec<_>>();
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+    for (k, set) in entries {
+        k.hash(hasher);
+        let mut values = set.iter().collect::<Vec<_>>();
+        values.sort();
+        for v in values {
+            v.hash(hasher);
+        }
+    }
+}
+
+fn compute_rewrite_context_fingerprint(
+    entry_namespace: &str,
+    namespace_functions: &HashMap<String, HashSet<String>>,
+    global_function_map: &HashMap<String, String>,
+    namespace_classes: &HashMap<String, HashSet<String>>,
+    global_class_map: &HashMap<String, String>,
+    namespace_modules: &HashMap<String, HashSet<String>>,
+    global_module_map: &HashMap<String, String>,
+) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    entry_namespace.hash(&mut hasher);
+    hash_sorted_map_of_sets(namespace_functions, &mut hasher);
+    hash_sorted_map(global_function_map, &mut hasher);
+    hash_sorted_map_of_sets(namespace_classes, &mut hasher);
+    hash_sorted_map(global_class_map, &mut hasher);
+    hash_sorted_map_of_sets(namespace_modules, &mut hasher);
+    hash_sorted_map(global_module_map, &mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn collect_active_symbols(program: &Program) -> HashSet<String> {
+    let mut symbols = HashSet::new();
+    for decl in &program.declarations {
+        match &decl.node {
+            Decl::Function(func) => {
+                symbols.insert(func.name.clone());
+            }
+            Decl::Class(class) => {
+                symbols.insert(class.name.clone());
+            }
+            Decl::Enum(en) => {
+                symbols.insert(en.name.clone());
+            }
+            Decl::Module(module) => {
+                symbols.insert(module.name.clone());
+                for inner in &module.declarations {
+                    match &inner.node {
+                        Decl::Function(func) => {
+                            symbols.insert(format!("{}__{}", module.name, func.name));
+                        }
+                        Decl::Class(class) => {
+                            symbols.insert(format!("{}__{}", module.name, class.name));
+                        }
+                        Decl::Enum(en) => {
+                            symbols.insert(format!("{}__{}", module.name, en.name));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Decl::Import(_) | Decl::Interface(_) => {}
+        }
+    }
+    symbols
+}
+
+fn load_rewritten_file_cache(
+    project_root: &Path,
+    file: &Path,
+    source_fingerprint: &str,
+    rewrite_context_fingerprint: &str,
+) -> Result<Option<Program>, String> {
+    let path = rewritten_file_cache_path(project_root, file);
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let raw = fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "{}: Failed to read rewrite cache '{}': {}",
+            "error".red().bold(),
+            path.display(),
+            e
+        )
+    })?;
+
+    let entry: RewrittenFileCacheEntry = serde_json::from_str(&raw).map_err(|e| {
+        format!(
+            "{}: Failed to parse rewrite cache '{}': {}",
+            "error".red().bold(),
+            path.display(),
+            e
+        )
+    })?;
+
+    if entry.schema != REWRITE_CACHE_SCHEMA
+        || entry.compiler_version != env!("CARGO_PKG_VERSION")
+        || entry.source_fingerprint != source_fingerprint
+        || entry.rewrite_context_fingerprint != rewrite_context_fingerprint
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(entry.rewritten_program))
+}
+
+fn save_rewritten_file_cache(
+    project_root: &Path,
+    file: &Path,
+    source_fingerprint: &str,
+    rewrite_context_fingerprint: &str,
+    rewritten_program: &Program,
+) -> Result<(), String> {
+    let path = rewritten_file_cache_path(project_root, file);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "{}: Failed to create rewrite cache directory '{}': {}",
+                "error".red().bold(),
+                parent.display(),
+                e
+            )
+        })?;
+    }
+
+    let entry = RewrittenFileCacheEntry {
+        schema: REWRITE_CACHE_SCHEMA.to_string(),
+        compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+        source_fingerprint: source_fingerprint.to_string(),
+        rewrite_context_fingerprint: rewrite_context_fingerprint.to_string(),
+        rewritten_program: rewritten_program.clone(),
+    };
+    let json = serde_json::to_string(&entry).map_err(|e| {
+        format!(
+            "{}: Failed to serialize rewrite cache '{}': {}",
+            "error".red().bold(),
+            path.display(),
+            e
+        )
+    })?;
+
+    fs::write(&path, json).map_err(|e| {
+        format!(
+            "{}: Failed to write rewrite cache '{}': {}",
+            "error".red().bold(),
+            path.display(),
+            e
+        )
+    })
+}
+
+fn object_ext() -> &'static str {
+    #[cfg(windows)]
+    {
+        "obj"
+    }
+    #[cfg(not(windows))]
+    {
+        "o"
+    }
+}
+
+fn object_cache_object_path(project_root: &Path, file: &Path) -> PathBuf {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    file.hash(&mut hasher);
+    project_root
+        .join(".apexcache")
+        .join("objects")
+        .join(format!("{:016x}.{}", hasher.finish(), object_ext()))
+}
+
+fn object_cache_meta_path(project_root: &Path, file: &Path) -> PathBuf {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    file.hash(&mut hasher);
+    project_root
+        .join(".apexcache")
+        .join("objects")
+        .join(format!("{:016x}.json", hasher.finish()))
+}
+
+fn compute_object_build_fingerprint(link: &LinkConfig<'_>) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    env!("CARGO_PKG_VERSION").hash(&mut hasher);
+    link.opt_level.hash(&mut hasher);
+    link.target.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn load_object_cache_hit(
+    project_root: &Path,
+    file: &Path,
+    source_fingerprint: &str,
+    rewrite_context_fingerprint: &str,
+    object_build_fingerprint: &str,
+) -> Result<Option<PathBuf>, String> {
+    let meta_path = object_cache_meta_path(project_root, file);
+    let obj_path = object_cache_object_path(project_root, file);
+    if !meta_path.exists() || !obj_path.exists() {
+        return Ok(None);
+    }
+
+    let raw = fs::read_to_string(&meta_path).map_err(|e| {
+        format!(
+            "{}: Failed to read object cache meta '{}': {}",
+            "error".red().bold(),
+            meta_path.display(),
+            e
+        )
+    })?;
+    let meta: ObjectCacheEntry = serde_json::from_str(&raw).map_err(|e| {
+        format!(
+            "{}: Failed to parse object cache meta '{}': {}",
+            "error".red().bold(),
+            meta_path.display(),
+            e
+        )
+    })?;
+
+    if meta.schema != OBJECT_CACHE_SCHEMA
+        || meta.compiler_version != env!("CARGO_PKG_VERSION")
+        || meta.source_fingerprint != source_fingerprint
+        || meta.rewrite_context_fingerprint != rewrite_context_fingerprint
+        || meta.object_build_fingerprint != object_build_fingerprint
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(obj_path))
+}
+
+fn save_object_cache_meta(
+    project_root: &Path,
+    file: &Path,
+    source_fingerprint: &str,
+    rewrite_context_fingerprint: &str,
+    object_build_fingerprint: &str,
+) -> Result<(), String> {
+    let meta_path = object_cache_meta_path(project_root, file);
+    if let Some(parent) = meta_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "{}: Failed to create object cache directory '{}': {}",
+                "error".red().bold(),
+                parent.display(),
+                e
+            )
+        })?;
+    }
+
+    let meta = ObjectCacheEntry {
+        schema: OBJECT_CACHE_SCHEMA.to_string(),
+        compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+        source_fingerprint: source_fingerprint.to_string(),
+        rewrite_context_fingerprint: rewrite_context_fingerprint.to_string(),
+        object_build_fingerprint: object_build_fingerprint.to_string(),
+    };
+    let json = serde_json::to_string(&meta).map_err(|e| {
+        format!(
+            "{}: Failed to serialize object cache meta '{}': {}",
+            "error".red().bold(),
+            meta_path.display(),
+            e
+        )
+    })?;
+    fs::write(&meta_path, json).map_err(|e| {
+        format!(
+            "{}: Failed to write object cache meta '{}': {}",
+            "error".red().bold(),
+            meta_path.display(),
+            e
+        )
+    })
+}
+
 fn parse_project_unit(project_root: &Path, file: &Path) -> Result<ParsedProjectUnit, String> {
     let source = fs::read_to_string(file).map_err(|e| {
         format!(
@@ -527,7 +860,7 @@ fn parse_project_unit(project_root: &Path, file: &Path) -> Result<ParsedProjectU
             let cache_entry = ParsedFileCacheEntry {
                 schema: PARSE_CACHE_SCHEMA.to_string(),
                 compiler_version: env!("CARGO_PKG_VERSION").to_string(),
-                source_fingerprint: source_fp,
+                source_fingerprint: source_fp.clone(),
                 namespace: namespace.clone(),
                 program: program.clone(),
                 imports: imports.clone(),
@@ -554,6 +887,7 @@ fn parse_project_unit(project_root: &Path, file: &Path) -> Result<ParsedProjectU
         namespace,
         program,
         imports,
+        source_fingerprint: source_fp,
         function_names,
         class_names,
         module_names,
@@ -726,7 +1060,7 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
 
     // Phase 1: Parse all files (parallel) and extract namespace information
     let files = config.get_source_files(&project_root);
-    let mut parsed_files: Vec<(PathBuf, String, Program, Vec<ImportDecl>)> = Vec::new();
+    let mut parsed_files: Vec<ParsedProjectUnit> = Vec::new();
     let mut global_function_map: HashMap<String, String> = HashMap::new(); // func_name -> namespace
     let mut global_class_map: HashMap<String, String> = HashMap::new(); // class_name -> namespace
     let mut global_module_map: HashMap<String, String> = HashMap::new(); // module_name -> namespace
@@ -798,7 +1132,7 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
             }
         }
 
-        parsed_files.push((unit.file, unit.namespace, unit.program, unit.imports));
+        parsed_files.push(unit);
     }
 
     if parse_cache_hits > 0 {
@@ -863,22 +1197,35 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
     if do_check {
         println!("{} Checking imports...", "→".cyan());
 
-        for (file, namespace, program, imports) in &parsed_files {
-            let mut checker = ImportChecker::new(
-                global_function_map.clone(),
-                namespace.clone(),
-                imports.clone(),
-            );
+        let import_results: Vec<Result<(), String>> = parsed_files
+            .par_iter()
+            .map(|unit| {
+                let mut checker = ImportChecker::new(
+                    global_function_map.clone(),
+                    unit.namespace.clone(),
+                    unit.imports.clone(),
+                );
 
-            if let Err(errors) = checker.check_program(program) {
-                let filename = file
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("unknown");
-                eprintln!("{} Import errors in {}:", "error".red().bold(), filename);
-                for err in errors {
-                    eprintln!("  → {}", err.format());
+                if let Err(errors) = checker.check_program(&unit.program) {
+                    let filename = unit
+                        .file
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("unknown");
+                    let mut rendered =
+                        format!("{} Import errors in {}:\n", "error".red().bold(), filename);
+                    for err in errors {
+                        rendered.push_str(&format!("  → {}\n", err.format()));
+                    }
+                    return Err(rendered);
                 }
+                Ok(())
+            })
+            .collect();
+
+        for result in import_results {
+            if let Err(rendered) = result {
+                eprint!("{rendered}");
                 return Err("Import check failed".to_string());
             }
         }
@@ -886,9 +1233,11 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
 
     let entry_path = config.get_entry_path(&project_root);
     let mut namespace_functions: HashMap<String, HashSet<String>> = HashMap::new();
-    for (_, ns, program, _) in &parsed_files {
-        let entry = namespace_functions.entry(ns.clone()).or_default();
-        for decl in &program.declarations {
+    for unit in &parsed_files {
+        let entry = namespace_functions
+            .entry(unit.namespace.clone())
+            .or_default();
+        for decl in &unit.program.declarations {
             if let Decl::Function(func) = &decl.node {
                 entry.insert(func.name.clone());
             }
@@ -897,31 +1246,96 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
 
     let entry_namespace = parsed_files
         .iter()
-        .find(|(file, _, _, _)| file == &entry_path)
-        .map(|(_, ns, _, _)| ns.clone())
+        .find(|unit| unit.file == entry_path)
+        .map(|unit| unit.namespace.clone())
         .unwrap_or_else(|| "global".to_string());
 
+    let rewrite_context_fingerprint = compute_rewrite_context_fingerprint(
+        &entry_namespace,
+        &namespace_functions,
+        &global_function_map,
+        &namespace_class_map,
+        &global_class_map,
+        &namespace_module_map,
+        &global_module_map,
+    );
+
     // Phase 3: Build combined AST with deterministic namespace mangling.
+    let rewritten_results: Vec<Result<RewrittenProjectUnit, String>> = parsed_files
+        .par_iter()
+        .map(|unit| {
+            if let Some(cached) = load_rewritten_file_cache(
+                &project_root,
+                &unit.file,
+                &unit.source_fingerprint,
+                &rewrite_context_fingerprint,
+            )? {
+                let active_symbols = collect_active_symbols(&cached);
+                return Ok(RewrittenProjectUnit {
+                    file: unit.file.clone(),
+                    program: cached,
+                    source_fingerprint: unit.source_fingerprint.clone(),
+                    active_symbols,
+                    from_rewrite_cache: true,
+                });
+            }
+
+            let rewritten = project_rewrite::rewrite_program_for_project(
+                &unit.program,
+                &unit.namespace,
+                &entry_namespace,
+                &namespace_functions,
+                &global_function_map,
+                &namespace_class_map,
+                &global_class_map,
+                &namespace_module_map,
+                &global_module_map,
+                &unit.imports,
+            );
+            save_rewritten_file_cache(
+                &project_root,
+                &unit.file,
+                &unit.source_fingerprint,
+                &rewrite_context_fingerprint,
+                &rewritten,
+            )?;
+            Ok(RewrittenProjectUnit {
+                file: unit.file.clone(),
+                active_symbols: collect_active_symbols(&rewritten),
+                program: rewritten,
+                source_fingerprint: unit.source_fingerprint.clone(),
+                from_rewrite_cache: false,
+            })
+        })
+        .collect();
+
+    let mut rewritten_files: Vec<RewrittenProjectUnit> = Vec::new();
+    for result in rewritten_results {
+        rewritten_files.push(result?);
+    }
+    rewritten_files.sort_by(|a, b| a.file.cmp(&b.file));
+
+    let rewrite_cache_hits = rewritten_files
+        .iter()
+        .filter(|unit| unit.from_rewrite_cache)
+        .count();
+    if rewrite_cache_hits > 0 {
+        println!(
+            "{} Reused rewrite cache for {}/{} files",
+            "→".cyan(),
+            rewrite_cache_hits,
+            rewritten_files.len()
+        );
+    }
+
     let mut combined_program = Program {
         package: None,
         declarations: Vec::new(),
     };
-    for (_, namespace, program, imports) in &parsed_files {
-        let rewritten = project_rewrite::rewrite_program_for_project(
-            program,
-            namespace,
-            &entry_namespace,
-            &namespace_functions,
-            &global_function_map,
-            &namespace_class_map,
-            &global_class_map,
-            &namespace_module_map,
-            &global_module_map,
-            imports,
-        );
+    for unit in &rewritten_files {
         combined_program
             .declarations
-            .extend(rewritten.declarations.into_iter());
+            .extend(unit.program.declarations.iter().cloned());
     }
 
     // Compile combined program AST (import/type checks already done above).
@@ -933,13 +1347,69 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
         link_libs: &config.link_libs,
         link_args: &config.link_args,
     };
-    compile_program_ast(
-        &combined_program,
-        &entry_path,
-        &output_path,
-        emit_llvm,
-        &link,
-    )?;
+    if emit_llvm {
+        compile_program_ast(
+            &combined_program,
+            &entry_path,
+            &output_path,
+            emit_llvm,
+            &link,
+        )?;
+    } else {
+        let object_build_fingerprint = compute_object_build_fingerprint(&link);
+        let mut object_paths: Vec<PathBuf> = Vec::new();
+        let mut object_cache_hits: usize = 0;
+        let object_candidate_count = rewritten_files
+            .iter()
+            .filter(|unit| !unit.active_symbols.is_empty())
+            .count();
+
+        for unit in &rewritten_files {
+            if unit.active_symbols.is_empty() {
+                continue;
+            }
+
+            if let Some(cached_obj) = load_object_cache_hit(
+                &project_root,
+                &unit.file,
+                &unit.source_fingerprint,
+                &rewrite_context_fingerprint,
+                &object_build_fingerprint,
+            )? {
+                object_paths.push(cached_obj);
+                object_cache_hits += 1;
+                continue;
+            }
+
+            let obj_path = object_cache_object_path(&project_root, &unit.file);
+            compile_program_ast_to_object_filtered(
+                &combined_program,
+                &unit.file,
+                &obj_path,
+                &link,
+                &unit.active_symbols,
+            )?;
+            save_object_cache_meta(
+                &project_root,
+                &unit.file,
+                &unit.source_fingerprint,
+                &rewrite_context_fingerprint,
+                &object_build_fingerprint,
+            )?;
+            object_paths.push(obj_path);
+        }
+
+        if object_cache_hits > 0 {
+            println!(
+                "{} Reused object cache for {}/{} files",
+                "→".cyan(),
+                object_cache_hits,
+                object_candidate_count
+            );
+        }
+
+        link_objects(&object_paths, &output_path, &link)?;
+    }
 
     println!(
         "{} {} -> {}",
@@ -982,6 +1452,40 @@ fn compile_program_ast(
         let _ = fs::remove_file(&ir_path);
     }
 
+    Ok(())
+}
+
+fn compile_program_ast_to_object_filtered(
+    program: &Program,
+    source_path: &Path,
+    object_path: &Path,
+    link: &LinkConfig<'_>,
+    active_symbols: &HashSet<String>,
+) -> Result<(), String> {
+    let context = Context::create();
+    let module_name = source_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("main");
+    let mut codegen = Codegen::new(&context, module_name);
+    codegen
+        .compile_filtered(program, active_symbols)
+        .map_err(|e| format!("{}: Codegen error: {}", "error".red().bold(), e.message))?;
+
+    let ir_path = object_path.with_extension("ll");
+    if let Some(parent) = object_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "{}: Failed to create object cache directory '{}': {}",
+                "error".red().bold(),
+                parent.display(),
+                e
+            )
+        })?;
+    }
+    codegen.write_ir(&ir_path)?;
+    compile_ir_to_object(&ir_path, object_path, link)?;
+    let _ = fs::remove_file(&ir_path);
     Ok(())
 }
 
@@ -1325,6 +1829,133 @@ fn compile_ir(ir_path: &Path, output_path: &Path, link: &LinkConfig<'_>) -> Resu
         "error".red().bold(),
         last_stderr
     ))
+}
+
+fn compile_ir_to_object(
+    ir_path: &Path,
+    object_path: &Path,
+    link: &LinkConfig<'_>,
+) -> Result<(), String> {
+    let opt_flag = resolve_clang_opt_flag(link.opt_level);
+    let mut cmd = Command::new("clang");
+    cmd.arg("-c")
+        .arg(ir_path)
+        .arg("-o")
+        .arg(object_path)
+        .arg("-Wno-override-module")
+        .arg(opt_flag);
+
+    if let Some(target_triple) = link.target {
+        cmd.arg("--target").arg(target_triple);
+    } else {
+        cmd.arg("-march=native").arg("-mtune=native");
+    }
+
+    cmd.arg("-fomit-frame-pointer");
+
+    let output = cmd.output().map_err(|_| {
+        format!(
+            "{}: Clang not found. Install clang to compile.",
+            "error".red().bold()
+        )
+    })?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    Err(format!(
+        "{}: Clang failed while compiling object: {}",
+        "error".red().bold(),
+        stderr
+    ))
+}
+
+fn link_objects(
+    objects: &[PathBuf],
+    output_path: &Path,
+    link: &LinkConfig<'_>,
+) -> Result<(), String> {
+    if objects.is_empty() {
+        return Err(format!(
+            "{}: No object files generated for project build.",
+            "error".red().bold()
+        ));
+    }
+
+    let opt_flag = resolve_clang_opt_flag(link.opt_level);
+    match link.output_kind {
+        OutputKind::Static => {
+            let status = Command::new("ar")
+                .arg("rcs")
+                .arg(output_path)
+                .args(objects)
+                .status()
+                .map_err(|e| {
+                    format!(
+                        "{}: Failed to run ar for static library creation: {}",
+                        "error".red().bold(),
+                        e
+                    )
+                })?;
+            if !status.success() {
+                return Err(format!(
+                    "{}: ar failed while creating static library",
+                    "error".red().bold()
+                ));
+            }
+            Ok(())
+        }
+        OutputKind::Bin | OutputKind::Shared => {
+            let mut cmd = Command::new("clang");
+            cmd.args(objects).arg("-o").arg(output_path).arg(opt_flag);
+
+            if link.output_kind == OutputKind::Shared {
+                cmd.arg("-shared");
+            }
+            if let Some(target_triple) = link.target {
+                cmd.arg("--target").arg(target_triple);
+            } else {
+                cmd.arg("-march=native").arg("-mtune=native");
+            }
+
+            cmd.arg("-fomit-frame-pointer");
+
+            #[cfg(windows)]
+            cmd.arg("-llegacy_stdio_definitions");
+
+            #[cfg(not(windows))]
+            cmd.arg("-lm").arg("-pthread");
+
+            for path in link.link_search {
+                cmd.arg(format!("-L{}", path));
+            }
+            for lib in link.link_libs {
+                cmd.arg(format!("-l{}", lib));
+            }
+            for arg in link.link_args {
+                cmd.arg(arg);
+            }
+
+            let output = cmd.output().map_err(|_| {
+                format!(
+                    "{}: Clang not found. Install clang to compile.",
+                    "error".red().bold()
+                )
+            })?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                Err(format!(
+                    "{}: Clang failed while linking objects: {}",
+                    "error".red().bold(),
+                    stderr
+                ))
+            }
+        }
+    }
 }
 
 /// Check a single file

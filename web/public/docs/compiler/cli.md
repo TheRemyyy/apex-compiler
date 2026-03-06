@@ -53,6 +53,8 @@ Build cache note:
 - `apex build` now writes cache metadata into `.apexcache/` in the project root.
 - If no source/config/build-mode inputs changed and output artifact exists, build exits early with `Up to date ... (build cache)`.
 - For changed projects, parser-level cache is reused per unchanged file from `.apexcache/parsed/`, reducing front-end rebuild overhead.
+- Rewritten AST cache is reused per unchanged file from `.apexcache/rewritten/`, reducing project rewrite overhead.
+- Object cache is reused per unchanged file from `.apexcache/objects/` and changed files are rebuilt as object-only, then relinked.
 - Multi-file project parse stage is parallelized to improve wall time on larger projects.
 
 ## Compile Command Flags
