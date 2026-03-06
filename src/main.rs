@@ -494,7 +494,7 @@ struct RewrittenFileCacheEntry {
     rewritten_program: Program,
 }
 
-const OBJECT_CACHE_SCHEMA: &str = "v1";
+const OBJECT_CACHE_SCHEMA: &str = "v2";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ObjectCacheEntry {

@@ -6,7 +6,7 @@ use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
-use inkwell::module::Module;
+use inkwell::module::{Linkage, Module};
 
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType};
 use inkwell::values::{
@@ -2778,6 +2778,7 @@ impl<'ctx> Codegen<'ctx> {
                 let name = format!("str.{}", self.str_counter);
                 self.str_counter += 1;
                 let global = self.module.add_global(str_val.get_type(), None, &name);
+                global.set_linkage(Linkage::Private);
                 global.set_initializer(&str_val);
                 global.set_constant(true);
                 Ok(global.as_pointer_value().into())
@@ -3974,6 +3975,7 @@ impl<'ctx> Codegen<'ctx> {
             let fmt_name = format!("fmt.{}", self.str_counter);
             self.str_counter += 1;
             let fmt_global = self.module.add_global(fmt_str.get_type(), None, &fmt_name);
+            fmt_global.set_linkage(Linkage::Private);
             fmt_global.set_initializer(&fmt_str);
 
             let mut call_args: Vec<BasicMetadataValueEnum> =
@@ -3990,6 +3992,7 @@ impl<'ctx> Codegen<'ctx> {
             let nl_name = format!("nl.{}", self.str_counter);
             self.str_counter += 1;
             let nl_global = self.module.add_global(nl_str.get_type(), None, &nl_name);
+            nl_global.set_linkage(Linkage::Private);
             nl_global.set_initializer(&nl_str);
             self.builder
                 .build_call(printf, &[nl_global.as_pointer_value().into()], "printf")
@@ -4045,6 +4048,7 @@ impl<'ctx> Codegen<'ctx> {
         let fmt_name = format!("fmt.{}", self.str_counter);
         self.str_counter += 1;
         let fmt_global = self.module.add_global(fmt_val.get_type(), None, &fmt_name);
+        fmt_global.set_linkage(Linkage::Private);
         fmt_global.set_initializer(&fmt_val);
 
         // Call sprintf
@@ -4547,10 +4551,12 @@ impl<'ctx> Codegen<'ctx> {
                     self.str_counter += 1;
 
                     let t_glob = self.module.add_global(true_s.get_type(), None, &t_name);
+                    t_glob.set_linkage(Linkage::Private);
                     t_glob.set_initializer(&true_s);
                     t_glob.set_constant(true);
 
                     let f_glob = self.module.add_global(false_s.get_type(), None, &f_name);
+                    f_glob.set_linkage(Linkage::Private);
                     f_glob.set_initializer(&false_s);
                     f_glob.set_constant(true);
 
@@ -4596,6 +4602,7 @@ impl<'ctx> Codegen<'ctx> {
                 let fmt_name = format!("fmt.{}", self.str_counter);
                 self.str_counter += 1;
                 let fmt_global = self.module.add_global(fmt_val.get_type(), None, &fmt_name);
+                fmt_global.set_linkage(Linkage::Private);
                 fmt_global.set_initializer(&fmt_val);
 
                 let mut sprintf_args: Vec<BasicMetadataValueEnum> =
@@ -5077,6 +5084,7 @@ impl<'ctx> Codegen<'ctx> {
 
                 let mode = self.context.const_string(b"w", true);
                 let mode_global = self.module.add_global(mode.get_type(), None, "mode_w");
+                mode_global.set_linkage(Linkage::Private);
                 mode_global.set_initializer(&mode);
 
                 let file_call = self
@@ -5150,6 +5158,7 @@ impl<'ctx> Codegen<'ctx> {
 
                 let mode = self.context.const_string(b"rb", true); // Binary mode to get exact bytes
                 let mode_global = self.module.add_global(mode.get_type(), None, "mode_r");
+                mode_global.set_linkage(Linkage::Private);
                 mode_global.set_initializer(&mode);
 
                 let file_call = self
@@ -5184,6 +5193,7 @@ impl<'ctx> Codegen<'ctx> {
                 let empty_global = self
                     .module
                     .add_global(empty_str.get_type(), None, "empty_s");
+                empty_global.set_linkage(Linkage::Private);
                 empty_global.set_initializer(&empty_str);
                 let fail_res = empty_global.as_pointer_value();
                 self.builder
@@ -5272,6 +5282,7 @@ impl<'ctx> Codegen<'ctx> {
 
                 let mode = self.context.const_string(b"r", true);
                 let mode_global = self.module.add_global(mode.get_type(), None, "mode_r");
+                mode_global.set_linkage(Linkage::Private);
                 mode_global.set_initializer(&mode);
 
                 let file_call = self
@@ -5390,6 +5401,7 @@ impl<'ctx> Codegen<'ctx> {
                 let default_fmt_global =
                     self.module
                         .add_global(default_fmt.get_type(), None, "default_time_fmt");
+                default_fmt_global.set_linkage(Linkage::Private);
                 default_fmt_global.set_initializer(&default_fmt);
 
                 let actual_fmt = self
@@ -5526,6 +5538,7 @@ impl<'ctx> Codegen<'ctx> {
 
                 let mode = self.context.const_string(b"r", true);
                 let mode_global = self.module.add_global(mode.get_type(), None, "mode_pop_r");
+                mode_global.set_linkage(Linkage::Private);
                 mode_global.set_initializer(&mode);
 
                 let pipe_val = self
@@ -5627,6 +5640,7 @@ impl<'ctx> Codegen<'ctx> {
                 let name = format!("str.os.{}", self.str_counter);
                 self.str_counter += 1;
                 let global = self.module.add_global(str_val.get_type(), None, &name);
+                global.set_linkage(Linkage::Private);
                 global.set_initializer(&str_val);
                 Ok(Some(global.as_pointer_value().into()))
             }

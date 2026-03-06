@@ -74,6 +74,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### 🐛 Fixed
 
+- Fixed duplicate global string symbol collisions (`str.*`, `fmt.*`, file mode constants) during object-cache relink builds on multi-file projects by using private linkage for internal string globals.
+- Fixed stale-object reuse after object-linkage strategy updates by bumping object cache schema to invalidate incompatible cached `.o/.obj` artifacts.
 - Web docs routing now uses extensionless `/docs/...` URLs consistently in footer links and sitemap output.
 - Markdown HTML rendered in the docs/changelog web UI is now sanitized before insertion.
 - Removed duplicate Vercel routing config from `web/public/vercel.json`; `web/vercel.json` is now the only deploy config.

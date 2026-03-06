@@ -5,6 +5,7 @@ use crate::ast::{
     BinOp, Expr, Literal, MatchArm, Parameter, Pattern, Spanned, Stmt, StringPart, Type, UnaryOp,
 };
 
+use inkwell::module::Linkage;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
@@ -199,6 +200,7 @@ impl<'ctx> Codegen<'ctx> {
         }
         let val = self.context.const_string(b"", true);
         let global = self.module.add_global(val.get_type(), None, name);
+        global.set_linkage(Linkage::Private);
         global.set_initializer(&val);
         global.set_constant(true);
         global.as_pointer_value()
