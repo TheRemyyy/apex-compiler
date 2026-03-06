@@ -2244,6 +2244,7 @@ impl TypeChecker {
                 }
                 self.exit_scope();
 
+                let has_else = else_branch.is_some();
                 if let Some(else_stmts) = else_branch {
                     self.enter_scope();
                     let mut else_type = ResolvedType::None;
@@ -2266,7 +2267,11 @@ impl TypeChecker {
                     }
                 }
 
-                then_type
+                if has_else {
+                    then_type
+                } else {
+                    ResolvedType::None
+                }
             }
 
             Expr::Block(body) => {
@@ -4079,6 +4084,27 @@ mod tests {
             .join("\n");
         assert!(
             joined.contains("If expression branch type mismatch"),
+            "{joined}"
+        );
+    }
+
+    #[test]
+    fn if_expression_without_else_is_none_typed() {
+        let src = r#"
+            function main(): None {
+                x: Integer = if (true) { 1; };
+                return None;
+            }
+        "#;
+        let errors =
+            check_source(src).expect_err("if expression without else should be None-typed");
+        let joined = errors
+            .iter()
+            .map(|e| e.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("Type mismatch: cannot assign None to variable of type Integer"),
             "{joined}"
         );
     }

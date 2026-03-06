@@ -2440,4 +2440,25 @@ mod tests {
         assert_eq!(then_branch.len(), 1);
         assert!(else_branch.as_ref().is_some_and(|b| b.len() == 1));
     }
+
+    #[test]
+    fn test_parse_if_expression_without_else() {
+        let source = r#"
+            function main(): None {
+                x: None = if (true) { println("x"); };
+                return None;
+            }
+        "#;
+        let program = parse_source(source).expect("Should parse if-expression without else");
+        let Decl::Function(func) = &program.declarations[0].node else {
+            panic!("Expected function declaration");
+        };
+        let Stmt::Let { value, .. } = &func.body[0].node else {
+            panic!("Expected let statement");
+        };
+        let Expr::IfExpr { else_branch, .. } = &value.node else {
+            panic!("Expected if expression");
+        };
+        assert!(else_branch.is_none());
+    }
 }
