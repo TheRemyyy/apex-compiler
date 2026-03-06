@@ -1877,6 +1877,56 @@ impl TypeChecker {
         }
     }
 
+    fn infer_block_expression_type(&mut self, block: &Block) -> ResolvedType {
+        let mut ty = ResolvedType::None;
+        for stmt in block {
+            if let Stmt::Expr(expr) = &stmt.node {
+                ty = self.check_expr(&expr.node, expr.span.clone());
+            }
+        }
+        ty
+    }
+
+    fn match_expression_exhaustive(&self, match_type: &ResolvedType, arms: &[MatchArm]) -> bool {
+        let has_catch_all = arms
+            .iter()
+            .any(|arm| matches!(arm.pattern, Pattern::Wildcard | Pattern::Ident(_)));
+        if has_catch_all {
+            return true;
+        }
+
+        match match_type {
+            ResolvedType::Boolean => {
+                let has_true = arms
+                    .iter()
+                    .any(|arm| matches!(arm.pattern, Pattern::Literal(Literal::Boolean(true))));
+                let has_false = arms
+                    .iter()
+                    .any(|arm| matches!(arm.pattern, Pattern::Literal(Literal::Boolean(false))));
+                has_true && has_false
+            }
+            ResolvedType::Option(_) => {
+                let has_some = arms
+                    .iter()
+                    .any(|arm| matches!(arm.pattern, Pattern::Variant(ref n, _) if n == "Some"));
+                let has_none = arms
+                    .iter()
+                    .any(|arm| matches!(arm.pattern, Pattern::Variant(ref n, _) if n == "None"));
+                has_some && has_none
+            }
+            ResolvedType::Result(_, _) => {
+                let has_ok = arms
+                    .iter()
+                    .any(|arm| matches!(arm.pattern, Pattern::Variant(ref n, _) if n == "Ok"));
+                let has_err = arms
+                    .iter()
+                    .any(|arm| matches!(arm.pattern, Pattern::Variant(ref n, _) if n == "Error"));
+                has_ok && has_err
+            }
+            _ => true,
+        }
+    }
+
     /// Check an expression and return its type
     fn check_expr(&mut self, expr: &Expr, span: Span) -> ResolvedType {
         match expr {
@@ -2120,9 +2170,40 @@ impl TypeChecker {
                 }
             }
 
-            Expr::Match { expr: _, arms: _ } => {
-                // Match expressions need more complex analysis
-                self.fresh_type_var()
+            Expr::Match { expr, arms } => {
+                let match_type = self.check_expr(&expr.node, expr.span.clone());
+                let mut result_type: Option<ResolvedType> = None;
+
+                for arm in arms {
+                    self.enter_scope();
+                    self.check_pattern(&arm.pattern, &match_type, span.clone());
+                    self.check_block(&arm.body);
+                    let arm_type = self.infer_block_expression_type(&arm.body);
+                    self.exit_scope();
+
+                    if let Some(expected) = &result_type {
+                        if !self.types_compatible(expected, &arm_type) {
+                            self.error(
+                                format!(
+                                    "Match expression arm type mismatch: expected {}, got {}",
+                                    expected, arm_type
+                                ),
+                                span.clone(),
+                            );
+                        }
+                    } else {
+                        result_type = Some(arm_type);
+                    }
+                }
+
+                if !self.match_expression_exhaustive(&match_type, arms) {
+                    self.error(
+                        format!("Non-exhaustive match expression for type {}", match_type),
+                        span,
+                    );
+                }
+
+                result_type.unwrap_or(ResolvedType::None)
             }
 
             Expr::Await(inner) => {
@@ -4105,6 +4186,52 @@ mod tests {
             .join("\n");
         assert!(
             joined.contains("Type mismatch: cannot assign None to variable of type Integer"),
+            "{joined}"
+        );
+    }
+
+    #[test]
+    fn match_expression_branch_type_mismatch_fails() {
+        let src = r#"
+            function main(): None {
+                x: Integer = match (1) {
+                    1 => 1,
+                    _ => "bad",
+                };
+                return None;
+            }
+        "#;
+        let errors = check_source(src).expect_err("match expression branch mismatch should fail");
+        let joined = errors
+            .iter()
+            .map(|e| e.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("Match expression arm type mismatch")
+                || joined.contains("Type mismatch: cannot assign"),
+            "{joined}"
+        );
+    }
+
+    #[test]
+    fn match_expression_boolean_non_exhaustive_fails() {
+        let src = r#"
+            function main(): None {
+                x: Integer = match (true) {
+                    true => 1,
+                };
+                return None;
+            }
+        "#;
+        let errors = check_source(src).expect_err("non-exhaustive boolean match should fail");
+        let joined = errors
+            .iter()
+            .map(|e| e.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("Non-exhaustive match expression"),
             "{joined}"
         );
     }

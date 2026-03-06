@@ -39,12 +39,16 @@ This document describes the internal architecture of the Apex compiler.
   - Hover docs are now resolved from the exact token under cursor, not from broad line substring checks.
 - **If-expression parsing in expression positions**:
   - Parser now supports `if (...) { ... } else { ... }` as `Expr::IfExpr` where an expression is expected.
+  - `if (...) { ... }` without `else` remains valid and is `None`-typed in type analysis.
 - **Borrow checker constant-branch flow pruning**:
   - Unreachable RHS of `true || ...` and `false && ...` is no longer analyzed for move/borrow effects.
   - Constant `if` and `while(false)` paths are handled as unreachable in borrow analysis where possible.
   - Constant `if` with early termination no longer triggers false-positive downstream move/use errors.
 - **Improved type-check diagnostic spans**:
   - Visibility/signature diagnostics now use declaration-context spans instead of synthetic `0..0` placeholders.
+- **Match-expression correctness checks**:
+  - Type checker now validates compatible result types across all match-expression arms.
+  - Exhaustiveness checks are enforced for `Boolean`, `Option<T>`, and `Result<T, E>` unless a catch-all arm exists.
 
 ## Directory Structure
 

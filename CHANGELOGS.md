@@ -140,12 +140,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed parser behavior where visibility modifiers on `constructor`/`destructor` were silently ignored.
   - parser now emits an explicit error (`Visibility modifiers are not supported on constructors/destructors`) instead of accepting misleading syntax.
 - Fixed parser expression coverage by adding `if (...) { ... } else { ... }` expression parsing (`Expr::IfExpr`) in expression contexts.
+- `if` expression parsing now supports both forms:
+  - with `else` (value-producing branches),
+  - and without `else` (valid expression form typed as `None`).
 - Fixed borrow checker control-flow handling for constant boolean branches:
   - short-circuit move analysis now skips unreachable RHS for `true || ...` and `false && ...`,
   - constant `if`/`while(false)` branches are treated as unreachable in borrow analysis where applicable,
   - constant `if` with early termination now prevents false-positive analysis of unreachable following statements.
 - Fixed mutating-method inference to respect short-circuit constants when scanning method bodies (`true || this.mutating_call()` no longer marks method as mutating due to unreachable RHS).
 - Fixed type checker visibility diagnostic spans by replacing synthetic `0..0` spans with declaration-context spans for interface/function/class signature checks.
+- Fixed `match` expression type safety:
+  - arm result types are now validated for compatibility,
+  - non-exhaustive `match` expressions are now rejected for `Boolean`, `Option<T>`, and `Result<T, E>` unless a catch-all arm exists.
 - Fixed project config compatibility for `apex.toml`:
   - `ProjectConfig::load` now supports both flat-key format and `[project]` table format.
 - Fixed class visibility enforcement gaps:
