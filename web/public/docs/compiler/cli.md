@@ -160,6 +160,7 @@ Notes:
 - When run inside a project without an explicit path, `apex fmt` formats the files listed in `apex.toml`.
 - You can point `apex fmt` at either a single `.apex` file or a directory.
 - Formatter output now preserves ambiguous expression statements (`if`/`match`) by emitting them as parenthesized expressions in statement position, so `fmt` round-trips without changing semantics.
+- Formatter now preserves a script shebang line (`#!/usr/bin/env apex`) during rewrite and `--check` runs.
 
 ### Linting and Safe Fixes
 
@@ -176,6 +177,10 @@ Current `apex lint` rules cover:
 - variable shadowing inside nested scopes (`L005`)
 
 `apex fix` currently applies safe import deduping/sorting and then runs formatter output normalization.
+
+Import cleanup behavior:
+- alias imports are treated as distinct imports (`import std.io as io;` and `import std.io as io2;` are not duplicates).
+- imports with trailing inline comments are still parsed as imports by `apex fix` and are not dropped accidentally.
 
 ### Benchmarking and Profiling
 

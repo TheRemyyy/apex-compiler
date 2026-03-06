@@ -314,6 +314,83 @@ def run_single(name: str, source: str, expect_ok: bool, required: list[str] | No
                 )
 
 
+def run_single_error_count(name: str, source: str, needle: str, expected_count: int) -> None:
+    path = single_root / f"{name}.apex"
+    path.write_text(source)
+    proc = subprocess.run([compiler, "check", str(path)], capture_output=True, text=True)
+    output = (proc.stdout or "") + (proc.stderr or "")
+    count = output.count(needle)
+    if count != expected_count:
+        raise SystemExit(
+            f"[single:{name}] expected {expected_count} occurrences of {needle!r}, got {count}\n{output}"
+        )
+
+
+def run_compile_stdout(name: str, source: str, expected_stdout: str) -> None:
+    path = single_root / f"{name}.apex"
+    out_bin = single_root / f"{name}.bin"
+    path.write_text(source)
+    compile_proc = subprocess.run(
+        [compiler, "compile", str(path), "-o", str(out_bin)],
+        capture_output=True,
+        text=True,
+    )
+    if compile_proc.returncode != 0:
+        output = (compile_proc.stdout or "") + (compile_proc.stderr or "")
+        raise SystemExit(f"[compile:{name}] expected compile success\n{output}")
+    run_proc = subprocess.run([str(out_bin)], capture_output=True, text=True)
+    got = (run_proc.stdout or "").strip()
+    if got != expected_stdout:
+        raise SystemExit(
+            f"[runtime:{name}] expected stdout={expected_stdout!r}, got {got!r}"
+        )
+
+
+def run_fmt_preserves_prefix(name: str, source: str, prefix: str) -> None:
+    path = single_root / f"{name}.apex"
+    path.write_text(source)
+    fmt = subprocess.run([compiler, "fmt", str(path)], capture_output=True, text=True)
+    if fmt.returncode != 0:
+        raise SystemExit(f"[fmt:{name}] fmt failed\n{fmt.stdout}{fmt.stderr}")
+    formatted = path.read_text()
+    if not formatted.startswith(prefix):
+        raise SystemExit(
+            f"[fmt:{name}] expected formatted output to start with {prefix!r}\n{formatted}"
+        )
+    run_single(name, formatted, True)
+
+
+def run_lint(name: str, source: str, expect_ok: bool, forbidden: list[str] | None = None) -> None:
+    path = single_root / f"{name}.apex"
+    path.write_text(source)
+    proc = subprocess.run([compiler, "lint", str(path)], capture_output=True, text=True)
+    output = (proc.stdout or "") + (proc.stderr or "")
+    ok = proc.returncode == 0
+    if ok != expect_ok:
+        raise SystemExit(
+            f"[lint:{name}] expected ok={expect_ok}, got rc={proc.returncode}\n{output}"
+        )
+    if forbidden:
+        for needle in forbidden:
+            if needle in output:
+                raise SystemExit(
+                    f"[lint:{name}] unexpectedly contained text: {needle!r}\n{output}"
+                )
+
+
+def run_fix_then_check(name: str, source: str) -> None:
+    path = single_root / f"{name}.apex"
+    path.write_text(source)
+    fix_proc = subprocess.run([compiler, "fix", str(path)], capture_output=True, text=True)
+    if fix_proc.returncode != 0:
+        output = (fix_proc.stdout or "") + (fix_proc.stderr or "")
+        raise SystemExit(f"[fix:{name}] fix failed\n{output}")
+    check_proc = subprocess.run([compiler, "check", str(path)], capture_output=True, text=True)
+    if check_proc.returncode != 0:
+        output = (check_proc.stdout or "") + (check_proc.stderr or "")
+        raise SystemExit(f"[fix:{name}] check failed after fix\n{output}")
+
+
 def run_single_fmt_roundtrip(
     name: str, source: str, expect_ok: bool, required: list[str] | None = None
 ) -> None:
@@ -554,6 +631,120 @@ function main(): None {
 """,
     True,
 )
+run_compile_stdout(
+    "match_expression_literal_runtime_selects_correct_arm",
+    """
+import std.io.*;
+function main(): None {
+    x: Integer = match (2) {
+        1 => { 10; },
+        2 => { 20; },
+        _ => { 30; }
+    };
+    println(to_string(x));
+    return None;
+}
+""",
+    "20",
+)
+run_compile_stdout(
+    "match_expression_boolean_runtime_selects_correct_arm",
+    """
+import std.io.*;
+function main(): None {
+    x: Integer = match (true) {
+        true => { 7; },
+        false => { 9; }
+    };
+    println(to_string(x));
+    return None;
+}
+""",
+    "7",
+)
+run_single(
+    "if_expression_condition_checks_missing_import",
+    """
+function main(): None {
+    x: Integer = if (Math.abs(-1.0) > 0.0) { 1; } else { 2; };
+    return None;
+}
+""",
+    False,
+    ["import std.math.*;"],
+)
+run_single(
+    "if_expression_branch_checks_missing_import",
+    """
+function main(): None {
+    x: Float = if (true) { Math.abs(-1.0); } else { 0.0; };
+    return None;
+}
+""",
+    False,
+    ["import std.math.*;"],
+)
+run_single(
+    "require_expression_checks_missing_import",
+    """
+function main(): None {
+    require(Math.abs(-1.0) > 0.0, "x");
+    return None;
+}
+""",
+    False,
+    ["import std.math.*;"],
+)
+run_single_error_count(
+    "if_expression_single_undefined_error",
+    """
+function main(): None {
+    x: Integer = if (true) { y; } else { 1; };
+    return None;
+}
+""",
+    "Undefined variable: y",
+    1,
+)
+run_single_error_count(
+    "match_expression_single_undefined_error",
+    """
+function main(): None {
+    x: Integer = match (1) {
+        1 => { y; },
+        _ => { 0; }
+    };
+    return None;
+}
+""",
+    "Undefined variable: y",
+    1,
+)
+run_lint(
+    "alias_imports_are_not_duplicates",
+    """
+import std.io as io;
+import std.io as io2;
+function main(): None {
+    io.println("a");
+    io2.println("b");
+    return None;
+}
+""",
+    True,
+    ["[L001]"],
+)
+run_fix_then_check(
+    "fix_import_with_trailing_comment_preserves_required_import",
+    """
+import std.string.*; // needed for Str.len
+import std.io.*;
+function main(): None {
+    println(to_string(Str.len("abc")));
+    return None;
+}
+""",
+)
 run_single_fmt_roundtrip(
     "fmt_match_expr_statement_roundtrip",
     """
@@ -566,6 +757,28 @@ function main(): None {
 }
 """,
     True,
+)
+run_single_fmt_roundtrip(
+    "fmt_preserves_shebang_roundtrip",
+    """#!/usr/bin/env apex
+import std.io.*;
+function main(): None {
+    println("ok");
+    return None;
+}
+""",
+    True,
+)
+run_fmt_preserves_prefix(
+    "fmt_preserves_shebang_prefix",
+    """#!/usr/bin/env apex
+import std.io.*;
+function main(): None {
+    println("ok");
+    return None;
+}
+""",
+    "#!/usr/bin/env apex\n",
 )
 run_single_fmt_roundtrip(
     "fmt_if_expr_statement_roundtrip",

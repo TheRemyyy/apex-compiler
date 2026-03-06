@@ -7,6 +7,12 @@ use crate::lexer;
 use crate::parser::Parser;
 
 pub fn format_source(source: &str) -> Result<String, String> {
+    let shebang = source
+        .lines()
+        .next()
+        .filter(|line| line.starts_with("#!"))
+        .map(ToString::to_string);
+
     let tokens = lexer::tokenize(source).map_err(|e| format!("Lexer error: {}", e))?;
     let mut parser = Parser::new(tokens);
     let program = parser
@@ -15,7 +21,13 @@ pub fn format_source(source: &str) -> Result<String, String> {
 
     let mut formatter = Formatter::with_comments(collect_comments(source));
     formatter.format_program(&program);
-    Ok(formatter.finish())
+    let formatted = formatter.finish();
+
+    if let Some(shebang) = shebang {
+        Ok(format!("{}\n{}", shebang, formatted))
+    } else {
+        Ok(formatted)
+    }
 }
 
 #[derive(Clone)]
@@ -1003,5 +1015,14 @@ function main(): None {
         parser
             .parse_program()
             .expect("formatted output should parse");
+    }
+
+    #[test]
+    fn preserves_shebang_line() {
+        let source = r#"#!/usr/bin/env apex
+function main(): None { return None; }
+"#;
+        let formatted = format_source(source).expect("format succeeds");
+        assert!(formatted.starts_with("#!/usr/bin/env apex\n"));
     }
 }

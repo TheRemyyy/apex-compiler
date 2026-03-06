@@ -2128,7 +2128,11 @@ impl<'ctx> Codegen<'ctx> {
         Ok(encoded)
     }
 
-    fn decode_enum_payload(&self, raw: IntValue<'ctx>, ty: &Type) -> Result<BasicValueEnum<'ctx>> {
+    pub(crate) fn decode_enum_payload(
+        &self,
+        raw: IntValue<'ctx>,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>> {
         let i64_type = self.context.i64_type();
         let decoded = match ty {
             Type::Integer => raw.into(),

@@ -2184,8 +2184,15 @@ impl TypeChecker {
                 for arm in arms {
                     self.enter_scope();
                     self.check_pattern(&arm.pattern, &match_type, span.clone());
-                    self.check_block(&arm.body);
-                    let arm_type = self.infer_block_expression_type(&arm.body);
+                    let mut arm_type = ResolvedType::None;
+                    for stmt in &arm.body {
+                        match &stmt.node {
+                            Stmt::Expr(expr) => {
+                                arm_type = self.check_expr(&expr.node, expr.span.clone());
+                            }
+                            _ => self.check_stmt(&stmt.node, stmt.span.clone()),
+                        }
+                    }
                     self.exit_scope();
 
                     if let Some(expected) = &result_type {
@@ -2325,10 +2332,12 @@ impl TypeChecker {
                 self.enter_scope();
                 let mut then_type = ResolvedType::None;
                 for stmt in then_branch {
-                    if let Stmt::Expr(expr) = &stmt.node {
-                        then_type = self.check_expr(&expr.node, expr.span.clone());
+                    match &stmt.node {
+                        Stmt::Expr(expr) => {
+                            then_type = self.check_expr(&expr.node, expr.span.clone());
+                        }
+                        _ => self.check_stmt(&stmt.node, stmt.span.clone()),
                     }
-                    self.check_stmt(&stmt.node, stmt.span.clone());
                 }
                 self.exit_scope();
 
@@ -2337,10 +2346,12 @@ impl TypeChecker {
                     self.enter_scope();
                     let mut else_type = ResolvedType::None;
                     for stmt in else_stmts {
-                        if let Stmt::Expr(expr) = &stmt.node {
-                            else_type = self.check_expr(&expr.node, expr.span.clone());
+                        match &stmt.node {
+                            Stmt::Expr(expr) => {
+                                else_type = self.check_expr(&expr.node, expr.span.clone());
+                            }
+                            _ => self.check_stmt(&stmt.node, stmt.span.clone()),
                         }
-                        self.check_stmt(&stmt.node, stmt.span.clone());
                     }
                     self.exit_scope();
 
@@ -4327,6 +4338,41 @@ mod tests {
             joined.contains("Non-exhaustive match expression"),
             "{joined}"
         );
+    }
+
+    #[test]
+    fn if_expression_reports_single_undefined_identifier_error() {
+        let src = r#"
+            function main(): None {
+                x: Integer = if (true) { y; } else { 1; };
+                return None;
+            }
+        "#;
+        let errors = check_source(src).expect_err("undefined variable should fail");
+        let undef_count = errors
+            .iter()
+            .filter(|e| e.message.contains("Undefined variable: y"))
+            .count();
+        assert_eq!(undef_count, 1, "{:?}", errors);
+    }
+
+    #[test]
+    fn match_expression_reports_single_undefined_identifier_error() {
+        let src = r#"
+            function main(): None {
+                x: Integer = match (1) {
+                    1 => { y; },
+                    _ => { 0; }
+                };
+                return None;
+            }
+        "#;
+        let errors = check_source(src).expect_err("undefined variable should fail");
+        let undef_count = errors
+            .iter()
+            .filter(|e| e.message.contains("Undefined variable: y"))
+            .count();
+        assert_eq!(undef_count, 1, "{:?}", errors);
     }
 }
 

@@ -141,6 +141,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed formatter roundtrip stability for expression statements starting with `match`/`if`:
   - `apex fmt` now emits parenthesized expression-statement forms (`(match (...){...});`, `(if (...){...} else {...});`) to avoid reparsing as statement nodes with different semantics.
 - Added parser/type/smoke regression coverage for `if` expression branches containing `match (...) { ... };` and lambda-valued `if` expression branches compiled through full codegen.
+- Fixed `match` expression runtime codegen to evaluate arm predicates correctly (literal/variant/wildcard) instead of falling back to wildcard/default behavior.
+- Fixed `match` expression runtime codegen for exhaustive non-wildcard matches (e.g. booleans) to return the selected arm value instead of a constant zero fallback.
+- Fixed import checker traversal gaps for expression forms:
+  - `if` expressions now validate condition and branch expression calls,
+  - `require(...)` now validates calls in both condition and message expressions.
+- Fixed duplicate typechecker diagnostics in `if`/`match` expressions where expression statements were previously type-checked twice in the same branch/arm.
+- Fixed lint duplicate-import detection to account for aliases (`path + alias` identity), preventing false `L001` on distinct alias imports.
+- Fixed `apex fix` import cleanup to keep imports with trailing inline comments (`import ...; // comment`) instead of dropping them from rewritten output.
+- Fixed formatter shebang handling so `apex fmt` preserves `#!/usr/bin/env apex` script headers.
   - parser now emits an explicit error (`Visibility modifiers are not supported on constructors/destructors`) instead of accepting misleading syntax.
 - Fixed parser expression coverage by adding `if (...) { ... } else { ... }` expression parsing (`Expr::IfExpr`) in expression contexts.
 - `if` expression parsing now supports both forms:

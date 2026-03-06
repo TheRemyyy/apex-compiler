@@ -392,6 +392,51 @@ impl<'a> ImportChecker<'a> {
                     self.check_expr(&arg.node);
                 }
             }
+            Expr::IfExpr {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.check_expr(&condition.node);
+                for stmt in then_branch {
+                    self.check_stmt(&stmt.node);
+                }
+                if let Some(else_stmts) = else_branch {
+                    for stmt in else_stmts {
+                        self.check_stmt(&stmt.node);
+                    }
+                }
+            }
+            Expr::Require { condition, message } => {
+                self.check_expr(&condition.node);
+                if let Some(msg) = message {
+                    self.check_expr(&msg.node);
+                }
+            }
+            Expr::Try(inner)
+            | Expr::Borrow(inner)
+            | Expr::MutBorrow(inner)
+            | Expr::Deref(inner) => {
+                self.check_expr(&inner.node);
+            }
+            Expr::Await(inner) => {
+                self.check_expr(&inner.node);
+            }
+            Expr::Range { start, end, .. } => {
+                if let Some(s) = start {
+                    self.check_expr(&s.node);
+                }
+                if let Some(e) = end {
+                    self.check_expr(&e.node);
+                }
+            }
+            Expr::StringInterp(parts) => {
+                for part in parts {
+                    if let crate::ast::StringPart::Expr(expr) = part {
+                        self.check_expr(&expr.node);
+                    }
+                }
+            }
             _ => {} // Literals, identifiers (non-call), etc.
         }
     }
@@ -562,6 +607,45 @@ function main(): None {
 import std.io as io;
 function main(): None {
     io.println(to_string(Math.abs(-3)));
+    return None;
+}
+"#;
+        let errors = check_import_errors(source);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].function_name, "Math__abs");
+    }
+
+    #[test]
+    fn if_expression_condition_checks_missing_imports() {
+        let source = r#"
+function main(): None {
+    x: Integer = if (Math.abs(-1.0) > 0.0) { 1; } else { 2; };
+    return None;
+}
+"#;
+        let errors = check_import_errors(source);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].function_name, "Math__abs");
+    }
+
+    #[test]
+    fn if_expression_branch_checks_missing_imports() {
+        let source = r#"
+function main(): None {
+    x: Float = if (true) { Math.abs(-1.0); } else { 0.0; };
+    return None;
+}
+"#;
+        let errors = check_import_errors(source);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].function_name, "Math__abs");
+    }
+
+    #[test]
+    fn require_expression_checks_missing_imports() {
+        let source = r#"
+function main(): None {
+    require(Math.abs(-1.0) > 0.0, "x");
     return None;
 }
 "#;

@@ -5,12 +5,13 @@ use crate::ast::{
     BinOp, Expr, Literal, MatchArm, Parameter, Pattern, Spanned, Stmt, StringPart, Type, UnaryOp,
 };
 
+use inkwell::basic_block::BasicBlock;
 use inkwell::module::Linkage;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType};
-use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue, ValueKind};
+use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue, ValueKind};
 use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
 
 use std::path::Path;
@@ -823,24 +824,252 @@ impl<'ctx> Codegen<'ctx> {
         expr: &Expr,
         arms: &[MatchArm],
     ) -> Result<BasicValueEnum<'ctx>> {
-        // Simplified: return value of first matching arm
-        let _val = self.compile_expr(expr)?;
+        let val = self.compile_expr(expr)?;
+        let func = self.current_function.unwrap();
+        let merge_bb = self.context.append_basic_block(func, "match.expr.merge");
+
+        let match_ty = self.infer_expr_type(expr, &[]);
+        let enum_match_name = match &match_ty {
+            Type::Named(name) if self.enums.contains_key(name) => Some(name.clone()),
+            _ => None,
+        };
+
+        let mut dispatch_bb = self.builder.get_insert_block().unwrap();
+        let mut incoming: Vec<(BasicValueEnum<'ctx>, BasicBlock<'ctx>)> = Vec::new();
+        let mut result_ty: Option<BasicTypeEnum<'ctx>> = None;
 
         for arm in arms {
-            if matches!(arm.pattern, Pattern::Wildcard | Pattern::Ident(_)) {
-                // Execute body and return last expression
-                for (i, stmt) in arm.body.iter().enumerate() {
-                    if i == arm.body.len() - 1 {
-                        if let Stmt::Expr(e) = &stmt.node {
-                            return self.compile_expr(&e.node);
+            let arm_bb = self.context.append_basic_block(func, "match.expr.arm");
+            let next_bb = self.context.append_basic_block(func, "match.expr.next");
+
+            self.builder.position_at_end(dispatch_bb);
+            match &arm.pattern {
+                Pattern::Wildcard | Pattern::Ident(_) => {
+                    self.builder.build_unconditional_branch(arm_bb).unwrap();
+                }
+                Pattern::Literal(lit) => {
+                    let pattern_val = self.compile_literal(lit)?;
+                    let cond = if val.is_int_value() && pattern_val.is_int_value() {
+                        self.builder
+                            .build_int_compare(
+                                IntPredicate::EQ,
+                                val.into_int_value(),
+                                pattern_val.into_int_value(),
+                                "match_expr_lit_eq",
+                            )
+                            .unwrap()
+                    } else {
+                        self.context.bool_type().const_int(0, false)
+                    };
+                    self.builder
+                        .build_conditional_branch(cond, arm_bb, next_bb)
+                        .unwrap();
+                }
+                Pattern::Variant(variant_name, _) => {
+                    if matches!(variant_name.as_str(), "Some" | "None" | "Ok" | "Error") {
+                        let expected_tag = match variant_name.as_str() {
+                            "Some" | "Ok" => 1u64,
+                            _ => 0u64,
+                        };
+                        let tag = self
+                            .builder
+                            .build_extract_value(val.into_struct_value(), 0, "tag")
+                            .unwrap()
+                            .into_int_value();
+                        let cond = self
+                            .builder
+                            .build_int_compare(
+                                IntPredicate::EQ,
+                                tag,
+                                self.context.i8_type().const_int(expected_tag, false),
+                                "match_expr_variant_eq",
+                            )
+                            .unwrap();
+                        self.builder
+                            .build_conditional_branch(cond, arm_bb, next_bb)
+                            .unwrap();
+                    } else if let Some(enum_name) = &enum_match_name {
+                        if let Some(enum_info) = self.enums.get(enum_name) {
+                            if let Some(variant_info) = enum_info.variants.get(variant_name) {
+                                let tag = self
+                                    .builder
+                                    .build_extract_value(val.into_struct_value(), 0, "tag")
+                                    .unwrap()
+                                    .into_int_value();
+                                let cond = self
+                                    .builder
+                                    .build_int_compare(
+                                        IntPredicate::EQ,
+                                        tag,
+                                        self.context
+                                            .i8_type()
+                                            .const_int(variant_info.tag as u64, false),
+                                        "match_expr_enum_variant_eq",
+                                    )
+                                    .unwrap();
+                                self.builder
+                                    .build_conditional_branch(cond, arm_bb, next_bb)
+                                    .unwrap();
+                            } else {
+                                self.builder.build_unconditional_branch(next_bb).unwrap();
+                            }
+                        } else {
+                            self.builder.build_unconditional_branch(next_bb).unwrap();
+                        }
+                    } else {
+                        self.builder.build_unconditional_branch(next_bb).unwrap();
+                    }
+                }
+            }
+
+            self.builder.position_at_end(arm_bb);
+            match &arm.pattern {
+                Pattern::Ident(binding) => {
+                    let alloca = self.builder.build_alloca(val.get_type(), binding).unwrap();
+                    self.builder.build_store(alloca, val).unwrap();
+                    self.variables.insert(
+                        binding.clone(),
+                        Variable {
+                            ptr: alloca,
+                            ty: match_ty.clone(),
+                        },
+                    );
+                }
+                Pattern::Variant(variant_name, bindings) => {
+                    if variant_name == "Some" && !bindings.is_empty() {
+                        let inner = self
+                            .builder
+                            .build_extract_value(val.into_struct_value(), 1, "some_inner")
+                            .unwrap();
+                        let alloca = self
+                            .builder
+                            .build_alloca(inner.get_type(), &bindings[0])
+                            .unwrap();
+                        self.builder.build_store(alloca, inner).unwrap();
+                        self.variables.insert(
+                            bindings[0].clone(),
+                            Variable {
+                                ptr: alloca,
+                                ty: Type::Integer,
+                            },
+                        );
+                    } else if variant_name == "Ok" && !bindings.is_empty() {
+                        let inner = self
+                            .builder
+                            .build_extract_value(val.into_struct_value(), 1, "ok_inner")
+                            .unwrap();
+                        let alloca = self
+                            .builder
+                            .build_alloca(inner.get_type(), &bindings[0])
+                            .unwrap();
+                        self.builder.build_store(alloca, inner).unwrap();
+                        self.variables.insert(
+                            bindings[0].clone(),
+                            Variable {
+                                ptr: alloca,
+                                ty: Type::Integer,
+                            },
+                        );
+                    } else if variant_name == "Error" && !bindings.is_empty() {
+                        let inner = self
+                            .builder
+                            .build_extract_value(val.into_struct_value(), 2, "err_inner")
+                            .unwrap();
+                        let alloca = self
+                            .builder
+                            .build_alloca(inner.get_type(), &bindings[0])
+                            .unwrap();
+                        self.builder.build_store(alloca, inner).unwrap();
+                        self.variables.insert(
+                            bindings[0].clone(),
+                            Variable {
+                                ptr: alloca,
+                                ty: Type::String,
+                            },
+                        );
+                    } else if let Some(enum_name) = &enum_match_name {
+                        if let Some(enum_info) = self.enums.get(enum_name) {
+                            if let Some(variant_info) = enum_info.variants.get(variant_name) {
+                                for (idx, binding) in bindings.iter().enumerate() {
+                                    if let Some(field_ty) = variant_info.fields.get(idx) {
+                                        let raw = self
+                                            .builder
+                                            .build_extract_value(
+                                                val.into_struct_value(),
+                                                (idx + 1) as u32,
+                                                "enum_payload_raw",
+                                            )
+                                            .unwrap()
+                                            .into_int_value();
+                                        let decoded = self.decode_enum_payload(raw, field_ty)?;
+                                        let alloca = self
+                                            .builder
+                                            .build_alloca(decoded.get_type(), binding)
+                                            .unwrap();
+                                        self.builder.build_store(alloca, decoded).unwrap();
+                                        self.variables.insert(
+                                            binding.clone(),
+                                            Variable {
+                                                ptr: alloca,
+                                                ty: field_ty.clone(),
+                                            },
+                                        );
+                                    }
+                                }
+                            }
                         }
                     }
+                }
+                _ => {}
+            }
+
+            let mut arm_result = self.context.i8_type().const_int(0, false).into();
+            for (idx, stmt) in arm.body.iter().enumerate() {
+                if idx + 1 == arm.body.len() {
+                    if let Stmt::Expr(e) = &stmt.node {
+                        arm_result = self.compile_expr(&e.node)?;
+                    } else {
+                        self.compile_stmt(&stmt.node)?;
+                    }
+                } else {
                     self.compile_stmt(&stmt.node)?;
                 }
             }
+
+            if result_ty.is_none() {
+                result_ty = Some(arm_result.get_type());
+            }
+
+            if self.needs_terminator() {
+                self.builder.build_unconditional_branch(merge_bb).unwrap();
+                let pred = self.builder.get_insert_block().unwrap();
+                incoming.push((arm_result, pred));
+            }
+
+            dispatch_bb = next_bb;
+            self.builder.position_at_end(dispatch_bb);
         }
 
-        Ok(self.context.i64_type().const_int(0, false).into())
+        if let Some(ty) = result_ty {
+            let fallback = ty.const_zero();
+            if self.needs_terminator() {
+                self.builder.build_unconditional_branch(merge_bb).unwrap();
+                let pred = self.builder.get_insert_block().unwrap();
+                incoming.push((fallback, pred));
+            }
+
+            self.builder.position_at_end(merge_bb);
+            let phi = self.builder.build_phi(ty, "match_expr.result").unwrap();
+            let incoming_refs: Vec<(&dyn BasicValue<'ctx>, BasicBlock<'ctx>)> = incoming
+                .iter()
+                .map(|(value, bb)| (value as &dyn BasicValue<'ctx>, *bb))
+                .collect();
+            phi.add_incoming(&incoming_refs);
+            Ok(phi.as_basic_value())
+        } else {
+            self.builder.position_at_end(merge_bb);
+            Ok(self.context.i8_type().const_int(0, false).into())
+        }
     }
 
     pub fn compile_lvalue(&mut self, expr: &Expr) -> Result<PointerValue<'ctx>> {

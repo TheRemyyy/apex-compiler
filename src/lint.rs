@@ -1,4 +1,4 @@
-use crate::ast::{Decl, Expr, Program, Span, Stmt, Type};
+use crate::ast::{Decl, Expr, ImportDecl, Program, Span, Stmt, Type};
 use crate::parser::Parser;
 use crate::{lexer, stdlib::StdLib};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -70,8 +70,9 @@ fn check_duplicate_imports(program: &Program) -> Vec<LintFinding> {
 
     for decl in &program.declarations {
         if let Decl::Import(import) = &decl.node {
-            if !seen.insert(import.path.clone()) {
-                duplicates.insert(import.path.clone());
+            let key = import_identity(import);
+            if !seen.insert(key.clone()) {
+                duplicates.insert(key);
             }
         }
     }
@@ -93,7 +94,7 @@ fn check_import_sorting(program: &Program) -> Vec<LintFinding> {
         .declarations
         .iter()
         .filter_map(|decl| match &decl.node {
-            Decl::Import(import) => Some(import.path.clone()),
+            Decl::Import(import) => Some(import_identity(import)),
             _ => None,
         })
         .collect();
@@ -461,8 +462,9 @@ fn apply_safe_import_fixes(source: &str, program: &Program) -> String {
 
     for line in source.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("import ") && trimmed.ends_with(';') {
-            imports.push(trimmed.to_string());
+        let import_prefix = trimmed.split("//").next().unwrap_or("").trim_end();
+        if import_prefix.starts_with("import ") && import_prefix.ends_with(';') {
+            imports.push(import_prefix.to_string());
         } else {
             body_lines.push(line);
         }
@@ -506,6 +508,14 @@ fn apply_safe_import_fixes(source: &str, program: &Program) -> String {
     }
 
     output
+}
+
+fn import_identity(import: &ImportDecl) -> String {
+    if let Some(alias) = &import.alias {
+        format!("{} as {}", import.path, alias)
+    } else {
+        import.path.clone()
+    }
 }
 
 fn collect_used_names(program: &Program, used: &mut HashSet<String>) {
@@ -867,5 +877,36 @@ function main(): None {
             .iter()
             .any(|f| f.code == "L005"
                 && f.message.contains("Variable 'x' shadows an outer variable")));
+    }
+
+    #[test]
+    fn alias_imports_are_not_false_duplicate() {
+        let source = r#"import std.io as io;
+import std.io as io2;
+
+function main(): None {
+    io.println("a");
+    io2.println("b");
+    return None;
+}
+"#;
+        let result = lint_source(source, false).expect("lint succeeds");
+        assert!(!result.findings.iter().any(|f| f.code == "L001"));
+    }
+
+    #[test]
+    fn fix_keeps_import_with_trailing_comment() {
+        let source = r#"import std.string.*; // needed for Str.len
+import std.io.*;
+
+function main(): None {
+    println(to_string(Str.len("abc")));
+    return None;
+}
+"#;
+        let result = lint_source(source, true).expect("lint succeeds");
+        let fixed = result.fixed_source.expect("fixed source");
+        assert!(fixed.contains("import std.string.*;"));
+        assert!(fixed.contains("import std.io.*;"));
     }
 }
