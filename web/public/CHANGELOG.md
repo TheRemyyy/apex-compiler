@@ -126,6 +126,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added CLI smoke regression coverage for project-level `apex check` catching cross-file type errors.
 - Added CLI smoke regression coverage for project-mode stdlib alias imports (`io.println`, `math.abs`) in `apex check`.
 - Added type checker regression test for local-variable shadowing over stdlib import aliases.
+- Expanded CLI smoke regression suite with:
+  - explicit historical regression scenarios (constructor validation, borrow-state consistency, stdlib import enforcement, local shadowing, project alias handling, cross-file type checks),
+  - and an automated batch of 100 generated `apex check` cases (pass/fail mix) for broader real-world syntax/type/import/borrow coverage.
 - Added borrow checker regression tests for:
   - use-after-move
   - move while borrowed

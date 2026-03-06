@@ -246,6 +246,255 @@ function main(): None {
 EOF_ALIAS_MAIN
 (cd "${PROJECT_STDLIB_ALIAS_DIR}" && "${COMPILER}" check >/dev/null)
 
+python3 - <<'PY' "${COMPILER}" "${TMP_DIR}"
+from pathlib import Path
+import subprocess
+import sys
+
+compiler = sys.argv[1]
+tmp_dir = Path(sys.argv[2])
+single_root = tmp_dir / "single_regressions"
+single_root.mkdir(parents=True, exist_ok=True)
+
+
+def run_single(name: str, source: str, expect_ok: bool, required: list[str] | None = None) -> None:
+    path = single_root / f"{name}.apex"
+    path.write_text(source)
+    proc = subprocess.run([compiler, "check", str(path)], capture_output=True, text=True)
+    output = (proc.stdout or "") + (proc.stderr or "")
+    ok = proc.returncode == 0
+    if ok != expect_ok:
+        raise SystemExit(
+            f"[single:{name}] expected ok={expect_ok}, got rc={proc.returncode}\n{output}"
+        )
+    if required:
+        for needle in required:
+            if needle not in output:
+                raise SystemExit(
+                    f"[single:{name}] missing expected text: {needle!r}\n{output}"
+                )
+
+
+def run_project(name: str, files: dict[str, str], expect_ok: bool, required: list[str] | None = None) -> None:
+    project_root = tmp_dir / f"project_{name}"
+    src_root = project_root / "src"
+    src_root.mkdir(parents=True, exist_ok=True)
+
+    file_list = sorted(files.keys())
+    toml_files = ", ".join([f"\"src/{f}\"" for f in file_list])
+    (project_root / "apex.toml").write_text(
+        "\n".join(
+            [
+                f"name = \"{name}\"",
+                "version = \"0.1.0\"",
+                "entry = \"src/main.apex\"",
+                f"files = [{toml_files}]",
+                f"output = \"{name}\"",
+                "opt_level = \"0\"",
+                "",
+            ]
+        )
+    )
+    for rel, content in files.items():
+        (src_root / rel).write_text(content)
+
+    proc = subprocess.run([compiler, "check"], cwd=project_root, capture_output=True, text=True)
+    output = (proc.stdout or "") + (proc.stderr or "")
+    ok = proc.returncode == 0
+    if ok != expect_ok:
+        raise SystemExit(
+            f"[project:{name}] expected ok={expect_ok}, got rc={proc.returncode}\n{output}"
+        )
+    if required:
+        for needle in required:
+            if needle not in output:
+                raise SystemExit(
+                    f"[project:{name}] missing expected text: {needle!r}\n{output}"
+                )
+
+
+# Explicit regression bundle (historical bugfix paths from recent cycles)
+run_single(
+    "builtin_ctor_list_invalid",
+    """
+function main(): None {
+    xs: List<Integer> = List<Integer>("bad", true, 5);
+    return None;
+}
+""",
+    False,
+    ["expects 0 or 1 arguments"],
+)
+run_single(
+    "builtin_ctor_map_set_invalid",
+    """
+function main(): None {
+    m: Map<String, Integer> = Map<String, Integer>(1);
+    s: Set<Integer> = Set<Integer>(1, 2);
+    return None;
+}
+""",
+    False,
+    ["expects 0 arguments"],
+)
+run_single(
+    "borrow_invalid_assign_keeps_state",
+    """
+function consume(owned s: String): None { return None; }
+function main(): None {
+    mut s: String = "a";
+    r: &String = &s;
+    s = "b";
+    consume(s);
+    return None;
+}
+""",
+    False,
+    ["Cannot assign to 's' while borrowed", "Cannot move 's' while borrowed"],
+)
+run_single(
+    "stdlib_module_import_required",
+    """
+function main(): None {
+    x: Float = Math.abs(-1.0);
+    return None;
+}
+""",
+    False,
+    ["import std.math.*;"],
+)
+run_single(
+    "local_shadow_std_print",
+    """
+function print(owned s: String): None { return None; }
+function main(): None {
+    s: String = "x";
+    print(s);
+    return None;
+}
+""",
+    True,
+)
+run_project(
+    "stdlib_alias_project_ok",
+    {
+        "main.apex": """
+import std.io as io;
+import std.math as math;
+function main(): None {
+    io.println(to_string(math.abs(-1)));
+    return None;
+}
+""",
+    },
+    True,
+)
+run_project(
+    "stdlib_alias_shadow_var_error",
+    {
+        "main.apex": """
+import std.io as io;
+function main(): None {
+    io: Integer = 1;
+    io.println("x");
+    return None;
+}
+""",
+    },
+    False,
+    ["Cannot call method on type Integer"],
+)
+run_project(
+    "project_cross_file_type_error",
+    {
+        "main.apex": """
+import std.io.*;
+import util.*;
+function main(): None {
+    println(to_string(helper()));
+    return None;
+}
+""",
+        "util.apex": """
+package util;
+function helper(): Integer {
+    return "bad";
+}
+""",
+    },
+    False,
+    ["mismatch"],
+)
+
+
+# 100 generated smoke cases (50 pass + 50 fail)
+bulk_root = tmp_dir / "bulk_100_cases"
+bulk_root.mkdir(parents=True, exist_ok=True)
+bulk_cases: list[tuple[str, str, bool, list[str] | None]] = []
+
+for i in range(1, 101):
+    if i % 2 == 1:
+        src = f"""
+import std.io.*;
+function main(): None {{
+    x: Integer = {i};
+    y: Integer = x + 1;
+    println(to_string(y));
+    return None;
+}}
+"""
+        bulk_cases.append((f"bulk_pass_{i:03d}", src, True, None))
+    else:
+        mode = i % 4
+        if mode == 0:
+            src = f"""
+function main(): None {{
+    x: Integer = "bad-{i}";
+    return None;
+}}
+"""
+            bulk_cases.append((f"bulk_fail_type_{i:03d}", src, False, ["Type mismatch"]))
+        elif mode == 2:
+            src = f"""
+function main(): None {{
+    x: Float = Math.abs(-1.0);
+    return None;
+}}
+"""
+            bulk_cases.append(
+                (f"bulk_fail_import_{i:03d}", src, False, ["import std.math.*;"])
+            )
+        else:
+            src = f"""
+function take(owned s: String): None {{ return None; }}
+function main(): None {{
+    s: String = "x";
+    r: &String = &s;
+    take(s);
+    return None;
+}}
+"""
+            bulk_cases.append((f"bulk_fail_borrow_{i:03d}", src, False, ["while borrowed"]))
+
+for name, src, expect_ok, required in bulk_cases:
+    path = bulk_root / f"{name}.apex"
+    path.write_text(src)
+    proc = subprocess.run([compiler, "check", str(path)], capture_output=True, text=True)
+    output = (proc.stdout or "") + (proc.stderr or "")
+    ok = proc.returncode == 0
+    if ok != expect_ok:
+        raise SystemExit(
+            f"[bulk:{name}] expected ok={expect_ok}, got rc={proc.returncode}\n{output}"
+        )
+    if required:
+        for needle in required:
+            if needle not in output:
+                raise SystemExit(
+                    f"[bulk:{name}] missing expected text: {needle!r}\n{output}"
+                )
+print("ci smoke regression bundle: explicit + 100 generated cases passed")
+PY
+
 "${COMPILER}" new shared_project --path "${SHARED_PROJECT}" >/dev/null
 python3 - <<'PY' "${SHARED_PROJECT}/apex.toml"
 from pathlib import Path
