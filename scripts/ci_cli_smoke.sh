@@ -27,6 +27,7 @@ BORROW_SCOPE_RELEASE_FILE="${TMP_DIR}/borrow_scope_release.apex"
 BORROW_REBORROW_AFTER_SCOPE_FILE="${TMP_DIR}/borrow_reborrow_after_scope.apex"
 BORROW_LAMBDA_MOVE_FILE="${TMP_DIR}/borrow_lambda_move.apex"
 BORROW_COMPOUND_BORROWED_FILE="${TMP_DIR}/borrow_compound_borrowed.apex"
+PROJECT_TYPECHECK_DIR="${TMP_DIR}/project_typecheck"
 
 "${COMPILER}" new sample_project --path "${PROJECT_DIR}" >/dev/null
 
@@ -195,6 +196,35 @@ if "${COMPILER}" check "${BORROW_COMPOUND_BORROWED_FILE}" >"${BORROW_ERR_OUT}" 2
   exit 1
 fi
 grep -q "Cannot assign to 'x' while mutably borrowed" "${BORROW_ERR_OUT}"
+
+mkdir -p "${PROJECT_TYPECHECK_DIR}/src"
+cat <<'EOF_PROJECT_CFG' > "${PROJECT_TYPECHECK_DIR}/apex.toml"
+name = "project_typecheck"
+version = "0.1.0"
+entry = "src/main.apex"
+files = ["src/main.apex", "src/util.apex"]
+output = "project_typecheck"
+opt_level = "0"
+EOF_PROJECT_CFG
+cat <<'EOF_PROJECT_MAIN' > "${PROJECT_TYPECHECK_DIR}/src/main.apex"
+import std.io.*;
+import util.*;
+function main(): None {
+    println(to_string(helper()));
+    return None;
+}
+EOF_PROJECT_MAIN
+cat <<'EOF_PROJECT_UTIL' > "${PROJECT_TYPECHECK_DIR}/src/util.apex"
+package util;
+function helper(): Integer {
+    return "bad";
+}
+EOF_PROJECT_UTIL
+if (cd "${PROJECT_TYPECHECK_DIR}" && "${COMPILER}" check >"${BORROW_ERR_OUT}" 2>&1); then
+  echo "project check unexpectedly passed despite cross-file type error" >&2
+  exit 1
+fi
+grep -q "mismatch" "${BORROW_ERR_OUT}"
 
 "${COMPILER}" new shared_project --path "${SHARED_PROJECT}" >/dev/null
 python3 - <<'PY' "${SHARED_PROJECT}/apex.toml"

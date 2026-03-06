@@ -139,6 +139,10 @@ apex check
 apex check src/utils.apex
 ```
 
+Behavior:
+- `apex check` (without a file path) is project-aware and validates the full project graph (`apex.toml` files list), including cross-file imports/types/borrows.
+- `apex check <file.apex>` checks only that single file.
+
 ### Formatting Code
 
 ```bash

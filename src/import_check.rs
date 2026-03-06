@@ -18,10 +18,16 @@ pub struct ImportError {
 
 impl ImportError {
     pub fn format(&self) -> String {
+        let import_hint = if self.function_name.contains("__") {
+            format!("import {}.*;", self.defined_in)
+        } else {
+            format!("import {}.{};", self.defined_in, self.function_name)
+        };
+
         let mut result = format!(
             "Function '{}' is defined in '{}' but not imported in '{}'\n  \
-             Hint: Add 'import {}.{};' to the top of your file",
-            self.function_name, self.defined_in, self.used_in, self.defined_in, self.function_name
+             Hint: Add '{}' to the top of your file",
+            self.function_name, self.defined_in, self.used_in, import_hint
         );
 
         if let Some(suggestion) = &self.suggestion {

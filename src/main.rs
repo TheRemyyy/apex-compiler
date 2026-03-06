@@ -188,7 +188,7 @@ fn main() {
             release,
             emit_llvm,
             no_check,
-        } => build_project(release, emit_llvm, !no_check),
+        } => build_project(release, emit_llvm, !no_check, false),
         Commands::Run {
             file,
             args,
@@ -216,7 +216,7 @@ fn main() {
             opt_level.as_deref(),
             target.as_deref(),
         ),
-        Commands::Check { file } => check_file(file.as_deref()),
+        Commands::Check { file } => check_command(file.as_deref()),
         Commands::Info => show_project_info(),
         Commands::Lint { path } => lint_target(path.as_deref()),
         Commands::Fix { path } => fix_target(path.as_deref()),
@@ -1026,7 +1026,12 @@ output_kind = "bin"
 }
 
 /// Build the current project with proper namespace checking
-fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), String> {
+fn build_project(
+    _release: bool,
+    emit_llvm: bool,
+    do_check: bool,
+    check_only: bool,
+) -> Result<(), String> {
     let cwd = current_dir_checked()?;
     let project_root = find_project_root(&cwd)
         .ok_or_else(|| format!("{}: No apex.toml found. Are you in a project directory?\nRun `apex new <name>` to create a new project.",
@@ -1040,15 +1045,17 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
 
     let output_path = project_root.join(&config.output);
     let fingerprint = compute_project_fingerprint(&project_root, &config, emit_llvm, do_check)?;
-    if let Some(cached) = load_cached_fingerprint(&project_root) {
-        if cached == fingerprint && project_build_artifact_exists(&output_path, emit_llvm) {
-            println!(
-                "{} {} ({})",
-                "Up to date".green().bold(),
-                config.name.cyan(),
-                "build cache".dimmed()
-            );
-            return Ok(());
+    if !check_only {
+        if let Some(cached) = load_cached_fingerprint(&project_root) {
+            if cached == fingerprint && project_build_artifact_exists(&output_path, emit_llvm) {
+                println!(
+                    "{} {} ({})",
+                    "Up to date".green().bold(),
+                    config.name.cyan(),
+                    "build cache".dimmed()
+                );
+                return Ok(());
+            }
         }
     }
 
@@ -1342,6 +1349,35 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
             .extend(unit.program.declarations.iter().cloned());
     }
 
+    if do_check {
+        let mut type_checker = TypeChecker::new(String::new());
+        if let Err(errors) = type_checker.check(&combined_program) {
+            let mut rendered = String::new();
+            for error in errors {
+                rendered.push_str(&format!("\x1b[1;31merror\x1b[0m: {}\n", error.message));
+            }
+            return Err(rendered);
+        }
+
+        let mut borrow_checker = BorrowChecker::new();
+        if let Err(errors) = borrow_checker.check(&combined_program) {
+            let mut rendered = String::new();
+            for error in errors {
+                rendered.push_str(&format!(
+                    "\x1b[1;31merror[E0505]\x1b[0m: {}\n",
+                    error.message
+                ));
+            }
+            return Err(rendered);
+        }
+    }
+
+    if check_only {
+        println!("{} {}", "Checked".green().bold(), config.name.cyan());
+        println!("{}", "No errors found.".green());
+        return Ok(());
+    }
+
     // Compile combined program AST (import/type checks already done above).
     let link = LinkConfig {
         opt_level: Some(&config.opt_level),
@@ -1434,7 +1470,9 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
         output_path.display()
     );
 
-    save_cached_fingerprint(&project_root, &fingerprint)?;
+    if !check_only {
+        save_cached_fingerprint(&project_root, &fingerprint)?;
+    }
 
     Ok(())
 }
@@ -1507,7 +1545,7 @@ fn compile_program_ast_to_object_filtered(
 
 /// Build and run the current project
 fn run_project(args: &[String], release: bool, do_check: bool) -> Result<(), String> {
-    build_project(release, false, do_check)?;
+    build_project(release, false, do_check, false)?;
 
     let cwd = current_dir_checked()?;
     let project_root = find_project_root(&cwd)
@@ -1569,6 +1607,16 @@ fn run_single_file(
     }
 
     Ok(())
+}
+
+fn check_command(file: Option<&Path>) -> Result<(), String> {
+    if file.is_none() {
+        if let Some(cwd_project_root) = find_project_root(&current_dir_checked()?) {
+            let _ = cwd_project_root;
+            return build_project(false, false, true, true);
+        }
+    }
+    check_file(file)
 }
 
 /// Compile a single file (legacy mode)

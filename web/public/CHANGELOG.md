@@ -112,8 +112,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed import checker precedence so same-file local functions correctly shadow stdlib names (e.g. local `print(...)` no longer incorrectly requires `import std.io.print;`).
 - Fixed import checking for stdlib module-style calls (`Math.abs(...)`) so missing `std.math` imports are now reported.
 - Fixed import checker handling for namespace aliases (`import std.io as io;`) so aliased stdlib calls like `io.println(...)`, `math.abs(...)`, and `str.len(...)` are validated correctly.
+- Fixed `apex check` behavior in project mode:
+  - running `apex check` without an explicit file now performs project-aware validation (same multi-file pipeline as project builds), not entry-file-only checking.
+  - project build/check now runs type checker and borrow checker on the rewritten combined project AST before codegen/link.
+- Improved import-check hint text for module-style stdlib calls (`Math.abs`, `Str.len`, `System.os`) to suggest namespace wildcard imports (`import std.math.*;`) instead of mangled symbol names.
 - Added import checker regression tests for local-vs-stdlib shadowing and `Math.*` import enforcement paths.
 - Added import checker regression test for aliased stdlib module calls (`std.io`/`std.math`/`std.string` alias flow).
+- Added CLI smoke regression coverage for project-level `apex check` catching cross-file type errors.
 - Added borrow checker regression tests for:
   - use-after-move
   - move while borrowed
