@@ -43,6 +43,26 @@ return None;    // Required
 
 Some constructs like `if`, `while`, `function` definitions do not require a semicolon after their closing brace.
 
+## Assignment
+
+Basic assignment and compound assignment are supported:
+
+```apex
+x: Integer = 10;
+x = x + 1;
+x += 2;
+x -= 1;
+x *= 3;
+x /= 2;
+```
+
+Compound assignment also works with index and field targets:
+
+```apex
+arr[i] += 1;
+obj.count -= 1;
+```
+
 ## Identifiers
 
 Identifiers (variable names, function names) must start with a letter or underscore, followed by letters, numbers, or underscores.

@@ -11,6 +11,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `apex fmt` command for formatting Apex source files.
   - Supports single-file, directory, and project-aware formatting.
   - Supports `--check` mode for CI.
+- Parser support for compound assignment operators:
+  - `+=`, `-=`, `*=`, `/=`
+  - supports identifier targets and complex lvalues (`arr[i] += 1`, `obj.field -= 2`)
 - New tooling commands:
   - `apex lint` for static source diagnostics
   - `apex fix` for safe automated cleanup
@@ -44,14 +47,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `examples/36_inheritance_extends.apex`
   - `examples/37_interfaces_contracts.apex`
   - `examples/38_import_aliases.apex`
+- New lint checks:
+  - `L004` unused variables (`Variable 'x' is declared but never used`)
+  - `L005` variable shadowing diagnostics with outer declaration offset
 
 ### ♻️ Changed
 
 - Project object compilation for cache misses now runs in parallel (per-file LLVM context + codegen instance), then links sequentially.
+- LSP rename/references now resolve symbol locations from parsed AST spans instead of raw text search.
 - Import checking now reuses a single `StdLib` instance and shared `Arc<HashMap<...>>` namespace map instead of rebuilding/cloning per file.
 - Import typo suggestion distance now uses a rolling two-row Levenshtein buffer (`O(m)` memory) instead of full matrix allocation (`O(n*m)`).
 - `List<T>` now supports fixed-capacity construction with a compile-time literal argument (`List<T>(N)`) using stack-backed storage.
 - List growth path now uses explicit `malloc + copy` reallocation logic, which is compatible with both heap-backed and stack-backed list buffers.
+- `List<Boolean>` now uses boolean-sized element storage/codegen paths instead of integer-width storage in list internals.
 - `apex fmt` now preserves source comments instead of refusing commented files.
 - Project builds now wire `target` from `apex.toml` into final Clang linking (`--target <triple>`).
 - Project builds can now emit shared libraries and static archives via `output_kind`.
@@ -83,6 +91,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed stale-object reuse after object-linkage strategy updates by bumping object cache schema to invalidate incompatible cached `.o/.obj` artifacts.
 - Web docs routing now uses extensionless `/docs/...` URLs consistently in footer links and sitemap output.
 - Markdown HTML rendered in the docs/changelog web UI is now sanitized before insertion.
+- Fixed parser handling where compound assignments on parsed postfix targets from identifier-leading expressions were rejected (`items[0] -= 1` path).
 - Removed duplicate Vercel routing config from `web/public/vercel.json`; `web/vercel.json` is now the only deploy config.
 - Removed machine-specific LLVM/linker paths from `.cargo/config.toml`.
 - `apex new` now scaffolds `src/main.apex` with the required `import std.io.*;`, so a fresh project checks and runs immediately.

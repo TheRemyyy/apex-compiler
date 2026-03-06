@@ -9,6 +9,22 @@ use inkwell::{AddressSpace, IntPredicate};
 use crate::codegen::core::{Codegen, CodegenError, Result};
 
 impl<'ctx> Codegen<'ctx> {
+    fn list_element_layout_from_list_type(
+        &self,
+        list_ty: &Type,
+    ) -> (inkwell::types::BasicTypeEnum<'ctx>, u64) {
+        if let Type::List(inner) = list_ty {
+            if matches!(**inner, Type::Boolean) {
+                return (self.context.bool_type().into(), 1);
+            }
+        }
+        (self.context.i64_type().into(), 8)
+    }
+
+    fn list_element_layout_default(&self) -> (inkwell::types::BasicTypeEnum<'ctx>, u64) {
+        (self.context.i64_type().into(), 8)
+    }
+
     // === Set<T> methods ===
 
     pub fn compile_set_method(
@@ -671,10 +687,19 @@ impl<'ctx> Codegen<'ctx> {
 
     // === List<T> helpers ===
 
-    pub fn create_fixed_list(&mut self, size: u64) -> Result<BasicValueEnum<'ctx>> {
+    pub fn create_fixed_list(
+        &mut self,
+        size: u64,
+        list_ty: Option<&Type>,
+    ) -> Result<BasicValueEnum<'ctx>> {
         if size == 0 {
-            return self.create_empty_list();
+            return self.create_empty_list(list_ty);
         }
+        let (elem_llvm_ty, _) = if let Some(list_ty) = list_ty {
+            self.list_element_layout_from_list_type(list_ty)
+        } else {
+            self.list_element_layout_default()
+        };
 
         // List struct: { capacity: i64, length: i64, data: ptr }
         let list_type = self.context.struct_type(
@@ -718,7 +743,7 @@ impl<'ctx> Codegen<'ctx> {
             .build_store(length_ptr, self.context.i64_type().const_int(0, false))
             .unwrap();
 
-        let arr_ty = self.context.i64_type().array_type(size as u32);
+        let arr_ty = elem_llvm_ty.array_type(size as u32);
         let data_alloca = self
             .builder
             .build_alloca(arr_ty, "list_fixed_data")
@@ -758,7 +783,12 @@ impl<'ctx> Codegen<'ctx> {
         Ok(self.builder.build_load(list_type, alloca, "list").unwrap())
     }
 
-    pub fn create_empty_list(&mut self) -> Result<BasicValueEnum<'ctx>> {
+    pub fn create_empty_list(&mut self, list_ty: Option<&Type>) -> Result<BasicValueEnum<'ctx>> {
+        let (_, elem_size) = if let Some(list_ty) = list_ty {
+            self.list_element_layout_from_list_type(list_ty)
+        } else {
+            self.list_element_layout_default()
+        };
         // List struct: { capacity: i64, length: i64, data: ptr }
         let list_type = self.context.struct_type(
             &[
@@ -812,7 +842,7 @@ impl<'ctx> Codegen<'ctx> {
         let size = self
             .context
             .i64_type()
-            .const_int(initial_capacity * 8, false);
+            .const_int(initial_capacity * elem_size, false);
         let call_result = self
             .builder
             .build_call(malloc, &[size.into()], "data")
@@ -844,6 +874,7 @@ impl<'ctx> Codegen<'ctx> {
         capacity_ptr: PointerValue<'ctx>,
         capacity: IntValue<'ctx>,
         length: IntValue<'ctx>,
+        elem_size: u64,
     ) -> Result<()> {
         let i64_type = self.context.i64_type();
         let new_capacity = self
@@ -852,7 +883,11 @@ impl<'ctx> Codegen<'ctx> {
             .unwrap();
         let new_size = self
             .builder
-            .build_int_mul(new_capacity, i64_type.const_int(8, false), "new_size")
+            .build_int_mul(
+                new_capacity,
+                i64_type.const_int(elem_size, false),
+                "new_size",
+            )
             .unwrap();
         let old_data = self
             .builder
@@ -876,7 +911,7 @@ impl<'ctx> Codegen<'ctx> {
 
         let bytes_to_copy = self
             .builder
-            .build_int_mul(length, i64_type.const_int(8, false), "copy_bytes")
+            .build_int_mul(length, i64_type.const_int(elem_size, false), "copy_bytes")
             .unwrap();
         let has_bytes = self
             .builder
@@ -1179,6 +1214,7 @@ impl<'ctx> Codegen<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>> {
         let var = self.variables.get(list_name).unwrap();
         let list_ptr = var.ptr;
+        let (elem_llvm_ty, elem_size) = self.list_element_layout_from_list_type(&var.ty);
         let list_type = self.context.struct_type(
             &[
                 self.context.i64_type().into(),
@@ -1194,7 +1230,7 @@ impl<'ctx> Codegen<'ctx> {
                 let i64_type = self.context.i64_type();
                 let zero = i32_type.const_int(0, false);
                 let one_i64 = i64_type.const_int(1, false);
-                let eight_i64 = i64_type.const_int(8, false);
+                let elem_size_i64 = i64_type.const_int(elem_size, false);
 
                 // Get current capacity/length/data pointers.
                 let capacity_ptr = unsafe {
@@ -1260,6 +1296,7 @@ impl<'ctx> Codegen<'ctx> {
                     capacity_ptr,
                     capacity,
                     length,
+                    elem_size,
                 )?;
                 self.builder.build_unconditional_branch(cont_bb).unwrap();
 
@@ -1277,17 +1314,25 @@ impl<'ctx> Codegen<'ctx> {
                 // Calculate element pointer: data + length * 8
                 let offset = self
                     .builder
-                    .build_int_mul(length, eight_i64, "offset")
+                    .build_int_mul(length, elem_size_i64, "offset")
                     .unwrap();
                 let elem_ptr = unsafe {
                     self.builder
                         .build_gep(self.context.i8_type(), data_ptr, &[offset], "elem_ptr")
                         .unwrap()
                 };
+                let typed_elem_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        elem_ptr,
+                        self.context.ptr_type(AddressSpace::default()),
+                        "typed_elem_ptr",
+                    )
+                    .unwrap();
 
                 // Store the value
                 let value = self.compile_expr(&args[0].node)?;
-                self.builder.build_store(elem_ptr, value).unwrap();
+                self.builder.build_store(typed_elem_ptr, value).unwrap();
 
                 // Increment length
                 let new_length = self
@@ -1326,18 +1371,30 @@ impl<'ctx> Codegen<'ctx> {
                 let index = self.compile_expr(&args[0].node)?.into_int_value();
                 let offset = self
                     .builder
-                    .build_int_mul(index, self.context.i64_type().const_int(8, false), "offset")
+                    .build_int_mul(
+                        index,
+                        self.context.i64_type().const_int(elem_size, false),
+                        "offset",
+                    )
                     .unwrap();
                 let elem_ptr = unsafe {
                     self.builder
                         .build_gep(self.context.i8_type(), data_ptr, &[offset], "elem_ptr")
                         .unwrap()
                 };
+                let typed_elem_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        elem_ptr,
+                        self.context.ptr_type(AddressSpace::default()),
+                        "typed_elem_ptr",
+                    )
+                    .unwrap();
 
                 // Load and return the value
                 let val = self
                     .builder
-                    .build_load(self.context.i64_type(), elem_ptr, "val")
+                    .build_load(elem_llvm_ty, typed_elem_ptr, "val")
                     .unwrap();
                 Ok(val)
             }
@@ -1419,7 +1476,7 @@ impl<'ctx> Codegen<'ctx> {
                     .builder
                     .build_int_mul(
                         new_length,
-                        self.context.i64_type().const_int(8, false),
+                        self.context.i64_type().const_int(elem_size, false),
                         "offset",
                     )
                     .unwrap();
@@ -1428,10 +1485,17 @@ impl<'ctx> Codegen<'ctx> {
                         .build_gep(self.context.i8_type(), data_ptr, &[offset], "elem_ptr")
                         .unwrap()
                 };
-
+                let typed_elem_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        elem_ptr,
+                        self.context.ptr_type(AddressSpace::default()),
+                        "typed_elem_ptr",
+                    )
+                    .unwrap();
                 let val = self
                     .builder
-                    .build_load(self.context.i64_type(), elem_ptr, "val")
+                    .build_load(elem_llvm_ty, typed_elem_ptr, "val")
                     .unwrap();
                 Ok(val)
             }
@@ -1463,17 +1527,29 @@ impl<'ctx> Codegen<'ctx> {
                 let index = self.compile_expr(&args[0].node)?.into_int_value();
                 let offset = self
                     .builder
-                    .build_int_mul(index, self.context.i64_type().const_int(8, false), "offset")
+                    .build_int_mul(
+                        index,
+                        self.context.i64_type().const_int(elem_size, false),
+                        "offset",
+                    )
                     .unwrap();
                 let elem_ptr = unsafe {
                     self.builder
                         .build_gep(self.context.i8_type(), data_ptr, &[offset], "elem_ptr")
                         .unwrap()
                 };
+                let typed_elem_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        elem_ptr,
+                        self.context.ptr_type(AddressSpace::default()),
+                        "typed_elem_ptr",
+                    )
+                    .unwrap();
 
                 // Store the value
                 let value = self.compile_expr(&args[1].node)?;
-                self.builder.build_store(elem_ptr, value).unwrap();
+                self.builder.build_store(typed_elem_ptr, value).unwrap();
 
                 Ok(self.context.i8_type().const_int(0, false).into())
             }
@@ -1488,10 +1564,11 @@ impl<'ctx> Codegen<'ctx> {
     pub fn compile_list_method_ptr(
         &mut self,
         list_ptr: PointerValue<'ctx>,
-        _list_ty: &Type,
+        list_ty: &Type,
         method: &str,
         args: &[Spanned<Expr>],
     ) -> Result<BasicValueEnum<'ctx>> {
+        let (elem_llvm_ty, elem_size) = self.list_element_layout_from_list_type(list_ty);
         let list_type = self.context.struct_type(
             &[
                 self.context.i64_type().into(),
@@ -1507,7 +1584,7 @@ impl<'ctx> Codegen<'ctx> {
             "push" => {
                 let i64_type = self.context.i64_type();
                 let one_i64 = i64_type.const_int(1, false);
-                let eight_i64 = i64_type.const_int(8, false);
+                let elem_size_i64 = i64_type.const_int(elem_size, false);
 
                 let capacity_ptr = unsafe {
                     self.builder
@@ -1571,6 +1648,7 @@ impl<'ctx> Codegen<'ctx> {
                     capacity_ptr,
                     capacity,
                     length,
+                    elem_size,
                 )?;
                 self.builder.build_unconditional_branch(cont_bb).unwrap();
 
@@ -1587,16 +1665,24 @@ impl<'ctx> Codegen<'ctx> {
 
                 let offset = self
                     .builder
-                    .build_int_mul(length, eight_i64, "offset")
+                    .build_int_mul(length, elem_size_i64, "offset")
                     .unwrap();
                 let elem_ptr = unsafe {
                     self.builder
                         .build_gep(self.context.i8_type(), data_ptr, &[offset], "elem_ptr")
                         .unwrap()
                 };
+                let typed_elem_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        elem_ptr,
+                        self.context.ptr_type(AddressSpace::default()),
+                        "typed_elem_ptr",
+                    )
+                    .unwrap();
 
                 let value = self.compile_expr(&args[0].node)?;
-                self.builder.build_store(elem_ptr, value).unwrap();
+                self.builder.build_store(typed_elem_ptr, value).unwrap();
 
                 let new_length = self
                     .builder
@@ -1647,17 +1733,29 @@ impl<'ctx> Codegen<'ctx> {
                 let index = self.compile_expr(&args[0].node)?.into_int_value();
                 let offset = self
                     .builder
-                    .build_int_mul(index, self.context.i64_type().const_int(8, false), "offset")
+                    .build_int_mul(
+                        index,
+                        self.context.i64_type().const_int(elem_size, false),
+                        "offset",
+                    )
                     .unwrap();
                 let elem_ptr = unsafe {
                     self.builder
                         .build_gep(self.context.i8_type(), data_ptr, &[offset], "elem_ptr")
                         .unwrap()
                 };
+                let typed_elem_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        elem_ptr,
+                        self.context.ptr_type(AddressSpace::default()),
+                        "typed_elem_ptr",
+                    )
+                    .unwrap();
 
                 let val = self
                     .builder
-                    .build_load(self.context.i64_type(), elem_ptr, "val")
+                    .build_load(elem_llvm_ty, typed_elem_ptr, "val")
                     .unwrap();
                 Ok(val)
             }
@@ -1685,17 +1783,29 @@ impl<'ctx> Codegen<'ctx> {
                 let index = self.compile_expr(&args[0].node)?.into_int_value();
                 let offset = self
                     .builder
-                    .build_int_mul(index, self.context.i64_type().const_int(8, false), "offset")
+                    .build_int_mul(
+                        index,
+                        self.context.i64_type().const_int(elem_size, false),
+                        "offset",
+                    )
                     .unwrap();
                 let elem_ptr = unsafe {
                     self.builder
                         .build_gep(self.context.i8_type(), data_ptr, &[offset], "elem_ptr")
                         .unwrap()
                 };
+                let typed_elem_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        elem_ptr,
+                        self.context.ptr_type(AddressSpace::default()),
+                        "typed_elem_ptr",
+                    )
+                    .unwrap();
 
                 // Store the value
                 let value = self.compile_expr(&args[1].node)?;
-                self.builder.build_store(elem_ptr, value).unwrap();
+                self.builder.build_store(typed_elem_ptr, value).unwrap();
 
                 Ok(self.context.i8_type().const_int(0, false).into())
             }
@@ -1756,7 +1866,7 @@ impl<'ctx> Codegen<'ctx> {
                     .builder
                     .build_int_mul(
                         new_length,
-                        self.context.i64_type().const_int(8, false),
+                        self.context.i64_type().const_int(elem_size, false),
                         "offset",
                     )
                     .unwrap();
@@ -1765,10 +1875,17 @@ impl<'ctx> Codegen<'ctx> {
                         .build_gep(self.context.i8_type(), data_ptr, &[offset], "elem_ptr")
                         .unwrap()
                 };
-
+                let typed_elem_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        elem_ptr,
+                        self.context.ptr_type(AddressSpace::default()),
+                        "typed_elem_ptr",
+                    )
+                    .unwrap();
                 let val = self
                     .builder
-                    .build_load(self.context.i64_type(), elem_ptr, "val")
+                    .build_load(elem_llvm_ty, typed_elem_ptr, "val")
                     .unwrap();
                 Ok(val)
             }

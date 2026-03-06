@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::ast::{Decl, Program};
+use crate::ast::{Block, Decl, Expr, FunctionDecl, Program, Stmt};
 use crate::lexer;
 use crate::parser::{ParseError, Parser};
 
@@ -237,34 +237,363 @@ impl Backend {
         out
     }
 
-    fn find_symbol_ranges(&self, text: &str, symbol: &str) -> Vec<Range> {
+    fn find_symbol_ranges(&self, text: &str, program: &Program, symbol: &str) -> Vec<Range> {
         if symbol.is_empty() {
             return Vec::new();
         }
 
-        let mut ranges = Vec::new();
-        let bytes = text.as_bytes();
-        let sym = symbol.as_bytes();
-        let mut i = 0usize;
+        let mut spans: Vec<std::ops::Range<usize>> = Vec::new();
+        self.collect_symbol_spans_program(text, program, symbol, &mut spans);
+        spans.sort_by_key(|s| (s.start, s.end));
+        spans.dedup_by(|a, b| a.start == b.start && a.end == b.end);
+        spans
+            .into_iter()
+            .map(|span| self.span_to_range(text, span))
+            .collect()
+    }
 
-        while i + sym.len() <= bytes.len() {
+    fn collect_symbol_spans_program(
+        &self,
+        text: &str,
+        program: &Program,
+        symbol: &str,
+        out: &mut Vec<std::ops::Range<usize>>,
+    ) {
+        for decl in &program.declarations {
+            self.collect_symbol_spans_decl(text, symbol, decl, out);
+        }
+    }
+
+    fn collect_symbol_spans_decl(
+        &self,
+        text: &str,
+        symbol: &str,
+        decl: &crate::ast::Spanned<Decl>,
+        out: &mut Vec<std::ops::Range<usize>>,
+    ) {
+        match &decl.node {
+            Decl::Function(func) => {
+                if func.name == symbol {
+                    if let Some(span) =
+                        self.find_name_occurrence_in_span(text, &func.name, &decl.span)
+                    {
+                        out.push(span);
+                    }
+                }
+                self.collect_symbol_spans_function(text, symbol, func, &decl.span, out);
+            }
+            Decl::Class(class) => {
+                if class.name == symbol {
+                    if let Some(span) =
+                        self.find_name_occurrence_in_span(text, &class.name, &decl.span)
+                    {
+                        out.push(span);
+                    }
+                }
+                for field in &class.fields {
+                    if field.name == symbol {
+                        if let Some(span) =
+                            self.find_name_occurrence_in_span(text, &field.name, &decl.span)
+                        {
+                            out.push(span);
+                        }
+                    }
+                }
+                if let Some(constructor) = &class.constructor {
+                    for param in &constructor.params {
+                        if param.name == symbol {
+                            if let Some(span) =
+                                self.find_name_occurrence_in_span(text, &param.name, &decl.span)
+                            {
+                                out.push(span);
+                            }
+                        }
+                    }
+                    self.collect_symbol_spans_block(text, symbol, &constructor.body, out);
+                }
+                if let Some(destructor) = &class.destructor {
+                    self.collect_symbol_spans_block(text, symbol, &destructor.body, out);
+                }
+                for method in &class.methods {
+                    self.collect_symbol_spans_function(text, symbol, method, &decl.span, out);
+                }
+            }
+            Decl::Module(module) => {
+                if module.name == symbol {
+                    if let Some(span) =
+                        self.find_name_occurrence_in_span(text, &module.name, &decl.span)
+                    {
+                        out.push(span);
+                    }
+                }
+                for inner in &module.declarations {
+                    self.collect_symbol_spans_decl(text, symbol, inner, out);
+                }
+            }
+            Decl::Enum(en) => {
+                if en.name == symbol {
+                    if let Some(span) =
+                        self.find_name_occurrence_in_span(text, &en.name, &decl.span)
+                    {
+                        out.push(span);
+                    }
+                }
+            }
+            Decl::Interface(interface) => {
+                if interface.name == symbol {
+                    if let Some(span) =
+                        self.find_name_occurrence_in_span(text, &interface.name, &decl.span)
+                    {
+                        out.push(span);
+                    }
+                }
+                for method in &interface.methods {
+                    if method.name == symbol {
+                        if let Some(span) =
+                            self.find_name_occurrence_in_span(text, &method.name, &decl.span)
+                        {
+                            out.push(span);
+                        }
+                    }
+                    for param in &method.params {
+                        if param.name == symbol {
+                            if let Some(span) =
+                                self.find_name_occurrence_in_span(text, &param.name, &decl.span)
+                            {
+                                out.push(span);
+                            }
+                        }
+                    }
+                }
+            }
+            Decl::Import(_) => {}
+        }
+    }
+
+    fn collect_symbol_spans_function(
+        &self,
+        text: &str,
+        symbol: &str,
+        func: &FunctionDecl,
+        fallback_span: &std::ops::Range<usize>,
+        out: &mut Vec<std::ops::Range<usize>>,
+    ) {
+        if func.name == symbol {
+            if let Some(span) = self.find_name_occurrence_in_span(text, &func.name, fallback_span) {
+                out.push(span);
+            }
+        }
+        for param in &func.params {
+            if param.name == symbol {
+                if let Some(span) =
+                    self.find_name_occurrence_in_span(text, &param.name, fallback_span)
+                {
+                    out.push(span);
+                }
+            }
+        }
+        self.collect_symbol_spans_block(text, symbol, &func.body, out);
+    }
+
+    fn collect_symbol_spans_block(
+        &self,
+        text: &str,
+        symbol: &str,
+        block: &Block,
+        out: &mut Vec<std::ops::Range<usize>>,
+    ) {
+        for stmt in block {
+            self.collect_symbol_spans_stmt(text, symbol, stmt, out);
+        }
+    }
+
+    fn collect_symbol_spans_stmt(
+        &self,
+        text: &str,
+        symbol: &str,
+        stmt: &crate::ast::Spanned<Stmt>,
+        out: &mut Vec<std::ops::Range<usize>>,
+    ) {
+        match &stmt.node {
+            Stmt::Let { name, value, .. } => {
+                if name == symbol {
+                    if let Some(span) = self.find_name_occurrence_in_span(text, name, &stmt.span) {
+                        out.push(span);
+                    }
+                }
+                self.collect_symbol_spans_expr(text, symbol, value, out);
+            }
+            Stmt::Assign { target, value } => {
+                self.collect_symbol_spans_expr(text, symbol, target, out);
+                self.collect_symbol_spans_expr(text, symbol, value, out);
+            }
+            Stmt::Expr(expr) => self.collect_symbol_spans_expr(text, symbol, expr, out),
+            Stmt::Return(value) => {
+                if let Some(expr) = value {
+                    self.collect_symbol_spans_expr(text, symbol, expr, out);
+                }
+            }
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                self.collect_symbol_spans_expr(text, symbol, condition, out);
+                self.collect_symbol_spans_block(text, symbol, then_block, out);
+                if let Some(block) = else_block {
+                    self.collect_symbol_spans_block(text, symbol, block, out);
+                }
+            }
+            Stmt::While { condition, body } => {
+                self.collect_symbol_spans_expr(text, symbol, condition, out);
+                self.collect_symbol_spans_block(text, symbol, body, out);
+            }
+            Stmt::For {
+                var,
+                iterable,
+                body,
+                ..
+            } => {
+                if var == symbol {
+                    if let Some(span) = self.find_name_occurrence_in_span(text, var, &stmt.span) {
+                        out.push(span);
+                    }
+                }
+                self.collect_symbol_spans_expr(text, symbol, iterable, out);
+                self.collect_symbol_spans_block(text, symbol, body, out);
+            }
+            Stmt::Match { expr, arms } => {
+                self.collect_symbol_spans_expr(text, symbol, expr, out);
+                for arm in arms {
+                    self.collect_symbol_spans_block(text, symbol, &arm.body, out);
+                }
+            }
+            Stmt::Break | Stmt::Continue => {}
+        }
+    }
+
+    fn collect_symbol_spans_expr(
+        &self,
+        text: &str,
+        symbol: &str,
+        expr: &crate::ast::Spanned<Expr>,
+        out: &mut Vec<std::ops::Range<usize>>,
+    ) {
+        match &expr.node {
+            Expr::Ident(name) => {
+                if name == symbol {
+                    out.push(expr.span.clone());
+                }
+            }
+            Expr::Call { callee, args } => {
+                self.collect_symbol_spans_expr(text, symbol, callee, out);
+                for arg in args {
+                    self.collect_symbol_spans_expr(text, symbol, arg, out);
+                }
+            }
+            Expr::Binary { left, right, .. } => {
+                self.collect_symbol_spans_expr(text, symbol, left, out);
+                self.collect_symbol_spans_expr(text, symbol, right, out);
+            }
+            Expr::Unary { expr, .. }
+            | Expr::Try(expr)
+            | Expr::Borrow(expr)
+            | Expr::MutBorrow(expr)
+            | Expr::Deref(expr)
+            | Expr::Await(expr) => self.collect_symbol_spans_expr(text, symbol, expr, out),
+            Expr::Field { object, .. } => self.collect_symbol_spans_expr(text, symbol, object, out),
+            Expr::Index { object, index } => {
+                self.collect_symbol_spans_expr(text, symbol, object, out);
+                self.collect_symbol_spans_expr(text, symbol, index, out);
+            }
+            Expr::Construct { args, .. } => {
+                for arg in args {
+                    self.collect_symbol_spans_expr(text, symbol, arg, out);
+                }
+            }
+            Expr::Lambda { params, body } => {
+                for param in params {
+                    if param.name == symbol {
+                        if let Some(span) =
+                            self.find_name_occurrence_in_span(text, &param.name, &expr.span)
+                        {
+                            out.push(span);
+                        }
+                    }
+                }
+                self.collect_symbol_spans_expr(text, symbol, body, out);
+            }
+            Expr::Match { expr, arms } => {
+                self.collect_symbol_spans_expr(text, symbol, expr, out);
+                for arm in arms {
+                    self.collect_symbol_spans_block(text, symbol, &arm.body, out);
+                }
+            }
+            Expr::StringInterp(parts) => {
+                for part in parts {
+                    if let crate::ast::StringPart::Expr(inner) = part {
+                        self.collect_symbol_spans_expr(text, symbol, inner, out);
+                    }
+                }
+            }
+            Expr::AsyncBlock(block) | Expr::Block(block) => {
+                self.collect_symbol_spans_block(text, symbol, block, out);
+            }
+            Expr::Require { condition, message } => {
+                self.collect_symbol_spans_expr(text, symbol, condition, out);
+                if let Some(msg) = message {
+                    self.collect_symbol_spans_expr(text, symbol, msg, out);
+                }
+            }
+            Expr::Range { start, end, .. } => {
+                if let Some(start) = start {
+                    self.collect_symbol_spans_expr(text, symbol, start, out);
+                }
+                if let Some(end) = end {
+                    self.collect_symbol_spans_expr(text, symbol, end, out);
+                }
+            }
+            Expr::IfExpr {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.collect_symbol_spans_expr(text, symbol, condition, out);
+                self.collect_symbol_spans_block(text, symbol, then_branch, out);
+                if let Some(else_branch) = else_branch {
+                    self.collect_symbol_spans_block(text, symbol, else_branch, out);
+                }
+            }
+            Expr::Literal(_) | Expr::This => {}
+        }
+    }
+
+    fn find_name_occurrence_in_span(
+        &self,
+        text: &str,
+        name: &str,
+        span: &std::ops::Range<usize>,
+    ) -> Option<std::ops::Range<usize>> {
+        if name.is_empty() || span.start >= span.end || span.end > text.len() {
+            return None;
+        }
+        let bytes = text.as_bytes();
+        let sym = name.as_bytes();
+        let mut i = span.start;
+        while i + sym.len() <= span.end {
             if &bytes[i..i + sym.len()] == sym {
                 let left_ok =
                     i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
                 let right_idx = i + sym.len();
                 let right_ok = right_idx == bytes.len()
                     || !(bytes[right_idx].is_ascii_alphanumeric() || bytes[right_idx] == b'_');
-
                 if left_ok && right_ok {
-                    ranges.push(self.span_to_range(text, i..right_idx));
-                    i = right_idx;
-                    continue;
+                    return Some(i..right_idx);
                 }
             }
             i += 1;
         }
-
-        ranges
+        None
     }
 
     /// Get completion items for a position
@@ -516,13 +845,15 @@ impl LanguageServer for Backend {
 
         let docs = self.documents.read().await;
         if let Some(doc) = docs.get(&uri) {
-            if let Some(symbol) = self.word_at_position(&doc.text, pos) {
-                let ranges = self.find_symbol_ranges(&doc.text, &symbol);
-                let locations: Vec<Location> = ranges
-                    .into_iter()
-                    .map(|range| Location::new(uri.clone(), range))
-                    .collect();
-                return Ok(Some(locations));
+            if let Some(program) = &doc.parsed {
+                if let Some(symbol) = self.word_at_position(&doc.text, pos) {
+                    let ranges = self.find_symbol_ranges(&doc.text, program, &symbol);
+                    let locations: Vec<Location> = ranges
+                        .into_iter()
+                        .map(|range| Location::new(uri.clone(), range))
+                        .collect();
+                    return Ok(Some(locations));
+                }
             }
         }
         Ok(Some(Vec::new()))
@@ -535,23 +866,25 @@ impl LanguageServer for Backend {
 
         let docs = self.documents.read().await;
         if let Some(doc) = docs.get(&uri) {
-            if let Some(symbol) = self.word_at_position(&doc.text, pos) {
-                let ranges = self.find_symbol_ranges(&doc.text, &symbol);
-                let edits: Vec<TextEdit> = ranges
-                    .into_iter()
-                    .map(|range| TextEdit {
-                        range,
-                        new_text: new_name.clone(),
-                    })
-                    .collect();
+            if let Some(program) = &doc.parsed {
+                if let Some(symbol) = self.word_at_position(&doc.text, pos) {
+                    let ranges = self.find_symbol_ranges(&doc.text, program, &symbol);
+                    let edits: Vec<TextEdit> = ranges
+                        .into_iter()
+                        .map(|range| TextEdit {
+                            range,
+                            new_text: new_name.clone(),
+                        })
+                        .collect();
 
-                let mut changes = HashMap::new();
-                changes.insert(uri.clone(), edits);
-                return Ok(Some(WorkspaceEdit {
-                    changes: Some(changes),
-                    document_changes: None,
-                    change_annotations: None,
-                }));
+                    let mut changes = HashMap::new();
+                    changes.insert(uri.clone(), edits);
+                    return Ok(Some(WorkspaceEdit {
+                        changes: Some(changes),
+                        document_changes: None,
+                        change_annotations: None,
+                    }));
+                }
             }
         }
 

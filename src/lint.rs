@@ -1,7 +1,7 @@
-use crate::ast::{Decl, Expr, Program, Stmt, Type};
+use crate::ast::{Decl, Expr, Program, Span, Stmt, Type};
 use crate::parser::Parser;
 use crate::{lexer, stdlib::StdLib};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LintLevel {
@@ -14,6 +14,7 @@ pub struct LintFinding {
     pub level: LintLevel,
     pub message: String,
     pub suggestion: Option<String>,
+    pub span: Option<Span>,
 }
 
 impl LintFinding {
@@ -22,6 +23,9 @@ impl LintFinding {
             LintLevel::Warning => "warning",
         };
         let mut out = format!("[{}] {}: {}", self.code, level, self.message);
+        if let Some(span) = &self.span {
+            out.push_str(&format!(" @{}..{}", span.start, span.end));
+        }
         if let Some(suggestion) = &self.suggestion {
             out.push_str(&format!("\n  hint: {}", suggestion));
         }
@@ -45,6 +49,8 @@ pub fn lint_source(source: &str, apply_fixes: bool) -> Result<LintResult, String
     findings.extend(check_duplicate_imports(&program));
     findings.extend(check_import_sorting(&program));
     findings.extend(check_unused_specific_imports(&program));
+    findings.extend(check_unused_variables(&program));
+    findings.extend(check_shadowed_variables(&program));
 
     let fixed_source = if apply_fixes {
         Some(apply_safe_import_fixes(source, &program))
@@ -77,6 +83,7 @@ fn check_duplicate_imports(program: &Program) -> Vec<LintFinding> {
             level: LintLevel::Warning,
             message: format!("duplicate import '{}'", path),
             suggestion: Some("remove the redundant import".to_string()),
+            span: None,
         })
         .collect()
 }
@@ -107,6 +114,7 @@ fn check_import_sorting(program: &Program) -> Vec<LintFinding> {
             level: LintLevel::Warning,
             message: "imports are not sorted and deduplicated".to_string(),
             suggestion: Some("run `apex fix` or sort imports lexicographically".to_string()),
+            span: None,
         }]
     }
 }
@@ -139,11 +147,312 @@ fn check_unused_specific_imports(program: &Program) -> Vec<LintFinding> {
                 suggestion: Some(
                     "remove it or switch to a wildcard import only if justified".to_string(),
                 ),
+                span: Some(decl.span.clone()),
             });
         }
     }
 
     findings
+}
+
+fn check_unused_variables(program: &Program) -> Vec<LintFinding> {
+    let mut findings = Vec::new();
+
+    for decl in &program.declarations {
+        match &decl.node {
+            Decl::Function(func) => {
+                findings.extend(check_unused_variables_in_block(&func.body));
+            }
+            Decl::Class(class) => {
+                if let Some(ctor) = &class.constructor {
+                    findings.extend(check_unused_variables_in_block(&ctor.body));
+                }
+                if let Some(dtor) = &class.destructor {
+                    findings.extend(check_unused_variables_in_block(&dtor.body));
+                }
+                for method in &class.methods {
+                    findings.extend(check_unused_variables_in_block(&method.body));
+                }
+            }
+            Decl::Module(module) => {
+                let nested = Program {
+                    package: None,
+                    declarations: module.declarations.clone(),
+                };
+                findings.extend(check_unused_variables(&nested));
+            }
+            Decl::Enum(_) | Decl::Interface(_) | Decl::Import(_) => {}
+        }
+    }
+
+    findings
+}
+
+fn check_unused_variables_in_block(block: &[crate::ast::Spanned<Stmt>]) -> Vec<LintFinding> {
+    let mut declared: Vec<(String, Span)> = Vec::new();
+    let mut used: HashSet<String> = HashSet::new();
+
+    collect_declared_and_used_in_block(block, &mut declared, &mut used);
+
+    declared
+        .into_iter()
+        .filter(|(name, _)| !name.starts_with('_') && !used.contains(name))
+        .map(|(name, span)| LintFinding {
+            code: "L004",
+            level: LintLevel::Warning,
+            message: format!("Variable '{}' is declared but never used", name),
+            suggestion: Some("remove it or prefix it with '_' if intentional".to_string()),
+            span: Some(span),
+        })
+        .collect()
+}
+
+fn collect_declared_and_used_in_block(
+    block: &[crate::ast::Spanned<Stmt>],
+    declared: &mut Vec<(String, Span)>,
+    used: &mut HashSet<String>,
+) {
+    for stmt in block {
+        collect_declared_and_used_in_stmt(stmt, declared, used);
+    }
+}
+
+fn collect_declared_and_used_in_stmt(
+    stmt: &crate::ast::Spanned<Stmt>,
+    declared: &mut Vec<(String, Span)>,
+    used: &mut HashSet<String>,
+) {
+    match &stmt.node {
+        Stmt::Let { name, value, .. } => {
+            declared.push((name.clone(), stmt.span.clone()));
+            collect_expr_idents(&value.node, used);
+        }
+        Stmt::Assign { target, value } => {
+            collect_expr_idents(&target.node, used);
+            collect_expr_idents(&value.node, used);
+        }
+        Stmt::Expr(expr) => collect_expr_idents(&expr.node, used),
+        Stmt::Return(expr) => {
+            if let Some(expr) = expr {
+                collect_expr_idents(&expr.node, used);
+            }
+        }
+        Stmt::If {
+            condition,
+            then_block,
+            else_block,
+        } => {
+            collect_expr_idents(&condition.node, used);
+            collect_declared_and_used_in_block(then_block, declared, used);
+            if let Some(else_block) = else_block {
+                collect_declared_and_used_in_block(else_block, declared, used);
+            }
+        }
+        Stmt::While { condition, body } => {
+            collect_expr_idents(&condition.node, used);
+            collect_declared_and_used_in_block(body, declared, used);
+        }
+        Stmt::For { iterable, body, .. } => {
+            collect_expr_idents(&iterable.node, used);
+            collect_declared_and_used_in_block(body, declared, used);
+        }
+        Stmt::Match { expr, arms } => {
+            collect_expr_idents(&expr.node, used);
+            for arm in arms {
+                collect_declared_and_used_in_block(&arm.body, declared, used);
+            }
+        }
+        Stmt::Break | Stmt::Continue => {}
+    }
+}
+
+fn collect_expr_idents(expr: &Expr, used: &mut HashSet<String>) {
+    match expr {
+        Expr::Ident(name) => {
+            used.insert(name.clone());
+        }
+        Expr::Call { callee, args } => {
+            collect_expr_idents(&callee.node, used);
+            for arg in args {
+                collect_expr_idents(&arg.node, used);
+            }
+        }
+        Expr::Binary { left, right, .. } => {
+            collect_expr_idents(&left.node, used);
+            collect_expr_idents(&right.node, used);
+        }
+        Expr::Unary { expr, .. }
+        | Expr::Try(expr)
+        | Expr::Borrow(expr)
+        | Expr::MutBorrow(expr)
+        | Expr::Deref(expr)
+        | Expr::Await(expr) => collect_expr_idents(&expr.node, used),
+        Expr::Field { object, .. } => collect_expr_idents(&object.node, used),
+        Expr::Index { object, index } => {
+            collect_expr_idents(&object.node, used);
+            collect_expr_idents(&index.node, used);
+        }
+        Expr::Construct { args, .. } => {
+            for arg in args {
+                collect_expr_idents(&arg.node, used);
+            }
+        }
+        Expr::Lambda { body, .. } => collect_expr_idents(&body.node, used),
+        Expr::Match { expr, arms } => {
+            collect_expr_idents(&expr.node, used);
+            for arm in arms {
+                for stmt in &arm.body {
+                    collect_declared_and_used_in_stmt(stmt, &mut Vec::new(), used);
+                }
+            }
+        }
+        Expr::StringInterp(parts) => {
+            for part in parts {
+                if let crate::ast::StringPart::Expr(expr) = part {
+                    collect_expr_idents(&expr.node, used);
+                }
+            }
+        }
+        Expr::AsyncBlock(block) | Expr::Block(block) => {
+            for stmt in block {
+                collect_declared_and_used_in_stmt(stmt, &mut Vec::new(), used);
+            }
+        }
+        Expr::Require { condition, message } => {
+            collect_expr_idents(&condition.node, used);
+            if let Some(message) = message {
+                collect_expr_idents(&message.node, used);
+            }
+        }
+        Expr::Range { start, end, .. } => {
+            if let Some(start) = start {
+                collect_expr_idents(&start.node, used);
+            }
+            if let Some(end) = end {
+                collect_expr_idents(&end.node, used);
+            }
+        }
+        Expr::IfExpr {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_expr_idents(&condition.node, used);
+            for stmt in then_branch {
+                collect_declared_and_used_in_stmt(stmt, &mut Vec::new(), used);
+            }
+            if let Some(else_branch) = else_branch {
+                for stmt in else_branch {
+                    collect_declared_and_used_in_stmt(stmt, &mut Vec::new(), used);
+                }
+            }
+        }
+        Expr::Literal(_) | Expr::This => {}
+    }
+}
+
+fn check_shadowed_variables(program: &Program) -> Vec<LintFinding> {
+    let mut findings = Vec::new();
+    for decl in &program.declarations {
+        match &decl.node {
+            Decl::Function(func) => {
+                let mut scopes = vec![HashMap::<String, Span>::new()];
+                check_shadowed_in_block(&func.body, &mut scopes, &mut findings);
+            }
+            Decl::Class(class) => {
+                if let Some(ctor) = &class.constructor {
+                    let mut scopes = vec![HashMap::<String, Span>::new()];
+                    check_shadowed_in_block(&ctor.body, &mut scopes, &mut findings);
+                }
+                if let Some(dtor) = &class.destructor {
+                    let mut scopes = vec![HashMap::<String, Span>::new()];
+                    check_shadowed_in_block(&dtor.body, &mut scopes, &mut findings);
+                }
+                for method in &class.methods {
+                    let mut scopes = vec![HashMap::<String, Span>::new()];
+                    check_shadowed_in_block(&method.body, &mut scopes, &mut findings);
+                }
+            }
+            Decl::Module(module) => {
+                let nested = Program {
+                    package: None,
+                    declarations: module.declarations.clone(),
+                };
+                findings.extend(check_shadowed_variables(&nested));
+            }
+            Decl::Enum(_) | Decl::Interface(_) | Decl::Import(_) => {}
+        }
+    }
+    findings
+}
+
+fn check_shadowed_in_block(
+    block: &[crate::ast::Spanned<Stmt>],
+    scopes: &mut Vec<HashMap<String, Span>>,
+    findings: &mut Vec<LintFinding>,
+) {
+    for stmt in block {
+        match &stmt.node {
+            Stmt::Let { name, .. } => {
+                if let Some(parent_span) = scopes
+                    .iter()
+                    .rev()
+                    .skip(1)
+                    .find_map(|scope| scope.get(name))
+                {
+                    findings.push(LintFinding {
+                        code: "L005",
+                        level: LintLevel::Warning,
+                        message: format!(
+                            "Variable '{}' shadows an outer variable declared at offset {}",
+                            name, parent_span.start
+                        ),
+                        suggestion: Some("rename inner variable for clarity".to_string()),
+                        span: Some(stmt.span.clone()),
+                    });
+                }
+                if let Some(current) = scopes.last_mut() {
+                    current.insert(name.clone(), stmt.span.clone());
+                }
+            }
+            Stmt::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                scopes.push(HashMap::new());
+                check_shadowed_in_block(then_block, scopes, findings);
+                scopes.pop();
+                if let Some(block) = else_block {
+                    scopes.push(HashMap::new());
+                    check_shadowed_in_block(block, scopes, findings);
+                    scopes.pop();
+                }
+            }
+            Stmt::While { body, .. } => {
+                scopes.push(HashMap::new());
+                check_shadowed_in_block(body, scopes, findings);
+                scopes.pop();
+            }
+            Stmt::For { body, .. } => {
+                scopes.push(HashMap::new());
+                check_shadowed_in_block(body, scopes, findings);
+                scopes.pop();
+            }
+            Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    scopes.push(HashMap::new());
+                    check_shadowed_in_block(&arm.body, scopes, findings);
+                    scopes.pop();
+                }
+            }
+            Stmt::Assign { .. }
+            | Stmt::Expr(_)
+            | Stmt::Return(_)
+            | Stmt::Break
+            | Stmt::Continue => {}
+        }
+    }
 }
 
 fn apply_safe_import_fixes(source: &str, program: &Program) -> String {
@@ -517,5 +826,46 @@ function main(): None {
 "#;
         let result = lint_source(source, false).expect("lint succeeds");
         assert!(result.findings.iter().any(|f| f.code == "L003"));
+    }
+
+    #[test]
+    fn flags_unused_variables() {
+        let source = r#"function main(): None {
+    used: Integer = 1;
+    unused: Integer = 2;
+    _ignored: Integer = 3;
+    used = used + 1;
+    return None;
+}
+"#;
+        let result = lint_source(source, false).expect("lint succeeds");
+        let unused_findings: Vec<_> = result
+            .findings
+            .iter()
+            .filter(|f| f.code == "L004")
+            .collect();
+        assert_eq!(unused_findings.len(), 1);
+        assert!(unused_findings[0]
+            .message
+            .contains("Variable 'unused' is declared but never used"));
+    }
+
+    #[test]
+    fn flags_shadowed_variables() {
+        let source = r#"function main(): None {
+    x: Integer = 1;
+    if (true) {
+        x: Integer = 2;
+        x = x + 1;
+    }
+    return None;
+}
+"#;
+        let result = lint_source(source, false).expect("lint succeeds");
+        assert!(result
+            .findings
+            .iter()
+            .any(|f| f.code == "L005"
+                && f.message.contains("Variable 'x' shadows an outer variable")));
     }
 }

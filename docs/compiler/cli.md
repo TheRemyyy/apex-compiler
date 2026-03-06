@@ -167,6 +167,8 @@ Current `apex lint` rules cover:
 - duplicate imports
 - unsorted imports
 - apparently unused specific imports
+- unused local variables (`L004`, underscore-prefixed names are ignored)
+- variable shadowing inside nested scopes (`L005`)
 
 `apex fix` currently applies safe import deduping/sorting and then runs formatter output normalization.
 

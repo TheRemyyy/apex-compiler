@@ -1843,6 +1843,159 @@ impl<'ctx> Codegen<'ctx> {
         body: &Block,
     ) -> Result<()> {
         let func = self.current_function.unwrap();
+
+        if let Expr::Ident(list_name) = &iterable.node {
+            if let Some(list_var) = self.variables.get(list_name).cloned() {
+                if let Type::List(inner) = list_var.ty {
+                    let iter_ty = var_type.cloned().unwrap_or((*inner).clone());
+                    let var_alloca = self
+                        .builder
+                        .build_alloca(self.llvm_type(&iter_ty), var)
+                        .unwrap();
+                    self.variables.insert(
+                        var.to_string(),
+                        Variable {
+                            ptr: var_alloca,
+                            ty: iter_ty.clone(),
+                        },
+                    );
+
+                    let i64_type = self.context.i64_type();
+                    let i32_type = self.context.i32_type();
+                    let zero_i64 = i64_type.const_zero();
+                    let one_i64 = i64_type.const_int(1, false);
+                    let elem_size = if matches!(*inner, Type::Boolean) {
+                        1
+                    } else {
+                        8
+                    };
+                    let elem_llvm = self.llvm_type(&inner);
+                    let list_type = self.context.struct_type(
+                        &[
+                            i64_type.into(),
+                            i64_type.into(),
+                            self.context.ptr_type(AddressSpace::default()).into(),
+                        ],
+                        false,
+                    );
+
+                    let idx_alloca = self.builder.build_alloca(i64_type, "for_list_idx").unwrap();
+                    self.builder.build_store(idx_alloca, zero_i64).unwrap();
+
+                    let len_ptr = unsafe {
+                        self.builder
+                            .build_gep(
+                                list_type.as_basic_type_enum(),
+                                list_var.ptr,
+                                &[i32_type.const_int(0, false), i32_type.const_int(1, false)],
+                                "list_len_ptr",
+                            )
+                            .unwrap()
+                    };
+                    let data_ptr_ptr = unsafe {
+                        self.builder
+                            .build_gep(
+                                list_type.as_basic_type_enum(),
+                                list_var.ptr,
+                                &[i32_type.const_int(0, false), i32_type.const_int(2, false)],
+                                "list_data_ptr_ptr",
+                            )
+                            .unwrap()
+                    };
+
+                    let cond_bb = self.context.append_basic_block(func, "for_list.cond");
+                    let body_bb = self.context.append_basic_block(func, "for_list.body");
+                    let inc_bb = self.context.append_basic_block(func, "for_list.inc");
+                    let after_bb = self.context.append_basic_block(func, "for_list.after");
+                    self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+                    self.builder.position_at_end(cond_bb);
+                    let idx_val = self
+                        .builder
+                        .build_load(i64_type, idx_alloca, "for_list_idx_val")
+                        .unwrap()
+                        .into_int_value();
+                    let len_val = self
+                        .builder
+                        .build_load(i64_type, len_ptr, "for_list_len")
+                        .unwrap()
+                        .into_int_value();
+                    let cond = self
+                        .builder
+                        .build_int_compare(IntPredicate::SLT, idx_val, len_val, "for_list_cmp")
+                        .unwrap();
+                    self.builder
+                        .build_conditional_branch(cond, body_bb, after_bb)
+                        .unwrap();
+
+                    self.builder.position_at_end(body_bb);
+                    let data_ptr = self
+                        .builder
+                        .build_load(
+                            self.context.ptr_type(AddressSpace::default()),
+                            data_ptr_ptr,
+                            "for_list_data",
+                        )
+                        .unwrap()
+                        .into_pointer_value();
+                    let byte_offset = self
+                        .builder
+                        .build_int_mul(
+                            idx_val,
+                            i64_type.const_int(elem_size, false),
+                            "for_list_off",
+                        )
+                        .unwrap();
+                    let elem_ptr = unsafe {
+                        self.builder
+                            .build_gep(
+                                self.context.i8_type(),
+                                data_ptr,
+                                &[byte_offset],
+                                "for_list_elem_ptr",
+                            )
+                            .unwrap()
+                    };
+                    let typed_ptr = self
+                        .builder
+                        .build_pointer_cast(
+                            elem_ptr,
+                            self.context.ptr_type(AddressSpace::default()),
+                            "for_list_typed_ptr",
+                        )
+                        .unwrap();
+                    let elem_val = self
+                        .builder
+                        .build_load(elem_llvm, typed_ptr, "for_list_elem")
+                        .unwrap();
+                    self.builder.build_store(var_alloca, elem_val).unwrap();
+
+                    self.loop_stack.push(LoopContext {
+                        loop_block: inc_bb,
+                        after_block: after_bb,
+                    });
+                    for stmt in body {
+                        self.compile_stmt(&stmt.node)?;
+                    }
+                    self.loop_stack.pop();
+                    if self.needs_terminator() {
+                        self.builder.build_unconditional_branch(inc_bb).unwrap();
+                    }
+
+                    self.builder.position_at_end(inc_bb);
+                    let next_idx = self
+                        .builder
+                        .build_int_add(idx_val, one_i64, "for_list_next")
+                        .unwrap();
+                    self.builder.build_store(idx_alloca, next_idx).unwrap();
+                    self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+                    self.builder.position_at_end(after_bb);
+                    return Ok(());
+                }
+            }
+        }
+
         let ty = var_type.cloned().unwrap_or(Type::Integer);
         let var_alloca = self.builder.build_alloca(self.llvm_type(&ty), var).unwrap();
 
@@ -3891,14 +4044,19 @@ impl<'ctx> Codegen<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>> {
         // Handle List<T> construction
         if ty == "List" || ty.starts_with("List<") {
+            let list_ty = if ty == "List<Boolean>" {
+                Some(Type::List(Box::new(Type::Boolean)))
+            } else {
+                None
+            };
             if args.len() == 1 {
                 if let Expr::Literal(Literal::Integer(size)) = &args[0].node {
                     if *size > 0 {
-                        return self.create_fixed_list(*size as u64);
+                        return self.create_fixed_list(*size as u64, list_ty.as_ref());
                     }
                 }
             }
-            return self.create_empty_list();
+            return self.create_empty_list(list_ty.as_ref());
         }
 
         // Handle Map<K,V> construction

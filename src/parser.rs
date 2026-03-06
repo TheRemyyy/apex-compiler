@@ -1091,6 +1091,22 @@ impl<'src> Parser<'src> {
                         target: expr,
                         value,
                     }
+                } else if let Some(op) = self.current().and_then(Self::compound_assign_binop) {
+                    self.advance();
+                    let rhs = self.parse_expr()?;
+                    self.eat(&Token::Semi)?;
+                    let value = Spanned::new(
+                        Expr::Binary {
+                            op,
+                            left: Box::new(expr.clone()),
+                            right: Box::new(rhs),
+                        },
+                        expr.span.start..self.current_span().start,
+                    );
+                    Stmt::Assign {
+                        target: expr,
+                        value,
+                    }
                 } else {
                     self.eat(&Token::Semi)?;
                     Stmt::Expr(expr)
@@ -1127,12 +1143,64 @@ impl<'src> Parser<'src> {
             self.eat(&Token::Semi)?;
             let target = Spanned::new(Expr::Ident(name), start..self.current_span().start);
             Ok(Stmt::Assign { target, value })
+        } else if let Some(op) = self.current().and_then(Self::compound_assign_binop) {
+            self.advance();
+            let rhs = self.parse_expr()?;
+            self.eat(&Token::Semi)?;
+            let target = Spanned::new(Expr::Ident(name.clone()), start..self.current_span().start);
+            let left = Spanned::new(Expr::Ident(name), start..self.current_span().start);
+            let value = Spanned::new(
+                Expr::Binary {
+                    op,
+                    left: Box::new(left),
+                    right: Box::new(rhs),
+                },
+                start..self.current_span().start,
+            );
+            Ok(Stmt::Assign { target, value })
         } else {
             // Expression starting with identifier
             let ident_expr = Spanned::new(Expr::Ident(name), start..self.current_span().start);
             let expr = self.parse_expr_rest(ident_expr)?;
-            self.eat(&Token::Semi)?;
-            Ok(Stmt::Expr(expr))
+
+            if self.check(&Token::Eq) {
+                self.advance();
+                let value = self.parse_expr()?;
+                self.eat(&Token::Semi)?;
+                Ok(Stmt::Assign {
+                    target: expr,
+                    value,
+                })
+            } else if let Some(op) = self.current().and_then(Self::compound_assign_binop) {
+                self.advance();
+                let rhs = self.parse_expr()?;
+                self.eat(&Token::Semi)?;
+                let value = Spanned::new(
+                    Expr::Binary {
+                        op,
+                        left: Box::new(expr.clone()),
+                        right: Box::new(rhs),
+                    },
+                    expr.span.start..self.current_span().start,
+                );
+                Ok(Stmt::Assign {
+                    target: expr,
+                    value,
+                })
+            } else {
+                self.eat(&Token::Semi)?;
+                Ok(Stmt::Expr(expr))
+            }
+        }
+    }
+
+    fn compound_assign_binop(token: &Token<'src>) -> Option<BinOp> {
+        match token {
+            Token::PlusEq => Some(BinOp::Add),
+            Token::MinusEq => Some(BinOp::Sub),
+            Token::StarEq => Some(BinOp::Mul),
+            Token::SlashEq => Some(BinOp::Div),
+            _ => None,
         }
     }
 
@@ -2156,5 +2224,83 @@ mod tests {
             }
             _ => panic!("Expected import declaration"),
         }
+    }
+
+    #[test]
+    fn test_parse_compound_assign_ident() {
+        let source = r#"
+            function main(): None {
+                x: Integer = 1;
+                x += 2;
+                return None;
+            }
+        "#;
+        let program = parse_source(source).expect("Should parse compound assignment");
+        let Decl::Function(func) = &program.declarations[0].node else {
+            panic!("Expected function declaration");
+        };
+
+        let Stmt::Assign { target, value } = &func.body[1].node else {
+            panic!("Expected assign statement");
+        };
+        let Expr::Ident(target_name) = &target.node else {
+            panic!("Expected assign target ident");
+        };
+        assert_eq!(target_name, "x");
+
+        let Expr::Binary { op, left, right } = &value.node else {
+            panic!("Expected desugared binary expression");
+        };
+        assert_eq!(*op, BinOp::Add);
+        let Expr::Ident(left_name) = &left.node else {
+            panic!("Expected left ident");
+        };
+        let Expr::Literal(Literal::Integer(rhs)) = right.node else {
+            panic!("Expected integer rhs");
+        };
+        assert_eq!(left_name, "x");
+        assert_eq!(rhs, 2);
+    }
+
+    #[test]
+    fn test_parse_compound_assign_index_target() {
+        let source = r#"
+            function main(): None {
+                items: List<Integer> = range(0, 3);
+                items[0] -= 1;
+                return None;
+            }
+        "#;
+        let program = parse_source(source).expect("Should parse index compound assignment");
+        let Decl::Function(func) = &program.declarations[0].node else {
+            panic!("Expected function declaration");
+        };
+
+        let Stmt::Assign { target, value } = &func.body[1].node else {
+            panic!("Expected assign statement");
+        };
+        let Expr::Index { object, index } = &target.node else {
+            panic!("Expected index target");
+        };
+        let Expr::Ident(obj_name) = &object.node else {
+            panic!("Expected indexed object ident");
+        };
+        let Expr::Literal(Literal::Integer(idx)) = index.node else {
+            panic!("Expected integer index");
+        };
+        assert_eq!(obj_name, "items");
+        assert_eq!(idx, 0);
+
+        let Expr::Binary { op, left, right } = &value.node else {
+            panic!("Expected desugared binary expression");
+        };
+        assert_eq!(*op, BinOp::Sub);
+        let Expr::Index { .. } = &left.node else {
+            panic!("Expected cloned index expression on lhs");
+        };
+        let Expr::Literal(Literal::Integer(rhs)) = right.node else {
+            panic!("Expected integer rhs");
+        };
+        assert_eq!(rhs, 1);
     }
 }
