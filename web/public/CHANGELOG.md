@@ -118,6 +118,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - running `apex check` without an explicit file now performs project-aware validation (same multi-file pipeline as project builds), not entry-file-only checking.
   - project build/check now runs type checker and borrow checker on the rewritten combined project AST before codegen/link.
 - Improved import-check hint text for module-style stdlib calls (`Math.abs`, `Str.len`, `System.os`) to suggest namespace wildcard imports (`import std.math.*;`) instead of mangled symbol names.
+- Fixed generic function type parameters being resolved as class names during type checking:
+  - function/method generic params now bind to internal type variables in signatures and body checks
+  - call sites like `id<Integer>(1)` no longer fail with spurious `expected T, got Integer` errors.
 - Fixed project rewrite handling of stdlib namespace aliases (`import std.io as io;`, `import std.math as math;`) so project-mode `check/build` no longer rewrites aliases into invalid mangled module identifiers.
 - Fixed type checker alias resolution precedence: a local variable named like an import alias (for example `io`) no longer gets treated as stdlib module alias in method-call resolution (`io.println(...)` now correctly errors on non-module variable types).
 - Replaced hardcoded stdlib alias mapping in type checking/project rewrite with stdlib-registry-based resolution:
@@ -161,6 +164,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed borrow checker async capture lifetime handling:
   - non-moved captures used inside `async` blocks are now treated as active borrows after async block creation,
   - subsequent moves/assignments on captured values are correctly rejected while borrow is active.
+- Fixed parser generic/call handling:
+  - forward uppercase function calls (`Foo()`) are now parsed as function calls instead of constructor expressions when `Foo` resolves to a function symbol,
+  - explicit generic function call syntax (`id<Integer>(...)`) now parses correctly.
+- Extended pattern parser support to include float literals, char literals, and negative integer literals in `match` patterns.
+- Fixed borrow checker async mutable-capture handling to keep mutable borrow state (not downgraded to immutable), so later `&x`/`&mut x` operations now report correct mutable-borrow conflicts.
+- Fixed `apex fix` import rewrite to preserve imports with trailing block comments (`import x; /* ... */`) instead of dropping required imports.
   - parser now emits an explicit error (`Visibility modifiers are not supported on constructors/destructors`) instead of accepting misleading syntax.
 - Fixed parser expression coverage by adding `if (...) { ... } else { ... }` expression parsing (`Expr::IfExpr`) in expression contexts.
 - `if` expression parsing now supports both forms:

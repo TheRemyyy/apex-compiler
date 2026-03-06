@@ -181,6 +181,7 @@ Current `apex lint` rules cover:
 Import cleanup behavior:
 - alias imports are treated as distinct imports (`import std.io as io;` and `import std.io as io2;` are not duplicates).
 - imports with trailing inline comments are still parsed as imports by `apex fix` and are not dropped accidentally.
+- imports with trailing block comments (`import ...; /* ... */`) are also preserved by `apex fix`.
 - script shebang headers (`#!/usr/bin/env apex`) are preserved by `apex fix`.
 
 ### Benchmarking and Profiling

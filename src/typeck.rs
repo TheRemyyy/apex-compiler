@@ -218,6 +218,8 @@ pub struct TypeChecker {
     current_allow_any: bool,
     /// Source code for error messages
     source: String,
+    /// Function/method generic type parameter bindings in current checking context
+    current_generic_type_bindings: HashMap<String, ResolvedType>,
 }
 
 impl TypeChecker {
@@ -254,6 +256,128 @@ impl TypeChecker {
             current_is_pure: false,
             current_allow_any: false,
             source,
+            current_generic_type_bindings: HashMap::new(),
+        }
+    }
+
+    fn make_generic_type_bindings(
+        &mut self,
+        generic_params: &[GenericParam],
+    ) -> HashMap<String, ResolvedType> {
+        generic_params
+            .iter()
+            .map(|p| (p.name.clone(), self.fresh_type_var()))
+            .collect()
+    }
+
+    #[allow(clippy::only_used_in_recursion)]
+    fn resolve_type_with_bindings(
+        &self,
+        ty: &Type,
+        bindings: &HashMap<String, ResolvedType>,
+    ) -> ResolvedType {
+        match ty {
+            Type::Integer => ResolvedType::Integer,
+            Type::Float => ResolvedType::Float,
+            Type::Boolean => ResolvedType::Boolean,
+            Type::String => ResolvedType::String,
+            Type::Char => ResolvedType::Char,
+            Type::None => ResolvedType::None,
+            Type::Named(name) => {
+                if let Some(bound) = bindings.get(name) {
+                    return bound.clone();
+                }
+                match name.as_str() {
+                    "Range" => ResolvedType::Class("Range".to_string()),
+                    _ => ResolvedType::Class(name.clone()),
+                }
+            }
+            Type::Option(inner) => {
+                ResolvedType::Option(Box::new(self.resolve_type_with_bindings(inner, bindings)))
+            }
+            Type::Result(ok, err) => ResolvedType::Result(
+                Box::new(self.resolve_type_with_bindings(ok, bindings)),
+                Box::new(self.resolve_type_with_bindings(err, bindings)),
+            ),
+            Type::List(inner) => {
+                ResolvedType::List(Box::new(self.resolve_type_with_bindings(inner, bindings)))
+            }
+            Type::Map(k, v) => ResolvedType::Map(
+                Box::new(self.resolve_type_with_bindings(k, bindings)),
+                Box::new(self.resolve_type_with_bindings(v, bindings)),
+            ),
+            Type::Set(inner) => {
+                ResolvedType::Set(Box::new(self.resolve_type_with_bindings(inner, bindings)))
+            }
+            Type::Ref(inner) => {
+                ResolvedType::Ref(Box::new(self.resolve_type_with_bindings(inner, bindings)))
+            }
+            Type::MutRef(inner) => {
+                ResolvedType::MutRef(Box::new(self.resolve_type_with_bindings(inner, bindings)))
+            }
+            Type::Box(inner) => {
+                ResolvedType::Box(Box::new(self.resolve_type_with_bindings(inner, bindings)))
+            }
+            Type::Rc(inner) => {
+                ResolvedType::Rc(Box::new(self.resolve_type_with_bindings(inner, bindings)))
+            }
+            Type::Arc(inner) => {
+                ResolvedType::Arc(Box::new(self.resolve_type_with_bindings(inner, bindings)))
+            }
+            Type::Ptr(inner) => {
+                ResolvedType::Ptr(Box::new(self.resolve_type_with_bindings(inner, bindings)))
+            }
+            Type::Task(inner) => {
+                ResolvedType::Task(Box::new(self.resolve_type_with_bindings(inner, bindings)))
+            }
+            Type::Range(inner) => {
+                ResolvedType::Range(Box::new(self.resolve_type_with_bindings(inner, bindings)))
+            }
+            Type::Function(params, ret) => ResolvedType::Function(
+                params
+                    .iter()
+                    .map(|p| self.resolve_type_with_bindings(p, bindings))
+                    .collect(),
+                Box::new(self.resolve_type_with_bindings(ret, bindings)),
+            ),
+            Type::Generic(name, args) => match name.as_str() {
+                "Option" if args.len() == 1 => ResolvedType::Option(Box::new(
+                    self.resolve_type_with_bindings(&args[0], bindings),
+                )),
+                "Result" if args.len() == 2 => ResolvedType::Result(
+                    Box::new(self.resolve_type_with_bindings(&args[0], bindings)),
+                    Box::new(self.resolve_type_with_bindings(&args[1], bindings)),
+                ),
+                "List" if args.len() == 1 => ResolvedType::List(Box::new(
+                    self.resolve_type_with_bindings(&args[0], bindings),
+                )),
+                "Map" if args.len() == 2 => ResolvedType::Map(
+                    Box::new(self.resolve_type_with_bindings(&args[0], bindings)),
+                    Box::new(self.resolve_type_with_bindings(&args[1], bindings)),
+                ),
+                "Set" if args.len() == 1 => ResolvedType::Set(Box::new(
+                    self.resolve_type_with_bindings(&args[0], bindings),
+                )),
+                "Box" if args.len() == 1 => ResolvedType::Box(Box::new(
+                    self.resolve_type_with_bindings(&args[0], bindings),
+                )),
+                "Rc" if args.len() == 1 => ResolvedType::Rc(Box::new(
+                    self.resolve_type_with_bindings(&args[0], bindings),
+                )),
+                "Arc" if args.len() == 1 => ResolvedType::Arc(Box::new(
+                    self.resolve_type_with_bindings(&args[0], bindings),
+                )),
+                "Ptr" if args.len() == 1 => ResolvedType::Ptr(Box::new(
+                    self.resolve_type_with_bindings(&args[0], bindings),
+                )),
+                "Task" if args.len() == 1 => ResolvedType::Task(Box::new(
+                    self.resolve_type_with_bindings(&args[0], bindings),
+                )),
+                "Range" if args.len() == 1 => ResolvedType::Range(Box::new(
+                    self.resolve_type_with_bindings(&args[0], bindings),
+                )),
+                _ => ResolvedType::Class(name.clone()),
+            },
         }
     }
 
@@ -1106,12 +1230,19 @@ impl TypeChecker {
                         &format!("Function '{}'", func.name),
                     );
                     self.validate_extern_signature(func, decl.span.clone());
+                    let generic_bindings = self.make_generic_type_bindings(&func.generic_params);
                     let params: Vec<(String, ResolvedType)> = func
                         .params
                         .iter()
-                        .map(|p| (p.name.clone(), self.resolve_type(&p.ty)))
+                        .map(|p| {
+                            (
+                                p.name.clone(),
+                                self.resolve_type_with_bindings(&p.ty, &generic_bindings),
+                            )
+                        })
                         .collect();
-                    let mut return_type = self.resolve_type(&func.return_type);
+                    let mut return_type =
+                        self.resolve_type_with_bindings(&func.return_type, &generic_bindings);
                     if func.is_async && !matches!(return_type, ResolvedType::Task(_)) {
                         return_type = ResolvedType::Task(Box::new(return_type));
                     }
@@ -1154,13 +1285,21 @@ impl TypeChecker {
                             decl.span.clone(),
                             &format!("Method '{}.{}'", class.name, method.name),
                         );
+                        let generic_bindings =
+                            self.make_generic_type_bindings(&method.generic_params);
                         let params: Vec<(String, ResolvedType)> = method
                             .params
                             .iter()
-                            .map(|p| (p.name.clone(), self.resolve_type(&p.ty)))
+                            .map(|p| {
+                                (
+                                    p.name.clone(),
+                                    self.resolve_type_with_bindings(&p.ty, &generic_bindings),
+                                )
+                            })
                             .collect();
 
-                        let mut return_type = self.resolve_type(&method.return_type);
+                        let mut return_type =
+                            self.resolve_type_with_bindings(&method.return_type, &generic_bindings);
                         if method.is_async && !matches!(return_type, ResolvedType::Task(_)) {
                             return_type = ResolvedType::Task(Box::new(return_type));
                         }
@@ -1268,12 +1407,20 @@ impl TypeChecker {
                             );
                             self.validate_extern_signature(func, inner_decl.span.clone());
                             let prefixed_name = format!("{}__{}", module.name, func.name);
+                            let generic_bindings =
+                                self.make_generic_type_bindings(&func.generic_params);
                             let params: Vec<(String, ResolvedType)> = func
                                 .params
                                 .iter()
-                                .map(|p| (p.name.clone(), self.resolve_type(&p.ty)))
+                                .map(|p| {
+                                    (
+                                        p.name.clone(),
+                                        self.resolve_type_with_bindings(&p.ty, &generic_bindings),
+                                    )
+                                })
                                 .collect();
-                            let mut return_type = self.resolve_type(&func.return_type);
+                            let mut return_type = self
+                                .resolve_type_with_bindings(&func.return_type, &generic_bindings);
                             if func.is_async && !matches!(return_type, ResolvedType::Task(_)) {
                                 return_type = ResolvedType::Task(Box::new(return_type));
                             }
@@ -1330,18 +1477,21 @@ impl TypeChecker {
 
     fn check_interface(&mut self, interface: &InterfaceDecl, span: Span) {
         for method in &interface.methods {
+            let saved_generic_bindings = std::mem::take(&mut self.current_generic_type_bindings);
             for param in &method.params {
                 let ty = self.resolve_type(&param.ty);
                 self.check_type_visibility(&ty, span.clone());
             }
             let ret_ty = self.resolve_type(&method.return_type);
             self.check_type_visibility(&ret_ty, span.clone());
+            self.current_generic_type_bindings = saved_generic_bindings;
         }
 
         for method in &interface.methods {
             let Some(body) = &method.default_impl else {
                 continue;
             };
+            let saved_generic_bindings = std::mem::take(&mut self.current_generic_type_bindings);
             self.enter_scope();
             let saved_effects = std::mem::take(&mut self.current_effects);
             let saved_pure = self.current_is_pure;
@@ -1359,11 +1509,14 @@ impl TypeChecker {
             self.current_is_pure = saved_pure;
             self.current_allow_any = saved_any;
             self.exit_scope();
+            self.current_generic_type_bindings = saved_generic_bindings;
         }
     }
 
     /// Check a function
     fn check_function(&mut self, func: &FunctionDecl, span: Span, function_key: Option<&str>) {
+        let saved_generic_bindings = std::mem::take(&mut self.current_generic_type_bindings);
+        self.current_generic_type_bindings = self.make_generic_type_bindings(&func.generic_params);
         self.enter_scope();
         let saved_effects = std::mem::take(&mut self.current_effects);
         let saved_pure = self.current_is_pure;
@@ -1412,6 +1565,7 @@ impl TypeChecker {
         self.current_is_pure = saved_pure;
         self.current_allow_any = saved_any;
         self.exit_scope();
+        self.current_generic_type_bindings = saved_generic_bindings;
     }
 
     /// Check a class
@@ -1558,6 +1712,9 @@ impl TypeChecker {
 
         // Check methods
         for method in &class.methods {
+            let saved_generic_bindings = std::mem::take(&mut self.current_generic_type_bindings);
+            self.current_generic_type_bindings =
+                self.make_generic_type_bindings(&method.generic_params);
             self.enter_scope();
             let saved_effects = std::mem::take(&mut self.current_effects);
             let saved_pure = self.current_is_pure;
@@ -1607,6 +1764,7 @@ impl TypeChecker {
             self.current_allow_any = saved_any;
             self.current_class = saved_class;
             self.exit_scope();
+            self.current_generic_type_bindings = saved_generic_bindings;
         }
         self.current_class = saved_class;
     }
@@ -3545,6 +3703,9 @@ impl TypeChecker {
             Type::Char => ResolvedType::Char,
             Type::None => ResolvedType::None,
             Type::Named(name) => {
+                if let Some(bound) = self.current_generic_type_bindings.get(name) {
+                    return bound.clone();
+                }
                 // Check for built-in types that might be parsed as Named
                 match name.as_str() {
                     "Range" => ResolvedType::Class("Range".to_string()),

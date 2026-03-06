@@ -12,7 +12,7 @@ use inkwell::targets::{
 };
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType};
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue, ValueKind};
-use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
+use inkwell::{AddressSpace, FloatPredicate, IntPredicate, OptimizationLevel};
 
 use std::path::Path;
 
@@ -864,6 +864,15 @@ impl<'ctx> Codegen<'ctx> {
                                 val.into_int_value(),
                                 pattern_val.into_int_value(),
                                 "match_expr_lit_eq",
+                            )
+                            .unwrap()
+                    } else if val.is_float_value() && pattern_val.is_float_value() {
+                        self.builder
+                            .build_float_compare(
+                                FloatPredicate::OEQ,
+                                val.into_float_value(),
+                                pattern_val.into_float_value(),
+                                "match_expr_float_eq",
                             )
                             .unwrap()
                     } else if val.is_pointer_value() && pattern_val.is_pointer_value() {

@@ -2247,6 +2247,15 @@ impl<'ctx> Codegen<'ctx> {
                                 "match_lit_eq",
                             )
                             .unwrap()
+                    } else if val.is_float_value() && pattern_val.is_float_value() {
+                        self.builder
+                            .build_float_compare(
+                                FloatPredicate::OEQ,
+                                val.into_float_value(),
+                                pattern_val.into_float_value(),
+                                "match_float_eq",
+                            )
+                            .unwrap()
                     } else if val.is_pointer_value() && pattern_val.is_pointer_value() {
                         let strcmp = self.get_or_declare_strcmp();
                         let cmp = self

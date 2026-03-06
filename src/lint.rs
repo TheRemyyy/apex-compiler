@@ -471,7 +471,14 @@ fn apply_safe_import_fixes(source: &str, program: &Program) -> String {
             continue;
         }
         let trimmed = line.trim();
-        let import_prefix = trimmed.split("//").next().unwrap_or("").trim_end();
+        let import_prefix = trimmed
+            .split("//")
+            .next()
+            .unwrap_or("")
+            .split("/*")
+            .next()
+            .unwrap_or("")
+            .trim_end();
         if import_prefix.starts_with("import ") && import_prefix.ends_with(';') {
             imports.push(import_prefix.to_string());
         } else {
@@ -913,6 +920,22 @@ function main(): None {
     #[test]
     fn fix_keeps_import_with_trailing_comment() {
         let source = r#"import std.string.*; // needed for Str.len
+import std.io.*;
+
+function main(): None {
+    println(to_string(Str.len("abc")));
+    return None;
+}
+"#;
+        let result = lint_source(source, true).expect("lint succeeds");
+        let fixed = result.fixed_source.expect("fixed source");
+        assert!(fixed.contains("import std.string.*;"));
+        assert!(fixed.contains("import std.io.*;"));
+    }
+
+    #[test]
+    fn fix_keeps_import_with_trailing_block_comment() {
+        let source = r#"import std.string.*; /* needed for Str.len */
 import std.io.*;
 
 function main(): None {

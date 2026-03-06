@@ -32,12 +32,63 @@ type ParseResult<T> = Result<T, ParseError>;
 
 impl<'src> Parser<'src> {
     pub fn new(tokens: Vec<(Token<'src>, std::ops::Range<usize>)>) -> Self {
+        let (known_functions, known_types) = Self::scan_decl_names(&tokens);
         Self {
             tokens,
             pos: 0,
-            known_functions: HashSet::new(),
-            known_types: HashSet::new(),
+            known_functions,
+            known_types,
         }
+    }
+
+    fn scan_decl_names(
+        tokens: &[(Token<'src>, std::ops::Range<usize>)],
+    ) -> (HashSet<String>, HashSet<String>) {
+        let mut known_functions = HashSet::new();
+        let mut known_types = HashSet::new();
+
+        let mut i = 0usize;
+        while i < tokens.len() {
+            match &tokens[i].0 {
+                Token::Function => {
+                    if let Some((Token::Ident(name), _)) = tokens.get(i + 1) {
+                        known_functions.insert((*name).to_string());
+                    }
+                }
+                Token::Async => {
+                    if let (Some((Token::Function, _)), Some((Token::Ident(name), _))) =
+                        (tokens.get(i + 1), tokens.get(i + 2))
+                    {
+                        known_functions.insert((*name).to_string());
+                    }
+                }
+                Token::Extern => {
+                    // extern(...) function name ...
+                    let mut j = i + 1;
+                    while j + 1 < tokens.len() {
+                        if matches!(tokens[j].0, Token::Function) {
+                            if let Token::Ident(name) = &tokens[j + 1].0 {
+                                known_functions.insert((*name).to_string());
+                            }
+                            break;
+                        }
+                        if matches!(tokens[j].0, Token::Semi | Token::LBrace) {
+                            break;
+                        }
+                        j += 1;
+                    }
+                }
+                Token::Class | Token::Enum | Token::Interface => {
+                    if let Some((Token::Ident(name), _)) = tokens.get(i + 1) {
+                        known_types.insert((*name).to_string());
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+
+        (known_functions, known_types)
     }
 
     // === Utility Methods ===
@@ -1473,6 +1524,24 @@ impl<'src> Parser<'src> {
                 self.advance();
                 Ok(Pattern::Literal(Literal::Integer(n)))
             }
+            Some(Token::Minus) => {
+                self.advance();
+                if let Some(Token::Integer(n)) = self.current() {
+                    let n = -*n;
+                    self.advance();
+                    Ok(Pattern::Literal(Literal::Integer(n)))
+                } else {
+                    Err(ParseError::new(
+                        format!("Expected integer after '-', found {:?}", self.current()),
+                        self.current_span(),
+                    ))
+                }
+            }
+            Some(Token::Float(n)) => {
+                let n = *n;
+                self.advance();
+                Ok(Pattern::Literal(Literal::Float(n)))
+            }
             Some(Token::True) => {
                 self.advance();
                 Ok(Pattern::Literal(Literal::Boolean(true)))
@@ -1485,6 +1554,11 @@ impl<'src> Parser<'src> {
                 let s = s.to_string();
                 self.advance();
                 Ok(Pattern::Literal(Literal::String(s)))
+            }
+            Some(Token::Char(c)) => {
+                let c = *c;
+                self.advance();
+                Ok(Pattern::Literal(Literal::Char(c)))
             }
             // Handle None keyword as pattern (for Option::None)
             Some(Token::None) => {
@@ -1849,19 +1923,38 @@ impl<'src> Parser<'src> {
                     .map(|c| c.is_uppercase())
                     .unwrap_or(false);
 
-                if is_type_name && self.check(&Token::Lt) {
+                let mut has_explicit_type_args = false;
+                if self.check(&Token::Lt) {
+                    let saved = self.pos;
                     self.advance();
                     let mut type_args = Vec::new();
+                    let mut parse_ok = true;
                     while !self.check(&Token::Gt) && !self.is_at_end() {
-                        let parsed_type = self.parse_type()?;
-                        type_args.push(self.format_type(&parsed_type));
+                        match self.parse_type() {
+                            Ok(parsed_type) => type_args.push(self.format_type(&parsed_type)),
+                            Err(_) => {
+                                parse_ok = false;
+                                break;
+                            }
+                        }
                         if self.check(&Token::Comma) {
                             self.advance();
+                        } else if !self.check(&Token::Gt) {
+                            parse_ok = false;
+                            break;
                         }
                     }
-                    self.eat(&Token::Gt)?;
-                    // Build full generic name with actual type args
-                    full_name = format!("{}<{}>", name, type_args.join(", "));
+                    if parse_ok && self.check(&Token::Gt) {
+                        self.advance();
+                        if self.check(&Token::LParen) {
+                            has_explicit_type_args = true;
+                            full_name = format!("{}<{}>", name, type_args.join(", "));
+                        } else {
+                            self.pos = saved;
+                        }
+                    } else {
+                        self.pos = saved;
+                    }
                 }
 
                 // Check if this is a constructor call
@@ -1875,8 +1968,22 @@ impl<'src> Parser<'src> {
                     // - known functions always parse as calls, even if uppercased
                     // - known types parse as constructors
                     // - fallback preserves legacy uppercase constructor behavior
-                    let is_constructor = if full_name.contains('<') {
-                        true
+                    let is_builtin_generic_ctor = matches!(
+                        name.as_str(),
+                        "List"
+                            | "Map"
+                            | "Set"
+                            | "Option"
+                            | "Result"
+                            | "Box"
+                            | "Rc"
+                            | "Arc"
+                            | "Ptr"
+                            | "Task"
+                            | "Range"
+                    );
+                    let is_constructor = if has_explicit_type_args {
+                        self.known_types.contains(&name) || is_builtin_generic_ctor
                     } else if self.known_functions.contains(&name) {
                         false
                     } else if self.known_types.contains(&name) {
@@ -2576,5 +2683,59 @@ mod tests {
             }
             other => panic!("Expected call expression, found {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_forward_uppercase_function_call_is_call() {
+        let source = r#"
+            function main(): None {
+                x: Integer = Foo();
+                return None;
+            }
+            function Foo(): Integer { return 7; }
+        "#;
+        let program = parse_source(source).expect("Should parse forward uppercase function call");
+        let Decl::Function(func) = &program.declarations[0].node else {
+            panic!("Expected main function declaration");
+        };
+        let Stmt::Let { value, .. } = &func.body[0].node else {
+            panic!("Expected let statement");
+        };
+        assert!(matches!(value.node, Expr::Call { .. }));
+    }
+
+    #[test]
+    fn test_parse_explicit_generic_function_call() {
+        let source = r#"
+            function id<T>(x: T): T { return x; }
+            function main(): None {
+                x: Integer = id<Integer>(1);
+                return None;
+            }
+        "#;
+        let program = parse_source(source).expect("Should parse explicit generic call");
+        let Decl::Function(func) = &program.declarations[1].node else {
+            panic!("Expected main function declaration");
+        };
+        let Stmt::Let { value, .. } = &func.body[0].node else {
+            panic!("Expected let statement");
+        };
+        assert!(matches!(value.node, Expr::Call { .. }));
+    }
+
+    #[test]
+    fn test_parse_float_char_and_negative_match_patterns() {
+        let source = r#"
+            function main(): None {
+                f: Float = 1.0;
+                c: Char = 'a';
+                i: Integer = -1;
+                match (f) { 1.0 => { }, _ => { } }
+                match (c) { 'a' => { }, _ => { } }
+                match (i) { -1 => { }, _ => { } }
+                return None;
+            }
+        "#;
+        parse_source(source).expect("Should parse float/char/negative patterns");
     }
 }

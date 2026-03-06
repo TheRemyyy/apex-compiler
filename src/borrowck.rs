@@ -765,6 +765,15 @@ impl BorrowChecker {
                         (ident.clone(), moved)
                     })
                     .collect();
+                let capture_mut_borrows: HashMap<String, bool> = free_idents
+                    .iter()
+                    .map(|ident| {
+                        let mut_borrowed = body
+                            .iter()
+                            .any(|stmt| self.stmt_mutably_borrows_ident(&stmt.node, ident));
+                        (ident.clone(), mut_borrowed)
+                    })
+                    .collect();
 
                 self.enter_scope();
                 for stmt in body {
@@ -776,7 +785,12 @@ impl BorrowChecker {
                     if self.get_var(&ident).is_none() {
                         continue;
                     }
-                    if !capture_moves.get(&ident).copied().unwrap_or(false) {
+                    if capture_moves.get(&ident).copied().unwrap_or(false) {
+                        continue;
+                    }
+                    if capture_mut_borrows.get(&ident).copied().unwrap_or(false) {
+                        self.create_borrow(&ident, true, span.clone());
+                    } else {
                         self.create_borrow(&ident, false, span.clone());
                     }
                 }
@@ -1751,6 +1765,164 @@ impl BorrowChecker {
         }
     }
 
+    fn expr_mutably_borrows_ident(&self, expr: &Expr, ident: &str) -> bool {
+        match expr {
+            Expr::MutBorrow(inner) => {
+                matches!(&inner.node, Expr::Ident(name) if name == ident)
+                    || self.expr_mutably_borrows_ident(&inner.node, ident)
+            }
+            Expr::Call { callee, args } => {
+                let param_modes = self.resolve_call_param_modes(&callee.node, args.len());
+                if args.iter().enumerate().any(|(i, arg)| {
+                    matches!(param_modes.get(i), Some(ParamMode::BorrowMut))
+                        && matches!(&arg.node, Expr::Ident(name) if name == ident)
+                }) {
+                    return true;
+                }
+                if let Some(mode) = self.resolve_call_receiver_mode(&callee.node) {
+                    if mode == ParamMode::BorrowMut
+                        && matches!(&callee.node, Expr::Field { object, .. } if matches!(&object.node, Expr::Ident(name) if name == ident))
+                    {
+                        return true;
+                    }
+                }
+                self.expr_mutably_borrows_ident(&callee.node, ident)
+                    || args
+                        .iter()
+                        .any(|arg| self.expr_mutably_borrows_ident(&arg.node, ident))
+            }
+            Expr::Binary { left, right, op } => {
+                if self.expr_mutably_borrows_ident(&left.node, ident) {
+                    return true;
+                }
+                let should_check_right = !matches!(
+                    (op, Self::literal_bool(&left.node)),
+                    (BinOp::Or, Some(true)) | (BinOp::And, Some(false))
+                );
+                should_check_right && self.expr_mutably_borrows_ident(&right.node, ident)
+            }
+            Expr::Unary { expr, .. }
+            | Expr::Try(expr)
+            | Expr::Borrow(expr)
+            | Expr::Deref(expr)
+            | Expr::Await(expr) => self.expr_mutably_borrows_ident(&expr.node, ident),
+            Expr::Field { object, .. } => self.expr_mutably_borrows_ident(&object.node, ident),
+            Expr::Index { object, index } => {
+                self.expr_mutably_borrows_ident(&object.node, ident)
+                    || self.expr_mutably_borrows_ident(&index.node, ident)
+            }
+            Expr::Construct { args, .. } => args
+                .iter()
+                .any(|arg| self.expr_mutably_borrows_ident(&arg.node, ident)),
+            Expr::Lambda { body, .. } => self.expr_mutably_borrows_ident(&body.node, ident),
+            Expr::Match { expr, arms } => {
+                self.expr_mutably_borrows_ident(&expr.node, ident)
+                    || arms.iter().any(|arm| {
+                        arm.body
+                            .iter()
+                            .any(|stmt| self.stmt_mutably_borrows_ident(&stmt.node, ident))
+                    })
+            }
+            Expr::StringInterp(parts) => parts.iter().any(|part| match part {
+                StringPart::Expr(e) => self.expr_mutably_borrows_ident(&e.node, ident),
+                StringPart::Literal(_) => false,
+            }),
+            Expr::AsyncBlock(stmts) | Expr::Block(stmts) => stmts
+                .iter()
+                .any(|stmt| self.stmt_mutably_borrows_ident(&stmt.node, ident)),
+            Expr::Require { condition, message } => {
+                self.expr_mutably_borrows_ident(&condition.node, ident)
+                    || message
+                        .as_ref()
+                        .map(|m| self.expr_mutably_borrows_ident(&m.node, ident))
+                        .unwrap_or(false)
+            }
+            Expr::Range { start, end, .. } => {
+                start
+                    .as_ref()
+                    .map(|s| self.expr_mutably_borrows_ident(&s.node, ident))
+                    .unwrap_or(false)
+                    || end
+                        .as_ref()
+                        .map(|e| self.expr_mutably_borrows_ident(&e.node, ident))
+                        .unwrap_or(false)
+            }
+            Expr::IfExpr {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.expr_mutably_borrows_ident(&condition.node, ident)
+                    || then_branch
+                        .iter()
+                        .any(|stmt| self.stmt_mutably_borrows_ident(&stmt.node, ident))
+                    || else_branch
+                        .as_ref()
+                        .map(|stmts| {
+                            stmts
+                                .iter()
+                                .any(|stmt| self.stmt_mutably_borrows_ident(&stmt.node, ident))
+                        })
+                        .unwrap_or(false)
+            }
+            Expr::Ident(_) | Expr::Literal(_) | Expr::This => false,
+        }
+    }
+
+    fn stmt_mutably_borrows_ident(&self, stmt: &Stmt, ident: &str) -> bool {
+        match stmt {
+            Stmt::Let { value, .. } => self.expr_mutably_borrows_ident(&value.node, ident),
+            Stmt::Assign { target, value } => {
+                self.expr_mutably_borrows_ident(&target.node, ident)
+                    || self.expr_mutably_borrows_ident(&value.node, ident)
+            }
+            Stmt::Expr(expr) => self.expr_mutably_borrows_ident(&expr.node, ident),
+            Stmt::Return(expr) => expr
+                .as_ref()
+                .map(|e| self.expr_mutably_borrows_ident(&e.node, ident))
+                .unwrap_or(false),
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                self.expr_mutably_borrows_ident(&condition.node, ident)
+                    || then_block
+                        .iter()
+                        .any(|stmt| self.stmt_mutably_borrows_ident(&stmt.node, ident))
+                    || else_block
+                        .as_ref()
+                        .map(|stmts| {
+                            stmts
+                                .iter()
+                                .any(|stmt| self.stmt_mutably_borrows_ident(&stmt.node, ident))
+                        })
+                        .unwrap_or(false)
+            }
+            Stmt::While { condition, body } => {
+                self.expr_mutably_borrows_ident(&condition.node, ident)
+                    || body
+                        .iter()
+                        .any(|stmt| self.stmt_mutably_borrows_ident(&stmt.node, ident))
+            }
+            Stmt::For { iterable, body, .. } => {
+                self.expr_mutably_borrows_ident(&iterable.node, ident)
+                    || body
+                        .iter()
+                        .any(|stmt| self.stmt_mutably_borrows_ident(&stmt.node, ident))
+            }
+            Stmt::Match { expr, arms } => {
+                self.expr_mutably_borrows_ident(&expr.node, ident)
+                    || arms.iter().any(|arm| {
+                        arm.body
+                            .iter()
+                            .any(|stmt| self.stmt_mutably_borrows_ident(&stmt.node, ident))
+                    })
+            }
+            Stmt::Break | Stmt::Continue => false,
+        }
+    }
+
     fn stmt_terminates_control_flow(stmt: &Stmt) -> bool {
         matches!(stmt, Stmt::Return(_) | Stmt::Break | Stmt::Continue)
     }
@@ -2363,6 +2535,44 @@ mod tests {
             m.contains("Cannot assign to 'x' while borrowed")
                 || m.contains("Cannot assign to 'x' while mutably borrowed")
         }));
+    }
+
+    #[test]
+    fn async_mut_borrow_capture_blocks_later_immutable_borrow() {
+        let source = r#"
+            function main(): None {
+                mut x: Integer = 1;
+                t: Task<None> = async {
+                    r: &mut Integer = &mut x;
+                    return None;
+                };
+                y: &Integer = &x;
+                return None;
+            }
+        "#;
+        let errors = borrow_errors(source);
+        assert!(errors
+            .iter()
+            .any(|m| m.contains("Cannot borrow 'x' while mutably borrowed")));
+    }
+
+    #[test]
+    fn async_mut_borrow_capture_blocks_later_mutable_borrow_with_correct_reason() {
+        let source = r#"
+            function main(): None {
+                mut x: Integer = 1;
+                t: Task<None> = async {
+                    r: &mut Integer = &mut x;
+                    return None;
+                };
+                y: &mut Integer = &mut x;
+                return None;
+            }
+        "#;
+        let errors = borrow_errors(source);
+        assert!(errors
+            .iter()
+            .any(|m| m.contains("Cannot borrow 'x' while mutably borrowed")));
     }
 
     #[test]

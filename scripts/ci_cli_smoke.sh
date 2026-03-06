@@ -657,6 +657,28 @@ function main(): None {
 """,
     True,
 )
+run_single(
+    "forward_uppercase_function_call_parses_as_call",
+    """
+function main(): None {
+    x: Integer = Foo();
+    return None;
+}
+function Foo(): Integer { return 7; }
+""",
+    True,
+)
+run_single(
+    "explicit_generic_function_call_parses",
+    """
+function id<T>(x: T): T { return x; }
+function main(): None {
+    x: Integer = id<Integer>(1);
+    return None;
+}
+""",
+    True,
+)
 run_compile_stdout(
     "match_expression_literal_runtime_selects_correct_arm",
     """
@@ -720,6 +742,21 @@ function main(): None {
 }
 """,
     "B",
+)
+run_single(
+    "match_patterns_support_float_char_negative_literals",
+    """
+function main(): None {
+    f: Float = 1.0;
+    c: Char = 'a';
+    i: Integer = -1;
+    match (f) { 1.0 => { } _ => { } }
+    match (c) { 'a' => { } _ => { } }
+    match (i) { -1 => { } _ => { } }
+    return None;
+}
+""",
+    True,
 )
 run_compile(
     "match_statement_option_boolean_binding_codegen",
@@ -862,6 +899,17 @@ function main(): None {
 }
 """,
 )
+run_fix_then_check(
+    "fix_import_with_block_comment_preserves_required_import",
+    """
+import std.string.*; /* needed for Str.len */
+import std.io.*;
+function main(): None {
+    println(to_string(Str.len("abc")));
+    return None;
+}
+""",
+)
 run_fix_preserves_prefix(
     "fix_preserves_shebang_prefix",
     """#!/usr/bin/env apex
@@ -935,6 +983,22 @@ function main(): None {
 """,
     False,
     ["Cannot assign to 'x' while"],
+)
+run_single(
+    "async_mut_borrow_capture_blocks_immutable_borrow",
+    """
+function main(): None {
+    mut x: Integer = 1;
+    t: Task<None> = async {
+        r: &mut Integer = &mut x;
+        return None;
+    };
+    y: &Integer = &x;
+    return None;
+}
+""",
+    False,
+    ["Cannot borrow 'x' while mutably borrowed"],
 )
 run_single_fmt_roundtrip(
     "fmt_if_expr_statement_roundtrip",
