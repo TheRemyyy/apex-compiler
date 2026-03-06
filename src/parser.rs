@@ -539,9 +539,21 @@ impl<'src> Parser<'src> {
 
             match self.current() {
                 Some(Token::Constructor) => {
+                    if member_visibility != Visibility::Public {
+                        return Err(ParseError::new(
+                            "Visibility modifiers are not supported on constructors",
+                            self.current_span(),
+                        ));
+                    }
                     constructor = Some(self.parse_constructor()?);
                 }
                 Some(Token::Destructor) => {
+                    if member_visibility != Visibility::Public {
+                        return Err(ParseError::new(
+                            "Visibility modifiers are not supported on destructors",
+                            self.current_span(),
+                        ));
+                    }
                     destructor = Some(self.parse_destructor()?);
                 }
                 Some(Token::Function) | Some(Token::Async) => {
@@ -2302,5 +2314,21 @@ mod tests {
             panic!("Expected integer rhs");
         };
         assert_eq!(rhs, 1);
+    }
+
+    #[test]
+    fn test_reject_visibility_modifier_on_constructor() {
+        let source = r#"
+            class C {
+                private constructor() { }
+            }
+        "#;
+        let err = parse_source(source).expect_err("private constructor modifier should fail");
+        assert!(
+            err.message
+                .contains("Visibility modifiers are not supported on constructors"),
+            "{}",
+            err.message
+        );
     }
 }

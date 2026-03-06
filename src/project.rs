@@ -59,6 +59,11 @@ pub struct ProjectConfig {
     pub link_args: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct ProjectTomlRoot {
+    project: ProjectConfig,
+}
+
 fn default_output() -> String {
     "main".to_string()
 }
@@ -93,10 +98,15 @@ impl ProjectConfig {
         let content =
             fs::read_to_string(path).map_err(|e| format!("Failed to read project file: {}", e))?;
 
-        let config: ProjectConfig =
-            toml::from_str(&content).map_err(|e| format!("Failed to parse project file: {}", e))?;
+        if let Ok(config) = toml::from_str::<ProjectConfig>(&content) {
+            return Ok(config);
+        }
+        if let Ok(wrapper) = toml::from_str::<ProjectTomlRoot>(&content) {
+            return Ok(wrapper.project);
+        }
 
-        Ok(config)
+        toml::from_str::<ProjectConfig>(&content)
+            .map_err(|e| format!("Failed to parse project file: {}", e))
     }
 
     /// Save project config to apex.toml
@@ -230,5 +240,24 @@ link_args = ["-Wl,--as-needed"]
         assert_eq!(config.link_libs, vec!["ssl", "crypto"]);
         assert_eq!(config.link_search, vec!["native/lib", "/usr/local/lib"]);
         assert_eq!(config.link_args, vec!["-Wl,--as-needed"]);
+    }
+
+    #[test]
+    fn loads_project_table_toml_shape() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("apex_project_table_shape_test.toml");
+        let content = r#"
+[project]
+name = "demo"
+version = "0.1.0"
+entry = "src/main.apex"
+files = ["src/main.apex"]
+output = "demo"
+"#;
+        std::fs::write(&path, content).expect("write temporary toml");
+        let config = ProjectConfig::load(&path).expect("project table shape should load");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(config.name, "demo");
+        assert_eq!(config.entry, "src/main.apex");
     }
 }

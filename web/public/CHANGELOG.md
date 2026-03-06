@@ -135,6 +135,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed codegen index access on `List<T>` values to handle materialized list structs (`{capacity,length,data}`) without pointer-cast panics.
 - Fixed codegen lvalue generation for indexed assignment (`xs[i] = ...`, `xs[i] += ...`) so check-pass programs no longer fail with `Invalid lvalue`.
 - Fixed codegen lvalue support for indexed assignment through field-owned lists (`obj.list[i] += ...`) and nested field assignment type resolution (`a.b.v += ...`).
+- Fixed parser behavior where visibility modifiers on `constructor`/`destructor` were silently ignored.
+  - parser now emits an explicit error (`Visibility modifiers are not supported on constructors/destructors`) instead of accepting misleading syntax.
+- Fixed project config compatibility for `apex.toml`:
+  - `ProjectConfig::load` now supports both flat-key format and `[project]` table format.
 - Added import checker regression tests for local-vs-stdlib shadowing and `Math.*` import enforcement paths.
 - Added import checker regression test for aliased stdlib module calls (`std.io`/`std.math`/`std.string` alias flow).
 - Added import checker regression test for nested-call validation under aliased stdlib callees.

@@ -31,6 +31,7 @@ BORROW_LAMBDA_MOVE_FILE="${TMP_DIR}/borrow_lambda_move.apex"
 BORROW_COMPOUND_BORROWED_FILE="${TMP_DIR}/borrow_compound_borrowed.apex"
 PROJECT_TYPECHECK_DIR="${TMP_DIR}/project_typecheck"
 PROJECT_STDLIB_ALIAS_DIR="${TMP_DIR}/project_stdlib_alias"
+PROJECT_TABLE_CFG_DIR="${TMP_DIR}/project_table_cfg"
 
 "${COMPILER}" new sample_project --path "${PROJECT_DIR}" >/dev/null
 
@@ -265,6 +266,25 @@ function main(): None {
 EOF_ALIAS_MAIN
 (cd "${PROJECT_STDLIB_ALIAS_DIR}" && "${COMPILER}" check >/dev/null)
 
+mkdir -p "${PROJECT_TABLE_CFG_DIR}/src"
+cat <<'EOF_PROJECT_TABLE_CFG' > "${PROJECT_TABLE_CFG_DIR}/apex.toml"
+[project]
+name = "project_table_cfg"
+version = "0.1.0"
+entry = "src/main.apex"
+files = ["src/main.apex"]
+output = "project_table_cfg"
+opt_level = "0"
+EOF_PROJECT_TABLE_CFG
+cat <<'EOF_PROJECT_TABLE_MAIN' > "${PROJECT_TABLE_CFG_DIR}/src/main.apex"
+import std.io.*;
+function main(): None {
+    println("ok");
+    return None;
+}
+EOF_PROJECT_TABLE_MAIN
+(cd "${PROJECT_TABLE_CFG_DIR}" && "${COMPILER}" check >/dev/null)
+
 python3 - <<'PY' "${COMPILER}" "${TMP_DIR}"
 from pathlib import Path
 import subprocess
@@ -393,6 +413,17 @@ function main(): None {
 """,
     False,
     ["import std.math.*;"],
+)
+run_single(
+    "constructor_visibility_modifier_rejected",
+    """
+class C {
+    private constructor() { }
+}
+function main(): None { return None; }
+""",
+    False,
+    ["Visibility modifiers are not supported on constructors"],
 )
 run_single(
     "list_index_codegen_no_panic",
