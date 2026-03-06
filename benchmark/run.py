@@ -520,7 +520,7 @@ def main() -> int:
             compiler = root / "target" / "release" / "apex-compiler"
             compile_jobs = {
                 "apex": {
-                    "cmd": [str(compiler), "build"],
+                    "cmd": [str(compiler), "build", "--no-check"],
                     "cwd": compile_projects["apex"]["project_dir"],
                     "env": build_env,
                     "binary": compile_projects["apex"]["binary"],
