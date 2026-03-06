@@ -16,12 +16,18 @@ from typing import Dict, List
 class BenchmarkSpec:
     name: str
     description: str
+    kind: str = "runtime"
 
 
 BENCHMARKS: List[BenchmarkSpec] = [
     BenchmarkSpec("sum_loop", "Integer-heavy pseudo-random accumulation loop"),
     BenchmarkSpec("prime_count", "Prime counting via sieve"),
     BenchmarkSpec("matrix_mul", "Dense matrix multiplication (100x100)"),
+    BenchmarkSpec(
+        "compile_project_10_files",
+        "Compile stress test on generated 10-file project per language",
+        kind="compile",
+    ),
 ]
 
 LANGUAGES = ("apex", "c", "rust", "go")
@@ -106,6 +112,143 @@ def compile_go(root: Path, bench: str, out: Path) -> None:
     proc = run_cmd(cmd, root, env={"GO111MODULE": "off"})
     if proc.returncode != 0:
         raise RuntimeError(f"Failed to compile Go benchmark {bench}:\n{proc.stderr}")
+
+
+def timed_compile(cmd: List[str], cwd: Path, env: Dict[str, str] | None = None) -> float:
+    start = time.perf_counter()
+    proc = run_cmd(cmd, cwd, env=env)
+    elapsed = time.perf_counter() - start
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"Compile failed: {' '.join(cmd)}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+        )
+    return elapsed
+
+
+def run_checksum(binary: Path, cwd: Path) -> int:
+    proc = run_cmd([str(binary)], cwd)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"Binary execution failed: {binary}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+        )
+    return parse_checksum(proc.stdout)
+
+
+def generate_compile_project_10_files(root: Path) -> Dict[str, Dict[str, Path]]:
+    generated_root = root / "benchmark" / "generated" / "compile_project_10_files"
+    if generated_root.exists():
+        shutil.rmtree(generated_root)
+    generated_root.mkdir(parents=True, exist_ok=True)
+
+    file_count = 10
+    funcs_per_file = 180
+
+    apex_dir = generated_root / "apex"
+    apex_src = apex_dir / "src"
+    apex_src.mkdir(parents=True, exist_ok=True)
+    apex_files = []
+    for i in range(file_count):
+        part = f"part_{i:02d}"
+        apex_files.append(f"src/{part}.apex")
+        lines: List[str] = ["import std.io.*;", ""]
+        for j in range(funcs_per_file):
+            lines.append(f"function {part}_f{j:03d}(x: Integer): Integer {{ return x + {i + j + 1}; }}")
+        lines.append("")
+        lines.append(f"function {part}_apply(x: Integer): Integer {{")
+        lines.append("    mut y: Integer = x;")
+        for j in range(funcs_per_file):
+            lines.append(f"    y = {part}_f{j:03d}(y);")
+        lines.append("    return y;")
+        lines.append("}")
+        (apex_src / f"{part}.apex").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    main_lines: List[str] = ["import std.io.*;", "", "function main(): None {", "    mut acc: Integer = 0;"]
+    for i in range(file_count):
+        main_lines.append(f"    acc = part_{i:02d}_apply(acc);")
+    main_lines.extend(['    println(to_string(acc));', "    return None;", "}"])
+    (apex_src / "main.apex").write_text("\n".join(main_lines) + "\n", encoding="utf-8")
+    apex_files.append("src/main.apex")
+
+    toml_lines = [
+        'name = "compile_project_10_files"',
+        'version = "0.1.0"',
+        'entry = "src/main.apex"',
+        "files = [",
+    ]
+    toml_lines.extend([f'    "{f}",' for f in apex_files])
+    toml_lines.extend(["]", 'output = "compile_project_10_files"', 'opt_level = "3"'])
+    (apex_dir / "apex.toml").write_text("\n".join(toml_lines) + "\n", encoding="utf-8")
+
+    c_dir = generated_root / "c"
+    c_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(file_count):
+        part = f"part_{i:02d}"
+        lines = ["#include <stdint.h>", f"int64_t {part}_apply(int64_t x) {{", "    int64_t y = x;"]
+        for j in range(funcs_per_file):
+            lines.append(f"    y = y + {i + j + 1};")
+        lines.extend(["    return y;", "}"])
+        (c_dir / f"{part}.c").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    main_c = ["#include <stdint.h>", "#include <stdio.h>"]
+    for i in range(file_count):
+        main_c.append(f"int64_t part_{i:02d}_apply(int64_t x);")
+    main_c.extend(["int main(void) {", "    int64_t acc = 0;"])
+    for i in range(file_count):
+        main_c.append(f"    acc = part_{i:02d}_apply(acc);")
+    main_c.extend(['    printf("%lld\\n", (long long)acc);', "    return 0;", "}"])
+    (c_dir / "main.c").write_text("\n".join(main_c) + "\n", encoding="utf-8")
+
+    rust_dir = generated_root / "rust"
+    rust_dir.mkdir(parents=True, exist_ok=True)
+    rust_main = []
+    for i in range(file_count):
+        rust_main.append(f"mod part_{i:02d};")
+    rust_main.extend(["", "fn main() {", "    let mut acc: i64 = 0;"])
+    for i in range(file_count):
+        rust_main.append(f"    acc = part_{i:02d}::apply(acc);")
+    rust_main.extend(['    println!("{acc}");', "}"])
+    (rust_dir / "main.rs").write_text("\n".join(rust_main) + "\n", encoding="utf-8")
+    for i in range(file_count):
+        part = f"part_{i:02d}"
+        lines = ["pub fn apply(x: i64) -> i64 {", "    let mut y = x;"]
+        for j in range(funcs_per_file):
+            lines.append(f"    y += {i + j + 1};")
+        lines.extend(["    y", "}"])
+        (rust_dir / f"{part}.rs").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    go_dir = generated_root / "go"
+    go_dir.mkdir(parents=True, exist_ok=True)
+    (go_dir / "go.mod").write_text("module compile10\n\ngo 1.22\n", encoding="utf-8")
+    go_main = ['package main', "", 'import "fmt"', "", "func main() {", "    var acc int64 = 0"]
+    for i in range(file_count):
+        go_main.append(f"    acc = part_{i:02d}_apply(acc)")
+    go_main.extend(["    fmt.Println(acc)", "}"])
+    (go_dir / "main.go").write_text("\n".join(go_main) + "\n", encoding="utf-8")
+    for i in range(file_count):
+        part = f"part_{i:02d}"
+        lines = ["package main", "", "func " + part + "_apply(x int64) int64 {", "    y := x"]
+        for j in range(funcs_per_file):
+            lines.append(f"    y += {i + j + 1}")
+        lines.extend(["    return y", "}"])
+        (go_dir / f"{part}.go").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    return {
+        "apex": {
+            "project_dir": apex_dir,
+            "binary": apex_dir / "compile_project_10_files",
+        },
+        "c": {
+            "project_dir": c_dir,
+            "binary": c_dir / "compile_project_10_files_c",
+        },
+        "rust": {
+            "project_dir": rust_dir,
+            "binary": rust_dir / "compile_project_10_files_rust",
+        },
+        "go": {
+            "project_dir": go_dir,
+            "binary": go_dir / "compile_project_10_files_go",
+        },
+    }
 
 
 def timed_run(binary: Path, cwd: Path) -> (float, int):
@@ -264,61 +407,152 @@ def main() -> int:
         "benchmarks": [],
     }
 
+    compile_projects = None
+    if any(spec.kind == "compile" for spec in selected):
+        compile_projects = generate_compile_project_10_files(root)
+
     for spec in selected:
         print(f"\n=== {spec.name} ===")
-        binaries = {
-            "apex": bin_dir / f"{spec.name}_apex",
-            "c": bin_dir / f"{spec.name}_c",
-            "rust": bin_dir / f"{spec.name}_rust",
-            "go": bin_dir / f"{spec.name}_go",
-        }
-
-        compile_apex(
-            root,
-            spec.name,
-            binaries["apex"],
-            build_env,
-            args.apex_opt_level,
-            args.apex_target,
-        )
-        compile_c(root, spec.name, binaries["c"], c_compiler)
-        compile_rust(root, spec.name, binaries["rust"])
-        compile_go(root, spec.name, binaries["go"])
-
         lang_data: Dict[str, Dict] = {}
         reference_checksum = None
 
-        for lang in LANGUAGES:
-            print(f"Running {lang}...")
-            binary = binaries[lang]
-
-            for _ in range(args.warmup):
-                timed_run(binary, root)
-
-            samples: List[float] = []
-            checksums: List[int] = []
-            for _ in range(args.repeats):
-                elapsed, checksum = timed_run(binary, root)
-                samples.append(elapsed)
-                checksums.append(checksum)
-
-            if len(set(checksums)) != 1:
-                raise RuntimeError(f"Non-deterministic checksum in {lang}/{spec.name}: {checksums}")
-
-            checksum = checksums[0]
-            if reference_checksum is None:
-                reference_checksum = checksum
-            elif checksum != reference_checksum:
-                raise RuntimeError(
-                    f"Checksum mismatch for {spec.name}: {lang}={checksum}, expected={reference_checksum}"
-                )
-
-            stats = compute_stats(samples)
-            lang_data[lang] = {
-                "checksum": checksum,
-                "samples_s": samples,
-                "stats": stats,
+        if spec.kind == "runtime":
+            binaries = {
+                "apex": bin_dir / f"{spec.name}_apex",
+                "c": bin_dir / f"{spec.name}_c",
+                "rust": bin_dir / f"{spec.name}_rust",
+                "go": bin_dir / f"{spec.name}_go",
             }
+
+            compile_apex(
+                root,
+                spec.name,
+                binaries["apex"],
+                build_env,
+                args.apex_opt_level,
+                args.apex_target,
+            )
+            compile_c(root, spec.name, binaries["c"], c_compiler)
+            compile_rust(root, spec.name, binaries["rust"])
+            compile_go(root, spec.name, binaries["go"])
+
+            for lang in LANGUAGES:
+                print(f"Running {lang}...")
+                binary = binaries[lang]
+
+                for _ in range(args.warmup):
+                    timed_run(binary, root)
+
+                samples: List[float] = []
+                checksums: List[int] = []
+                for _ in range(args.repeats):
+                    elapsed, checksum = timed_run(binary, root)
+                    samples.append(elapsed)
+                    checksums.append(checksum)
+
+                if len(set(checksums)) != 1:
+                    raise RuntimeError(f"Non-deterministic checksum in {lang}/{spec.name}: {checksums}")
+
+                checksum = checksums[0]
+                if reference_checksum is None:
+                    reference_checksum = checksum
+                elif checksum != reference_checksum:
+                    raise RuntimeError(
+                        f"Checksum mismatch for {spec.name}: {lang}={checksum}, expected={reference_checksum}"
+                    )
+
+                stats = compute_stats(samples)
+                lang_data[lang] = {
+                    "checksum": checksum,
+                    "samples_s": samples,
+                    "stats": stats,
+                    "metric": "runtime",
+                }
+        elif spec.kind == "compile":
+            if compile_projects is None:
+                raise RuntimeError("Internal error: compile projects were not generated")
+
+            compiler = root / "target" / "release" / "apex-compiler"
+            compile_jobs = {
+                "apex": {
+                    "cmd": [str(compiler), "build"],
+                    "cwd": compile_projects["apex"]["project_dir"],
+                    "env": build_env,
+                    "binary": compile_projects["apex"]["binary"],
+                },
+                "c": {
+                    "cmd": [
+                        c_compiler,
+                        "-O3",
+                        "-march=native",
+                        "-std=c11",
+                        *[str(compile_projects["c"]["project_dir"] / f"part_{i:02d}.c") for i in range(10)],
+                        str(compile_projects["c"]["project_dir"] / "main.c"),
+                        "-o",
+                        str(compile_projects["c"]["binary"]),
+                    ],
+                    "cwd": compile_projects["c"]["project_dir"],
+                    "env": None,
+                    "binary": compile_projects["c"]["binary"],
+                },
+                "rust": {
+                    "cmd": [
+                        "rustc",
+                        "-C",
+                        "opt-level=3",
+                        "-C",
+                        "target-cpu=native",
+                        "main.rs",
+                        "-o",
+                        str(compile_projects["rust"]["binary"]),
+                    ],
+                    "cwd": compile_projects["rust"]["project_dir"],
+                    "env": None,
+                    "binary": compile_projects["rust"]["binary"],
+                },
+                "go": {
+                    "cmd": [
+                        "go",
+                        "build",
+                        "-trimpath",
+                        "-o",
+                        str(compile_projects["go"]["binary"]),
+                        ".",
+                    ],
+                    "cwd": compile_projects["go"]["project_dir"],
+                    "env": {"GO111MODULE": "on"},
+                    "binary": compile_projects["go"]["binary"],
+                },
+            }
+
+            for lang in LANGUAGES:
+                print(f"Compiling {lang}...")
+                job = compile_jobs[lang]
+
+                for _ in range(args.warmup):
+                    timed_compile(job["cmd"], job["cwd"], env=job["env"])
+
+                samples: List[float] = []
+                for _ in range(args.repeats):
+                    samples.append(timed_compile(job["cmd"], job["cwd"], env=job["env"]))
+
+                checksum = run_checksum(job["binary"], job["cwd"])
+                if reference_checksum is None:
+                    reference_checksum = checksum
+                elif checksum != reference_checksum:
+                    raise RuntimeError(
+                        f"Checksum mismatch for {spec.name}: {lang}={checksum}, expected={reference_checksum}"
+                    )
+
+                stats = compute_stats(samples)
+                lang_data[lang] = {
+                    "checksum": checksum,
+                    "samples_s": samples,
+                    "stats": stats,
+                    "metric": "compile",
+                }
+        else:
+            raise RuntimeError(f"Unsupported benchmark kind: {spec.kind}")
 
         apex_mean = lang_data["apex"]["stats"]["mean_s"]
         speedups = {
@@ -331,6 +565,7 @@ def main() -> int:
             {
                 "name": spec.name,
                 "description": spec.description,
+                "kind": spec.kind,
                 "languages": lang_data,
                 "speedup_vs_apex": speedups,
             }

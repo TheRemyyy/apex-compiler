@@ -31,6 +31,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `benchmark/run.py --apex-opt-level ...` (default: `3`)
   - `benchmark/run.py --apex-target ...`
   - Apex benchmark compile now uses `--no-check` for fair runtime-focused comparisons.
+  - Added Go benchmark language parity (`benchmark/go/*`, `benchmark/run.py`).
+  - Added `compile_project_10_files` stress benchmark (generated 10-file project compile timing per language).
 - New language coverage examples:
   - `examples/35_visibility_enforcement.apex`
   - `examples/36_inheritance_extends.apex`

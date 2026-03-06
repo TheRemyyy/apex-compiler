@@ -21,6 +21,7 @@ benchmark/bin/sum_loop_rust
 benchmark/bin/sum_loop_go
 benchmark/results/latest.json
 benchmark/results/latest.md
+benchmark/generated/
 
 # Web
 web/node_modules

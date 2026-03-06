@@ -1,6 +1,6 @@
 # Apex Production Benchmark Suite
 
-This directory contains a structured benchmark suite that compares Apex against C and Rust on the same workloads.
+This directory contains a structured benchmark suite that compares Apex against C, Rust, and Go on the same workloads.
 
 ## Goals
 
@@ -14,6 +14,7 @@ This directory contains a structured benchmark suite that compares Apex against 
 - `sum_loop`: integer-heavy pseudo-random accumulation loop.
 - `prime_count`: sieve-based prime counting.
 - `matrix_mul`: dense integer matrix multiplication (flattened arrays).
+- `compile_project_10_files`: compile stress benchmark on generated 10-file projects per language.
 
 ## Directory Layout
 
@@ -22,7 +23,9 @@ benchmark/
   apex/         # Apex implementations
   c/            # C implementations
   rust/         # Rust implementations
+  go/           # Go implementations
   bin/          # Compiled binaries (generated)
+  generated/    # Generated project sources for compile stress benchmark (generated)
   results/      # Benchmark reports (generated)
   run.py        # Unified benchmark runner
 ```
@@ -33,6 +36,7 @@ benchmark/
 - `python3`
 - `clang` (for C)
 - `rustc` (for Rust)
+- `go` (for Go)
 - Apex compiler binary available at `target/release/apex-compiler`
 
 If the Apex compiler binary is missing, the runner will build it via:
@@ -61,6 +65,7 @@ Useful options:
 ```bash
 python3 benchmark/run.py --repeats 7 --warmup 1
 python3 benchmark/run.py --bench prime_count
+python3 benchmark/run.py --bench compile_project_10_files
 python3 benchmark/run.py --no-build
 python3 benchmark/run.py --apex-opt-level 3
 python3 benchmark/run.py --apex-target x86_64-unknown-linux-gnu
