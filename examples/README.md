@@ -10,7 +10,7 @@ This folder is the executable language feature gallery.
 - `04_control_flow.apex`: `if`, `while`, `for`, `break`, `continue`.
 - `05_classes.apex`: classes, constructors, destructors, methods, visibility.
 - `06_enums.apex`: enums and variant modeling basics.
-- `07_interfaces.apex`: interface-style contracts and class method matching.
+- `07_interfaces.apex`: interface declaration patterns and class integration examples.
 - `08_modules.apex`: modules and namespaced calls.
 - `09_generics.apex`: `Option`, `Result`, `List`, `Map`, `Set`, smart pointers.
 - `10_ownership.apex`: ownership and borrowing examples.
@@ -38,6 +38,10 @@ This folder is the executable language feature gallery.
 - `32_extern_safe_wrapper.apex`: safe Apex wrapper around raw extern call.
 - `33_extern_ptr_types.apex`: `Ptr<T>` extern signatures (`malloc`/`free` style APIs).
 - `34_bindgen_workflow.apex`: usage style for generated `apex bindgen` extern declarations.
+- `35_visibility_enforcement.apex`: enforced `public`/`private`/`protected` access rules.
+- `36_inheritance_extends.apex`: class inheritance with `extends` and inherited methods.
+- `37_interfaces_contracts.apex`: enforced `implements` contracts and interface-typed params.
+- `38_import_aliases.apex`: `import ... as ...` alias usage (`math`, `str`, `io`).
 
 ## Full apps
 

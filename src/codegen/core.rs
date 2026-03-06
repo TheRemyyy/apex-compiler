@@ -45,6 +45,7 @@ pub struct ClassInfo<'ctx> {
     pub struct_type: StructType<'ctx>,
     pub field_indices: HashMap<String, u32>,
     pub field_types: HashMap<String, Type>,
+    pub extends: Option<String>,
 }
 
 /// Enum variant metadata
@@ -93,6 +94,7 @@ pub struct Codegen<'ctx> {
     async_counter: u32,
     async_functions: HashMap<String, AsyncFunctionPlan<'ctx>>,
     extern_functions: HashSet<String>,
+    import_aliases: HashMap<String, String>,
 }
 
 impl<'ctx> Codegen<'ctx> {
@@ -117,6 +119,7 @@ impl<'ctx> Codegen<'ctx> {
             async_counter: 0,
             async_functions: HashMap::new(),
             extern_functions: HashSet::new(),
+            import_aliases: HashMap::new(),
         }
     }
 
@@ -154,6 +157,15 @@ impl<'ctx> Codegen<'ctx> {
 
     /// Compile program
     pub fn compile(&mut self, program: &Program) -> Result<()> {
+        self.import_aliases.clear();
+        for decl in &program.declarations {
+            if let Decl::Import(import) = &decl.node {
+                if let Some(alias) = &import.alias {
+                    self.import_aliases.insert(alias.clone(), import.path.clone());
+                }
+            }
+        }
+
         // First pass (0): declare all enums first so Named(Enum) resolves correctly.
         for decl in &program.declarations {
             if let Decl::Enum(en) = &decl.node {
@@ -188,6 +200,38 @@ impl<'ctx> Codegen<'ctx> {
         }
 
         Ok(())
+    }
+
+    fn resolve_module_alias(&self, name: &str) -> String {
+        if let Some(path) = self.import_aliases.get(name) {
+            return match path.as_str() {
+                "std.math" => "Math".to_string(),
+                "std.string" => "Str".to_string(),
+                "std.system" => "System".to_string(),
+                "std.time" => "Time".to_string(),
+                "std.args" => "Args".to_string(),
+                _ => name.to_string(),
+            };
+        }
+        name.to_string()
+    }
+
+    fn resolve_method_function_name(&self, class_name: &str, method: &str) -> Option<String> {
+        let mut current = class_name.to_string();
+        let mut depth = 0usize;
+        while depth < 64 {
+            let candidate = format!("{}__{}", current, method);
+            if self.functions.contains_key(&candidate) {
+                return Some(candidate);
+            }
+            let next = self.classes.get(&current)?.extends.clone();
+            match next {
+                Some(parent) => current = parent,
+                None => break,
+            }
+            depth += 1;
+        }
+        None
     }
 
     pub fn declare_enum(&mut self, en: &EnumDecl) -> Result<()> {
@@ -394,10 +438,44 @@ impl<'ctx> Codegen<'ctx> {
         let mut field_indices: HashMap<String, u32> = HashMap::new();
         let mut field_types_map: HashMap<String, Type> = HashMap::new();
 
-        for (i, field) in class.fields.iter().enumerate() {
+        let mut next_index = 0u32;
+        if let Some(parent) = &class.extends {
+            let parent_info = self
+                .classes
+                .get(parent)
+                .ok_or_else(|| CodegenError::new(format!("Unknown base class: {}", parent)))?;
+            let mut parent_fields = parent_info
+                .field_indices
+                .iter()
+                .map(|(name, idx)| (name.clone(), *idx))
+                .collect::<Vec<_>>();
+            parent_fields.sort_by_key(|(_, idx)| *idx);
+
+            for (name, idx) in parent_fields {
+                let ty = parent_info
+                    .field_types
+                    .get(&name)
+                    .ok_or_else(|| CodegenError::new("Missing inherited field type"))?
+                    .clone();
+                field_llvm_types.push(self.llvm_type(&ty));
+                field_indices.insert(name.clone(), idx);
+                field_types_map.insert(name, ty);
+                next_index = next_index.max(idx + 1);
+            }
+        }
+
+        for field in &class.fields {
+            if field_indices.contains_key(&field.name) {
+                return Err(CodegenError::new(format!(
+                    "Field '{}' already exists in base class",
+                    field.name
+                )));
+            }
+            let i = next_index;
             field_llvm_types.push(self.llvm_type(&field.ty));
-            field_indices.insert(field.name.clone(), i as u32);
+            field_indices.insert(field.name.clone(), i);
             field_types_map.insert(field.name.clone(), field.ty.clone());
+            next_index += 1;
         }
 
         let struct_type = self.context.struct_type(&field_llvm_types, false);
@@ -407,6 +485,7 @@ impl<'ctx> Codegen<'ctx> {
                 struct_type,
                 field_indices,
                 field_types: field_types_map,
+                extends: class.extends.clone(),
             },
         );
 
@@ -2763,13 +2842,14 @@ impl<'ctx> Codegen<'ctx> {
         // Check for enum variant constructors and module-qualified functions.
         if let Expr::Field { object, field } = callee {
             if let Expr::Ident(owner_name) = &object.node {
+                let resolved_owner = self.resolve_module_alias(owner_name);
                 // Enum constructor: `MyEnum.Variant(...)`
-                if let Some(enum_info) = self.enums.get(owner_name) {
+                if let Some(enum_info) = self.enums.get(&resolved_owner) {
                     if let Some(variant_info) = enum_info.variants.get(field).cloned() {
                         if args.len() != variant_info.fields.len() {
                             return Err(CodegenError::new(format!(
                                 "Enum variant '{}.{}' expects {} argument(s), got {}",
-                                owner_name,
+                                resolved_owner,
                                 field,
                                 variant_info.fields.len(),
                                 args.len()
@@ -2779,12 +2859,12 @@ impl<'ctx> Codegen<'ctx> {
                         for arg in args {
                             values.push(self.compile_expr(&arg.node)?);
                         }
-                        return self.build_enum_value(owner_name, &variant_info, &values);
+                        return self.build_enum_value(&resolved_owner, &variant_info, &values);
                     }
                 }
 
                 // Module dot syntax: Module.func(...) -> Module__func(...)
-                let mangled = format!("{}__{}", owner_name, field);
+                let mangled = format!("{}__{}", resolved_owner, field);
                 if let Some((func, _)) = self.functions.get(&mangled).cloned() {
                     let mut compiled_args: Vec<BasicValueEnum> = vec![self
                         .context
@@ -2811,12 +2891,21 @@ impl<'ctx> Codegen<'ctx> {
         if let Expr::Field { object, field } = callee {
             // Check for File static methods
             if let Expr::Ident(name) = &object.node {
+                let resolved_name = self.resolve_module_alias(name);
                 if matches!(
-                    name.as_str(),
+                    resolved_name.as_str(),
                     "File" | "Time" | "System" | "Math" | "Str" | "Args"
                 ) {
-                    let builtin_name = format!("{}__{}", name, field);
+                    let builtin_name = format!("{}__{}", resolved_name, field);
                     if let Some(result) = self.compile_stdlib_function(&builtin_name, args)? {
+                        return Ok(result);
+                    }
+                }
+                if resolved_name == "io" {
+                    if field == "println" || field == "print" {
+                        return self.compile_print(args, field == "println");
+                    }
+                    if let Some(result) = self.compile_stdlib_function(field, args)? {
                         return Ok(result);
                     }
                 }
@@ -3010,18 +3099,44 @@ impl<'ctx> Codegen<'ctx> {
                 ))
             })?;
 
-        let _class_info = self
-            .classes
-            .get(&class_name)
-            .ok_or_else(|| CodegenError::new(format!("Unknown class: {}", class_name)))?;
-
-        let func_name = format!("{}__{}", class_name, method);
-
-        let (func, _) = self
-            .functions
-            .get(&func_name)
-            .ok_or_else(|| CodegenError::new(format!("Unknown method: {}", func_name)))?
-            .clone();
+        let (func, _) = if self.classes.contains_key(&class_name) {
+            let func_name = self
+                .resolve_method_function_name(&class_name, method)
+                .ok_or_else(|| {
+                    CodegenError::new(format!(
+                        "Unknown method '{}' for class '{}'",
+                        method, class_name
+                    ))
+                })?;
+            self.functions
+                .get(&func_name)
+                .ok_or_else(|| CodegenError::new(format!("Unknown method: {}", func_name)))?
+                .clone()
+        } else {
+            // Interface-typed object (or unknown Named type): no vtable yet.
+            // We allow codegen only when there is a single unambiguous method implementation.
+            let suffix = format!("__{}", method);
+            let mut candidates = self
+                .functions
+                .iter()
+                .filter_map(|(name, sig)| name.ends_with(&suffix).then_some((name.clone(), sig.0)))
+                .collect::<Vec<_>>();
+            if candidates.len() == 1 {
+                let (_, func) = candidates.pop().unwrap();
+                (func, Type::None)
+            } else if candidates.is_empty() {
+                return Err(CodegenError::new(format!(
+                    "Unknown interface method implementation: {}",
+                    method
+                )));
+            } else {
+                return Err(CodegenError::new(format!(
+                    "Ambiguous interface dispatch for method '{}': {} candidates",
+                    method,
+                    candidates.len()
+                )));
+            }
+        };
 
         let mut compiled_args: Vec<BasicValueEnum> = vec![
             self.context

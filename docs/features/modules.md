@@ -22,4 +22,14 @@ The compiler lowers `Module.function()` to an internal mangled symbol `Module__f
 result: Integer = Math.square(5);
 ```
 
+You can also alias imports:
+
+```apex
+import std.math as math;
+import std.io as io;
+
+value: Integer = math.abs(-5);
+io.println("{value}");
+```
+
 Backward compatibility: direct `Module__function()` calls are still accepted.

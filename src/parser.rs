@@ -266,7 +266,7 @@ impl<'src> Parser<'src> {
                 self.advance();
                 Visibility::Protected
             }
-            _ => Visibility::Private,
+            _ => Visibility::Public,
         }
     }
 
@@ -824,10 +824,18 @@ impl<'src> Parser<'src> {
             path_parts.push(self.parse_ident()?);
         }
 
+        let alias = if self.check(&Token::As) {
+            self.advance();
+            Some(self.parse_ident()?)
+        } else {
+            None
+        };
+
         self.eat(&Token::Semi)?;
 
         Ok(ImportDecl {
             path: path_parts.join("."),
+            alias,
         })
     }
 
@@ -2087,5 +2095,23 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("Unknown attribute"));
+    }
+
+    #[test]
+    fn test_parse_import_with_alias() {
+        let source = r#"
+            import std.math as math;
+            function main(): Integer {
+                return 0;
+            }
+        "#;
+        let program = parse_source(source).expect("Should parse import alias");
+        match &program.declarations[0].node {
+            Decl::Import(import) => {
+                assert_eq!(import.path, "std.math");
+                assert_eq!(import.alias.as_deref(), Some("math"));
+            }
+            _ => panic!("Expected import declaration"),
+        }
     }
 }

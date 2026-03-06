@@ -27,9 +27,11 @@ class Point {
 
 ## Visibility
 
-- `public`: Accessible from anywhere.
-- `private` (default): Accessible only within the class.
-- `protected`: Accessible within the class and inherited classes.
+- `public` (default): Accessible from anywhere.
+- `private`: Accessible only within the declaring class.
+- `protected`: Accessible within the declaring class and subclasses.
+
+Visibility is now enforced by the type checker. Invalid access is a compile-time error.
 
 ```apex
 class Account {
@@ -37,6 +39,30 @@ class Account {
     
     constructor() {
         this.balance = 0;
+    }
+}
+```
+
+## Inheritance
+
+Classes can inherit members from a base class using `extends`.
+
+```apex
+class Animal {
+    public name: String;
+
+    constructor(name: String) {
+        this.name = name;
+    }
+
+    public function describe(): String {
+        return "Animal(${this.name})";
+    }
+}
+
+class Dog extends Animal {
+    constructor(name: String) {
+        this.name = name;
     }
 }
 ```

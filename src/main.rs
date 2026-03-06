@@ -668,6 +668,11 @@ fn rewrite_program_for_project(
     let mut imported_classes: HashMap<String, String> = HashMap::new();
     let mut imported_modules: HashMap<String, String> = HashMap::new();
     for import in imports {
+        let import_key = import
+            .alias
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| import.path.rsplit('.').next().unwrap_or("").to_string());
         if import.path.ends_with(".*") {
             let ns = import.path.trim_end_matches(".*");
             if let Some(funcs) = namespace_functions.get(ns) {
@@ -687,11 +692,11 @@ fn rewrite_program_for_project(
             }
         } else if import.path.contains('.') {
             let mut parts = import.path.split('.').collect::<Vec<_>>();
-            if let Some(name) = parts.pop() {
+            if let Some(_name) = parts.pop() {
                 let ns = parts.join(".");
-                imported_map.insert(name.to_string(), ns.clone());
-                imported_classes.insert(name.to_string(), ns.clone());
-                imported_modules.insert(name.to_string(), ns);
+                imported_map.insert(import_key.clone(), ns.clone());
+                imported_classes.insert(import_key.clone(), ns.clone());
+                imported_modules.insert(import_key, ns);
             }
         }
     }
@@ -2852,6 +2857,7 @@ mod project_rewrite_tests {
 
         let imports = vec![ast::ImportDecl {
             path: "lib.foo".to_string(),
+            alias: None,
         }];
         let namespace_functions = HashMap::from([
             ("app".to_string(), HashSet::from(["main".to_string()])),
@@ -2927,9 +2933,11 @@ mod project_rewrite_tests {
         let imports = vec![
             ast::ImportDecl {
                 path: "lib.Widget".to_string(),
+                alias: None,
             },
             ast::ImportDecl {
                 path: "lib.Utils".to_string(),
+                alias: None,
             },
         ];
         let namespace_functions =
@@ -3017,6 +3025,7 @@ mod project_rewrite_tests {
 
         let imports = vec![ast::ImportDecl {
             path: "lib.Utils".to_string(),
+            alias: None,
         }];
         let namespace_functions =
             HashMap::from([("app".to_string(), HashSet::from(["main".to_string()]))]);
@@ -3091,6 +3100,7 @@ mod project_rewrite_tests {
 
         let imports = vec![ast::ImportDecl {
             path: "lib.*".to_string(),
+            alias: None,
         }];
         let namespace_functions = HashMap::from([
             ("app".to_string(), HashSet::from(["main".to_string()])),

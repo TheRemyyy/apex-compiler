@@ -31,6 +31,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `benchmark/run.py --apex-opt-level ...` (default: `3`)
   - `benchmark/run.py --apex-target ...`
   - Apex benchmark compile now uses `--no-check` for fair runtime-focused comparisons.
+- New language coverage examples:
+  - `examples/35_visibility_enforcement.apex`
+  - `examples/36_inheritance_extends.apex`
+  - `examples/37_interfaces_contracts.apex`
+  - `examples/38_import_aliases.apex`
 
 ### ♻️ Changed
 
@@ -44,6 +49,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - tries `-march=native -mtune=native`
   - then `-march=native`
   - then baseline flags
+- Class visibility semantics are now enforced by type checking for field and method access.
+- Class inheritance (`extends`) now participates in semantic lookup for inherited fields/methods.
+- Interface semantics were tightened:
+  - `implements` contracts are validated
+  - interface inheritance (`interface A extends B`) is validated
+  - interface types can be used in function parameters and assignments
+- Import aliases (`import ... as ...`) are now supported by parser, formatter, checker, and codegen.
 
 ### 🐛 Fixed
 
@@ -62,6 +74,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - generated test runner sources now inject `import std.io.*;` when needed.
 - Fixed `apex test --filter` summary counters:
   - `total`/`ignored` now reflect the filtered subset, not the unfiltered discovery set.
+- Fixed previously accepted invalid access to `private` and `protected` members from outside class boundaries.
+- Fixed stale docs wording around class visibility defaults and interface implementation behavior.
 
 ## [1.3.4] - Async Runtime, FFI, Bindgen - 2026-03-05
 

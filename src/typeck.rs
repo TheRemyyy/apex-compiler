@@ -148,9 +148,12 @@ pub struct FuncSig {
 /// Class information
 #[derive(Debug, Clone)]
 pub struct ClassInfo {
-    pub fields: HashMap<String, (ResolvedType, bool)>, // (type, mutable)
+    pub fields: HashMap<String, (ResolvedType, bool, Visibility)>, // (type, mutable, visibility)
     pub methods: HashMap<String, FuncSig>,
+    pub method_visibilities: HashMap<String, Visibility>,
     pub constructor: Option<Vec<(String, ResolvedType)>>,
+    pub extends: Option<String>,
+    pub implements: Vec<String>,
     pub span: Span,
 }
 
@@ -158,6 +161,14 @@ pub struct ClassInfo {
 #[derive(Debug, Clone)]
 pub struct EnumInfo {
     pub variants: HashMap<String, Vec<ResolvedType>>,
+    pub span: Span,
+}
+
+/// Interface metadata
+#[derive(Debug, Clone)]
+pub struct InterfaceInfo {
+    pub methods: HashMap<String, FuncSig>,
+    pub extends: Vec<String>,
     pub span: Span,
 }
 
@@ -181,6 +192,8 @@ pub struct TypeChecker {
     classes: HashMap<String, ClassInfo>,
     /// Enum definitions
     enums: HashMap<String, EnumInfo>,
+    /// Interface definitions
+    interfaces: HashMap<String, InterfaceInfo>,
     /// Reverse lookup: variant name -> enum name
     enum_variant_to_enum: HashMap<String, String>,
     /// Type variable counter for inference
@@ -191,6 +204,10 @@ pub struct TypeChecker {
     errors: Vec<TypeError>,
     /// Current function return type (for checking returns)
     current_return_type: Option<ResolvedType>,
+    /// Current class context (for visibility checks)
+    current_class: Option<String>,
+    /// Import aliases (alias -> path)
+    import_aliases: HashMap<String, String>,
     /// Current function declared effects
     current_effects: Vec<String>,
     /// Whether current function is declared pure
@@ -214,11 +231,14 @@ impl TypeChecker {
             functions: HashMap::new(),
             classes: HashMap::new(),
             enums: HashMap::new(),
+            interfaces: HashMap::new(),
             enum_variant_to_enum: HashMap::new(),
             type_var_counter: 0,
             substitutions: HashMap::new(),
             errors: Vec::new(),
             current_return_type: None,
+            current_class: None,
+            import_aliases: HashMap::new(),
             current_effects: Vec::new(),
             current_is_pure: false,
             current_allow_any: false,
@@ -635,13 +655,36 @@ impl TypeChecker {
                     }
                 } else if let Expr::Field { object, field } = &callee.node {
                     if let Expr::Ident(name) = &object.node {
-                        let builtin_name = format!("{}__{}", name, field);
+                        let resolved_owner = if let Some(path) = self.import_aliases.get(name) {
+                            match path.as_str() {
+                                "std.math" => "Math".to_string(),
+                                "std.string" => "Str".to_string(),
+                                "std.system" => "System".to_string(),
+                                "std.time" => "Time".to_string(),
+                                "std.args" => "Args".to_string(),
+                                _ => name.clone(),
+                            }
+                        } else {
+                            name.clone()
+                        };
+
+                        let builtin_name = format!("{}__{}", resolved_owner, field);
                         if let Some(required) = Self::builtin_required_effect(&builtin_name) {
                             out.insert(required.to_string());
                         }
                         if let Some(sig) = self.functions.get(&builtin_name) {
                             for eff in &sig.effects {
                                 out.insert(eff.clone());
+                            }
+                        }
+                        if resolved_owner == "io" {
+                            if let Some(required) = Self::builtin_required_effect(field) {
+                                out.insert(required.to_string());
+                            }
+                            if let Some(sig) = self.functions.get(field) {
+                                for eff in &sig.effects {
+                                    out.insert(eff.clone());
+                                }
                             }
                         }
                         // Instance-style method call; infer conservatively by method name across classes.
@@ -758,10 +801,226 @@ impl TypeChecker {
         }
     }
 
+    fn populate_import_aliases(&mut self, program: &Program) {
+        self.import_aliases.clear();
+        for decl in &program.declarations {
+            if let Decl::Import(import) = &decl.node {
+                if let Some(alias) = &import.alias {
+                    self.import_aliases.insert(alias.clone(), import.path.clone());
+                }
+            }
+        }
+    }
+
+    fn is_same_or_subclass_of(&self, class_name: &str, ancestor: &str) -> bool {
+        if class_name == ancestor {
+            return true;
+        }
+
+        let mut current = class_name;
+        let mut depth = 0usize;
+        while depth < 64 {
+            let Some(info) = self.classes.get(current) else {
+                return false;
+            };
+            let Some(parent) = &info.extends else {
+                return false;
+            };
+            if parent == ancestor {
+                return true;
+            }
+            current = parent;
+            depth += 1;
+        }
+        false
+    }
+
+    fn class_implements_interface(&self, class_name: &str, interface_name: &str) -> bool {
+        let mut current = class_name;
+        let mut depth = 0usize;
+        while depth < 64 {
+            let Some(info) = self.classes.get(current) else {
+                return false;
+            };
+
+            if info
+                .implements
+                .iter()
+                .any(|i| i == interface_name || self.interface_extends(i, interface_name))
+            {
+                return true;
+            }
+
+            let Some(parent) = &info.extends else {
+                return false;
+            };
+            current = parent;
+            depth += 1;
+        }
+        false
+    }
+
+    fn interface_extends(&self, interface_name: &str, target: &str) -> bool {
+        if interface_name == target {
+            return true;
+        }
+        let mut stack = vec![interface_name.to_string()];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(name) = stack.pop() {
+            if !visited.insert(name.clone()) {
+                continue;
+            }
+            if name == target {
+                return true;
+            }
+            if let Some(info) = self.interfaces.get(&name) {
+                for parent in &info.extends {
+                    stack.push(parent.clone());
+                }
+            }
+        }
+        false
+    }
+
+    fn collect_interface_methods(
+        &self,
+        interface_name: &str,
+        out: &mut HashMap<String, FuncSig>,
+        visited: &mut std::collections::HashSet<String>,
+    ) {
+        if !visited.insert(interface_name.to_string()) {
+            return;
+        }
+        let Some(info) = self.interfaces.get(interface_name) else {
+            return;
+        };
+        for parent in &info.extends {
+            self.collect_interface_methods(parent, out, visited);
+        }
+        for (name, sig) in &info.methods {
+            out.insert(name.clone(), sig.clone());
+        }
+    }
+
+    fn signatures_compatible(&self, expected: &FuncSig, actual: &FuncSig) -> bool {
+        if expected.params.len() != actual.params.len() {
+            return false;
+        }
+        for ((_, e), (_, a)) in expected.params.iter().zip(actual.params.iter()) {
+            if !self.types_compatible(e, a) {
+                return false;
+            }
+        }
+        self.types_compatible(&expected.return_type, &actual.return_type)
+    }
+
+    fn lookup_class_method(
+        &self,
+        class_name: &str,
+        method_name: &str,
+    ) -> Option<(String, FuncSig, Visibility)> {
+        let mut current = class_name.to_string();
+        let mut depth = 0usize;
+        while depth < 64 {
+            let class = self.classes.get(&current)?;
+            if let Some(sig) = class.methods.get(method_name) {
+                let vis = class
+                    .method_visibilities
+                    .get(method_name)
+                    .copied()
+                    .unwrap_or(Visibility::Private);
+                return Some((current, sig.clone(), vis));
+            }
+            match &class.extends {
+                Some(parent) => current = parent.clone(),
+                None => break,
+            }
+            depth += 1;
+        }
+        None
+    }
+
+    fn lookup_class_field(
+        &self,
+        class_name: &str,
+        field_name: &str,
+    ) -> Option<(String, ResolvedType, bool, Visibility)> {
+        let mut current = class_name.to_string();
+        let mut depth = 0usize;
+        while depth < 64 {
+            let class = self.classes.get(&current)?;
+            if let Some((ty, mutable, visibility)) = class.fields.get(field_name) {
+                return Some((current, ty.clone(), *mutable, *visibility));
+            }
+            match &class.extends {
+                Some(parent) => current = parent.clone(),
+                None => break,
+            }
+            depth += 1;
+        }
+        None
+    }
+
+    fn check_member_visibility(
+        &mut self,
+        owner_class: &str,
+        visibility: Visibility,
+        member_kind: &str,
+        member_name: &str,
+        span: Span,
+    ) {
+        match visibility {
+            Visibility::Public => {}
+            Visibility::Private => {
+                let allowed = self
+                    .current_class
+                    .as_ref()
+                    .map(|c| c == owner_class)
+                    .unwrap_or(false);
+                if !allowed {
+                    self.error(
+                        format!(
+                            "{} '{}' is private to class '{}'",
+                            member_kind, member_name, owner_class
+                        ),
+                        span,
+                    );
+                }
+            }
+            Visibility::Protected => {
+                let allowed = self
+                    .current_class
+                    .as_ref()
+                    .map(|c| self.is_same_or_subclass_of(c, owner_class))
+                    .unwrap_or(false);
+                if !allowed {
+                    self.error(
+                        format!(
+                            "{} '{}' is protected in class '{}'",
+                            member_kind, member_name, owner_class
+                        ),
+                        span,
+                    );
+                }
+            }
+        }
+    }
+
     /// Run type checking on a program
     pub fn check(&mut self, program: &Program) -> Result<(), Vec<TypeError>> {
+        self.populate_import_aliases(program);
         // First pass: collect all declarations
         self.collect_declarations(program);
+        for (name, iface) in self.interfaces.clone() {
+            for parent in iface.extends {
+                if !self.interfaces.contains_key(&parent) {
+                    self.error(
+                        format!("Interface '{}' extends unknown interface '{}'", name, parent),
+                        iface.span.clone(),
+                    );
+                }
+            }
+        }
         // Infer effects for non-annotated call graph nodes
         self.infer_effects(program);
 
@@ -781,6 +1040,7 @@ impl TypeChecker {
     fn collect_declarations(&mut self, program: &Program) {
         for decl in &program.declarations {
             match &decl.node {
+                Decl::Import(_) => {}
                 Decl::Function(func) => {
                     self.validate_effect_attributes(
                         &func.attributes,
@@ -820,11 +1080,12 @@ impl TypeChecker {
                     for field in &class.fields {
                         fields.insert(
                             field.name.clone(),
-                            (self.resolve_type(&field.ty), field.mutable),
+                            (self.resolve_type(&field.ty), field.mutable, field.visibility),
                         );
                     }
 
                     let mut methods = HashMap::new();
+                    let mut method_visibilities = HashMap::new();
                     for method in &class.methods {
                         self.validate_effect_attributes(
                             &method.attributes,
@@ -858,6 +1119,7 @@ impl TypeChecker {
                                 span: decl.span.clone(),
                             },
                         );
+                        method_visibilities.insert(method.name.clone(), method.visibility);
                     }
 
                     let constructor = class.constructor.as_ref().map(|c| {
@@ -872,7 +1134,42 @@ impl TypeChecker {
                         ClassInfo {
                             fields,
                             methods,
+                            method_visibilities,
                             constructor,
+                            extends: class.extends.clone(),
+                            implements: class.implements.clone(),
+                            span: decl.span.clone(),
+                        },
+                    );
+                }
+                Decl::Interface(interface) => {
+                    let mut methods = HashMap::new();
+                    for method in &interface.methods {
+                        let params: Vec<(String, ResolvedType)> = method
+                            .params
+                            .iter()
+                            .map(|p| (p.name.clone(), self.resolve_type(&p.ty)))
+                            .collect();
+                        methods.insert(
+                            method.name.clone(),
+                            FuncSig {
+                                params,
+                                return_type: self.resolve_type(&method.return_type),
+                                is_variadic: false,
+                                is_extern: false,
+                                effects: Vec::new(),
+                                is_pure: false,
+                                allow_any: false,
+                                has_explicit_effects: false,
+                                span: decl.span.clone(),
+                            },
+                        );
+                    }
+                    self.interfaces.insert(
+                        interface.name.clone(),
+                        InterfaceInfo {
+                            methods,
+                            extends: interface.extends.clone(),
                             span: decl.span.clone(),
                         },
                     );
@@ -937,7 +1234,6 @@ impl TypeChecker {
                         }
                     }
                 }
-                _ => {}
             }
         }
     }
@@ -950,6 +1246,7 @@ impl TypeChecker {
                 self.check_function(func, span, key.as_deref());
             }
             Decl::Class(class) => self.check_class(class, span),
+            Decl::Interface(interface) => self.check_interface(interface, span),
             Decl::Module(module) => {
                 let next_prefix = if let Some(prefix) = module_prefix {
                     format!("{}__{}", prefix, module.name)
@@ -965,6 +1262,31 @@ impl TypeChecker {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn check_interface(&mut self, interface: &InterfaceDecl, _span: Span) {
+        for method in &interface.methods {
+            let Some(body) = &method.default_impl else {
+                continue;
+            };
+            self.enter_scope();
+            let saved_effects = std::mem::take(&mut self.current_effects);
+            let saved_pure = self.current_is_pure;
+            let saved_any = self.current_allow_any;
+            self.current_allow_any = true;
+            self.current_is_pure = false;
+            for param in &method.params {
+                let ty = self.resolve_type(&param.ty);
+                self.declare_variable(&param.name, ty, param.mutable, 0..0);
+            }
+            self.current_return_type = Some(self.resolve_type(&method.return_type));
+            self.check_block(body);
+            self.current_return_type = None;
+            self.current_effects = saved_effects;
+            self.current_is_pure = saved_pure;
+            self.current_allow_any = saved_any;
+            self.exit_scope();
         }
     }
 
@@ -1019,13 +1341,77 @@ impl TypeChecker {
     }
 
     /// Check a class
-    fn check_class(&mut self, class: &ClassDecl, _span: Span) {
+    fn check_class(&mut self, class: &ClassDecl, span: Span) {
+        if let Some(parent) = &class.extends {
+            if self.interfaces.contains_key(parent) {
+                self.error(
+                    format!("Class '{}' cannot extend interface '{}'", class.name, parent),
+                    span.clone(),
+                );
+            } else if !self.classes.contains_key(parent) {
+                self.error(
+                    format!("Class '{}' extends unknown class '{}'", class.name, parent),
+                    span.clone(),
+                );
+            } else if self.is_same_or_subclass_of(parent, &class.name) {
+                self.error(
+                    format!(
+                        "Inheritance cycle detected: '{}' cannot extend '{}'",
+                        class.name, parent
+                    ),
+                    span.clone(),
+                );
+            }
+        }
+
+        for interface_name in &class.implements {
+            if !self.interfaces.contains_key(interface_name) {
+                self.error(
+                    format!(
+                        "Class '{}' implements unknown interface '{}'",
+                        class.name, interface_name
+                    ),
+                    span.clone(),
+                );
+            }
+        }
+
+        let mut required_methods: HashMap<String, FuncSig> = HashMap::new();
+        let mut visited = std::collections::HashSet::new();
+        for interface_name in &class.implements {
+            self.collect_interface_methods(interface_name, &mut required_methods, &mut visited);
+        }
+        for (method_name, required_sig) in required_methods {
+            let Some((owner, actual_sig, _)) = self.lookup_class_method(&class.name, &method_name)
+            else {
+                self.error(
+                    format!(
+                        "Class '{}' must implement interface method '{}'",
+                        class.name, method_name
+                    ),
+                    span.clone(),
+                );
+                continue;
+            };
+            if !self.signatures_compatible(&required_sig, &actual_sig) {
+                self.error(
+                    format!(
+                        "Method '{}.{}' does not match interface signature",
+                        owner, method_name
+                    ),
+                    actual_sig.span.clone(),
+                );
+            }
+        }
+
         // Check constructor
         if let Some(ctor) = &class.constructor {
             self.enter_scope();
             let saved_effects = std::mem::take(&mut self.current_effects);
             let saved_pure = self.current_is_pure;
             let saved_any = self.current_allow_any;
+            let saved_class = self.current_class.clone();
+            self.current_class = Some(class.name.clone());
             self.current_effects = self
                 .infer_effects_in_block(&ctor.body, Some(&class.name))
                 .into_iter()
@@ -1046,6 +1432,7 @@ impl TypeChecker {
             self.current_effects = saved_effects;
             self.current_is_pure = saved_pure;
             self.current_allow_any = saved_any;
+            self.current_class = saved_class;
             self.exit_scope();
         }
 
@@ -1055,6 +1442,8 @@ impl TypeChecker {
             let saved_effects = std::mem::take(&mut self.current_effects);
             let saved_pure = self.current_is_pure;
             let saved_any = self.current_allow_any;
+            let saved_class = self.current_class.clone();
+            self.current_class = Some(class.name.clone());
             self.current_effects = self
                 .infer_effects_in_block(&dtor.body, Some(&class.name))
                 .into_iter()
@@ -1066,6 +1455,7 @@ impl TypeChecker {
             self.current_effects = saved_effects;
             self.current_is_pure = saved_pure;
             self.current_allow_any = saved_any;
+            self.current_class = saved_class;
             self.exit_scope();
         }
 
@@ -1075,6 +1465,8 @@ impl TypeChecker {
             let saved_effects = std::mem::take(&mut self.current_effects);
             let saved_pure = self.current_is_pure;
             let saved_any = self.current_allow_any;
+            let saved_class = self.current_class.clone();
+            self.current_class = Some(class.name.clone());
             if let Some(class_info) = self.classes.get(&class.name) {
                 if let Some(sig) = class_info.methods.get(&method.name) {
                     self.current_effects = sig.effects.clone();
@@ -1109,6 +1501,7 @@ impl TypeChecker {
             self.current_effects = saved_effects;
             self.current_is_pure = saved_pure;
             self.current_allow_any = saved_any;
+            self.current_class = saved_class;
             self.exit_scope();
         }
     }
@@ -1472,6 +1865,14 @@ impl TypeChecker {
                     }
                 }
 
+                if self.interfaces.contains_key(ty) {
+                    self.error(
+                        format!("Cannot construct interface type '{}'", ty),
+                        span,
+                    );
+                    return ResolvedType::Unknown;
+                }
+
                 // Check if it's a class constructor
                 if let Some(class) = self.classes.get(ty).cloned() {
                     if let Some(ctor_params) = &class.constructor {
@@ -1768,11 +2169,24 @@ impl TypeChecker {
         if let Expr::Field { object, field } = callee {
             // Special handling for static calls (e.g. File.read, Time.now)
             if let Expr::Ident(name) = &object.node {
+                let resolved_module = if let Some(path) = self.import_aliases.get(name) {
+                    match path.as_str() {
+                        "std.math" => "Math".to_string(),
+                        "std.string" => "Str".to_string(),
+                        "std.system" => "System".to_string(),
+                        "std.time" => "Time".to_string(),
+                        "std.args" => "Args".to_string(),
+                        _ => name.clone(),
+                    }
+                } else {
+                    name.clone()
+                };
+
                 if matches!(
-                    name.as_str(),
+                    resolved_module.as_str(),
                     "File" | "Time" | "System" | "Math" | "Str" | "Args"
                 ) {
-                    let builtin_name = format!("{}__{}", name, field);
+                    let builtin_name = format!("{}__{}", resolved_module, field);
                     if let Some(required) = Self::builtin_required_effect(&builtin_name) {
                         self.enforce_required_effect(required, span.clone(), &builtin_name);
                     }
@@ -1781,8 +2195,17 @@ impl TypeChecker {
                     }
                 }
 
+                if resolved_module == "io" {
+                    if let Some(required) = Self::builtin_required_effect(field) {
+                        self.enforce_required_effect(required, span.clone(), field);
+                    }
+                    if let Some(ret) = self.check_builtin_call(field, args, span.clone()) {
+                        return ret;
+                    }
+                }
+
                 // Enum variant constructor call: `Enum.Variant(...)`
-                if let Some(enum_info) = self.enums.get(name).cloned() {
+                if let Some(enum_info) = self.enums.get(&resolved_module).cloned() {
                     if let Some(field_types) = enum_info.variants.get(field) {
                         if args.len() != field_types.len() {
                             self.error(
@@ -1809,12 +2232,12 @@ impl TypeChecker {
                                 }
                             }
                         }
-                        return ResolvedType::Class(name.clone());
+                        return ResolvedType::Class(resolved_module.clone());
                     }
                 }
 
                 // Module dot syntax: `Module.func(...)` -> `Module__func(...)`
-                let mangled = format!("{}__{}", name, field);
+                let mangled = format!("{}__{}", resolved_module, field);
                 if let Some(sig) = self.functions.get(&mangled).cloned() {
                     self.enforce_call_effects(&sig, span.clone(), &mangled);
                     let expected = sig.params.len();
@@ -2565,9 +2988,8 @@ impl TypeChecker {
                 }
             },
             ResolvedType::Class(name) => {
-                if let Some(class) = self.classes.get(name).cloned() {
-                    if let Some(sig) = class.methods.get(method) {
-                        self.enforce_call_effects(sig, span.clone(), method);
+                if let Some(interface) = self.interfaces.get(name).cloned() {
+                    if let Some(sig) = interface.methods.get(method) {
                         if args.len() != sig.params.len() {
                             self.error(
                                 format!(
@@ -2594,11 +3016,41 @@ impl TypeChecker {
                         sig.return_type.clone()
                     } else {
                         self.error(
-                            format!("Unknown method '{}' on class '{}'", method, name),
+                            format!("Unknown method '{}' on interface '{}'", method, name),
                             span,
                         );
                         ResolvedType::Unknown
                     }
+                } else if let Some((owner, sig, visibility)) = self.lookup_class_method(name, method)
+                {
+                    self.check_member_visibility(
+                        &owner,
+                        visibility,
+                        "Method",
+                        method,
+                        span.clone(),
+                    );
+                    self.enforce_call_effects(&sig, span.clone(), method);
+                    if args.len() != sig.params.len() {
+                        self.error(
+                            format!("Method '{}' expects {} arguments", method, sig.params.len()),
+                            span,
+                        );
+                    } else {
+                        for (arg, (_, param_type)) in args.iter().zip(sig.params.iter()) {
+                            let arg_type = self.check_expr(&arg.node, arg.span.clone());
+                            if !self.types_compatible(param_type, &arg_type) {
+                                self.error(
+                                    format!(
+                                        "Argument type mismatch: expected {}, got {}",
+                                        param_type, arg_type
+                                    ),
+                                    arg.span.clone(),
+                                );
+                            }
+                        }
+                    }
+                    sig.return_type
                 } else {
                     self.error(format!("Unknown class: {}", name), span);
                     ResolvedType::Unknown
@@ -2678,10 +3130,17 @@ impl TypeChecker {
     ) -> ResolvedType {
         match obj_type {
             ResolvedType::Class(name) => {
-                if let Some(class) = self.classes.get(name) {
-                    if let Some((field_type, _)) = class.fields.get(field) {
-                        return field_type.clone();
-                    }
+                if self.interfaces.contains_key(name) {
+                    self.error(
+                        format!("Interfaces do not expose fields ('{}')", field),
+                        span,
+                    );
+                    return ResolvedType::Unknown;
+                }
+                if let Some((owner, field_type, _, visibility)) = self.lookup_class_field(name, field)
+                {
+                    self.check_member_visibility(&owner, visibility, "Field", field, span.clone());
+                    return field_type;
                 }
                 self.error(
                     format!("Unknown field '{}' on class '{}'", field, name),
@@ -2899,6 +3358,22 @@ impl TypeChecker {
             return true;
         }
 
+        // Class compatibility:
+        // - exact class already handled above
+        // - subclass is compatible with base class
+        // - class implementing interface is compatible with interface type
+        if let (ResolvedType::Class(expected_name), ResolvedType::Class(actual_name)) =
+            (expected, actual)
+        {
+            if self.interfaces.contains_key(expected_name) {
+                return self.class_implements_interface(actual_name, expected_name)
+                    || self.interface_extends(actual_name, expected_name);
+            }
+            if self.classes.contains_key(expected_name) && self.classes.contains_key(actual_name) {
+                return self.is_same_or_subclass_of(actual_name, expected_name);
+            }
+        }
+
         // Generic type compatibility
         match (expected, actual) {
             (ResolvedType::Ref(e), ResolvedType::Ref(a)) => self.types_compatible(e, a),
@@ -3074,9 +3549,109 @@ impl TypeChecker {
     }
 
     /// Report an error with hint
-    fn error_with_hint(&mut self, message: String, span: Span, hint: String) {
+fn error_with_hint(&mut self, message: String, span: Span, hint: String) {
         self.errors
             .push(TypeError::new(message, span).with_hint(hint));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::tokenize;
+    use crate::parser::Parser;
+
+    fn check_source(source: &str) -> Result<(), Vec<TypeError>> {
+        let tokens = tokenize(source).expect("tokenize");
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse_program().expect("parse");
+        let mut checker = TypeChecker::new(source.to_string());
+        checker.check(&program)
+    }
+
+    #[test]
+    fn rejects_private_member_access_from_outside_class() {
+        let src = r#"
+            class Secret {
+                private value: Integer;
+                constructor(v: Integer) { this.value = v; }
+                private function getV(): Integer { return this.value; }
+            }
+            function main(): Integer {
+                s: Secret = Secret(1);
+                x: Integer = s.value;
+                y: Integer = s.getV();
+                return x + y;
+            }
+        "#;
+        let errors = check_source(src).expect_err("visibility violation should fail");
+        let joined = errors
+            .iter()
+            .map(|e| e.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("private"), "{joined}");
+    }
+
+    #[test]
+    fn supports_inherited_method_lookup() {
+        let src = r#"
+            class Base {
+                public function greet(): Integer { return 7; }
+            }
+            class Child extends Base {
+                constructor() {}
+            }
+            function main(): Integer {
+                c: Child = Child();
+                return c.greet();
+            }
+        "#;
+        check_source(src).expect("inherited method should typecheck");
+    }
+
+    #[test]
+    fn enforces_interface_contracts() {
+        let src = r#"
+            interface Printable {
+                function print_me(): None;
+            }
+            class Book implements Printable {
+                constructor() {}
+                function other(): None { return None; }
+            }
+            function main(): Integer { return 0; }
+        "#;
+        let errors = check_source(src).expect_err("missing interface method should fail");
+        let joined = errors
+            .iter()
+            .map(|e| e.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("must implement interface method"), "{joined}");
+    }
+
+    #[test]
+    fn allows_interface_typed_parameters() {
+        let src = r#"
+            interface Printable {
+                function print_me(): None;
+            }
+            class Book implements Printable {
+                constructor() {}
+                function print_me(): None { return None; }
+            }
+            function show(item: Printable): None {
+                item.print_me();
+                return None;
+            }
+            function main(): Integer {
+                b: Book = Book();
+                show(b);
+                return 0;
+            }
+        "#;
+        check_source(src).expect("interface-typed calls should typecheck");
     }
 }
 

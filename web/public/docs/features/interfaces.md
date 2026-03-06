@@ -12,26 +12,32 @@ interface Printable {
 
 ## Implementation
 
-Classes implement interfaces explicitly.
+Classes implement interfaces explicitly via `implements`. The compiler validates that required methods exist with compatible signatures.
 
 ```apex
-class Book {
+class Book implements Printable {
     title: String;
     
     constructor(title: String) {
         this.title = title;
     }
     
-    public function print_me(): None {
+    function print_me(): None {
         println("Book: {this.title}");
         return None;
     }
 }
-// Note: Explicit 'implements' syntax might vary based on latest parser version, 
-// usually implementing the matching methods is sufficient or uses `implements` keyword.
 ```
 
-(Note: Check `examples/07_interfaces.apex` for exact syntax. Based on `README.md`, the implementation is implicit or integrated into the class definition without a specific keyword, just matching signatures).
+## Interface Inheritance
+
+Interfaces can extend other interfaces.
+
+```apex
+interface Named extends Printable {
+    function get_name(): String;
+}
+```
 
 ## Polymorphism
 
@@ -43,3 +49,5 @@ function display(item: Printable): None {
     return None;
 }
 ```
+
+See `examples/37_interfaces_contracts.apex` for a full contract + interface-typed-parameter example.

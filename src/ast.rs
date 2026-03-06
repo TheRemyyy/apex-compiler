@@ -102,6 +102,7 @@ pub struct ModuleDecl {
 #[derive(Debug, Clone)]
 pub struct ImportDecl {
     pub path: String,
+    pub alias: Option<String>,
 }
 
 /// Function declaration

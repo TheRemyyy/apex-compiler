@@ -1,0 +1,14 @@
+// Test 38: Import aliases
+// Tests: import ... as alias for std modules
+
+import std.math as math;
+import std.string as str;
+import std.io as io;
+
+function main(): None {
+    io.println("=== Import Aliases ===");
+    value: Integer = math.abs(-42);
+    text: String = str.upper("apex");
+    io.println("abs=${value}, upper=${text}");
+    return None;
+}

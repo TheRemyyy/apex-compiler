@@ -1,0 +1,42 @@
+// Test 37: Interface contracts and interface-typed params
+// Tests: implements enforcement + interface dispatch
+
+import std.io.*;
+
+interface Printable {
+    function print_me(): None;
+}
+
+interface Named extends Printable {
+    function get_name(): String;
+}
+
+class Book implements Named {
+    public title: String;
+
+    constructor(title: String) {
+        this.title = title;
+    }
+
+    public function print_me(): None {
+        println("Book: ${this.title}");
+        return None;
+    }
+
+    public function get_name(): String {
+        return this.title;
+    }
+}
+
+function render(item: Printable): None {
+    item.print_me();
+    return None;
+}
+
+function main(): None {
+    println("=== Interfaces ===");
+    b: Book = Book("Apex Language");
+    println("name=${b.get_name()}");
+    render(b);
+    return None;
+}

@@ -78,7 +78,13 @@ impl Formatter {
 
     fn format_decl(&mut self, decl: &Spanned<Decl>) {
         match &decl.node {
-            Decl::Import(import) => self.push_line(&format!("import {};", import.path)),
+            Decl::Import(import) => {
+                if let Some(alias) = &import.alias {
+                    self.push_line(&format!("import {} as {};", import.path, alias))
+                } else {
+                    self.push_line(&format!("import {};", import.path))
+                }
+            }
             Decl::Function(function) => self.format_function(function),
             Decl::Class(class) => {
                 self.push_line(&format!(
@@ -927,7 +933,7 @@ function main(): None {mut value: Integer=1+2*3;println("hi {value}");return Non
                 "\n",
                 "import std.io.*;\n",
                 "\n",
-                "function main(): None {\n",
+                "public function main(): None {\n",
                 "    mut value: Integer = 1 + 2 * 3;\n",
                 "    println(\"hi {value}\");\n",
                 "    return None;\n",
@@ -942,7 +948,7 @@ function main(): None {mut value: Integer=1+2*3;println("hi {value}");return Non
         let formatted = format_source(source).expect("format succeeds");
 
         assert!(formatted.contains("extern(c, \"puts\") function c_puts(msg: String): Integer;"));
-        assert!(formatted.contains("function id<T>(value: T): T {"));
+        assert!(formatted.contains("public function id<T>(value: T): T {"));
     }
 
     #[test]
