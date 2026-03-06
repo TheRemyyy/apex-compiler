@@ -22,6 +22,7 @@ benchmark/bin/sum_loop_go
 benchmark/results/latest.json
 benchmark/results/latest.md
 benchmark/generated/
+benchmark/__pycache__/
 
 # Web
 web/node_modules

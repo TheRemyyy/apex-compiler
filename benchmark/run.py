@@ -277,6 +277,24 @@ def format_seconds(x: float) -> str:
     return f"{x:.6f}"
 
 
+def clean_compile_artifacts(lang: str, job: Dict) -> None:
+    binary = Path(job["binary"])
+    if binary.exists():
+        binary.unlink()
+
+    if lang == "go":
+        go_cache_dir = job.get("go_cache_dir")
+        if go_cache_dir is not None:
+            cache_path = Path(go_cache_dir)
+            if cache_path.exists():
+                shutil.rmtree(cache_path)
+            cache_path.mkdir(parents=True, exist_ok=True)
+        else:
+            proc = run_cmd(["go", "clean", "-cache"], job["cwd"], env=job.get("env"))
+            if proc.returncode != 0:
+                raise RuntimeError(f"Failed to clean Go cache:\n{proc.stderr}")
+
+
 def build_markdown(result: Dict) -> str:
     lines: List[str] = []
     lines.append("# Benchmark Report")
@@ -287,6 +305,7 @@ def build_markdown(result: Dict) -> str:
     lines.append(f"- Apex opt level: `{result.get('apex_opt_level', 'n/a')}`")
     lines.append(f"- Apex target: `{result.get('apex_target') or 'native/default'}`")
     lines.append(f"- C compiler: `{result.get('c_compiler', 'n/a')}`")
+    lines.append(f"- Compile mode: `{result.get('compile_mode', 'hot')}`")
     lines.append("")
 
     for bench in result["benchmarks"]:
@@ -366,6 +385,12 @@ def main() -> int:
         action="store_true",
         help="Skip building apex compiler with cargo build --release",
     )
+    parser.add_argument(
+        "--compile-mode",
+        choices=["hot", "cold"],
+        default="hot",
+        help="Compile benchmark mode: hot keeps caches/artifacts; cold clears artifacts between timed runs.",
+    )
     args = parser.parse_args()
 
     if args.repeats < 1:
@@ -404,6 +429,7 @@ def main() -> int:
         "apex_opt_level": args.apex_opt_level,
         "apex_target": args.apex_target,
         "c_compiler": c_compiler,
+        "compile_mode": args.compile_mode,
         "benchmarks": [],
     }
 
@@ -520,8 +546,14 @@ def main() -> int:
                         ".",
                     ],
                     "cwd": compile_projects["go"]["project_dir"],
-                    "env": {"GO111MODULE": "on"},
+                    "env": {
+                        "GO111MODULE": "on",
+                        "GOCACHE": str(
+                            compile_projects["go"]["project_dir"] / ".gocache"
+                        ),
+                    },
                     "binary": compile_projects["go"]["binary"],
+                    "go_cache_dir": compile_projects["go"]["project_dir"] / ".gocache",
                 },
             }
 
@@ -530,10 +562,14 @@ def main() -> int:
                 job = compile_jobs[lang]
 
                 for _ in range(args.warmup):
+                    if args.compile_mode == "cold":
+                        clean_compile_artifacts(lang, job)
                     timed_compile(job["cmd"], job["cwd"], env=job["env"])
 
                 samples: List[float] = []
                 for _ in range(args.repeats):
+                    if args.compile_mode == "cold":
+                        clean_compile_artifacts(lang, job)
                     samples.append(timed_compile(job["cmd"], job["cwd"], env=job["env"]))
 
                 checksum = run_checksum(job["binary"], job["cwd"])

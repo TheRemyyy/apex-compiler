@@ -66,6 +66,7 @@ Useful options:
 python3 benchmark/run.py --repeats 7 --warmup 1
 python3 benchmark/run.py --bench prime_count
 python3 benchmark/run.py --bench compile_project_10_files
+python3 benchmark/run.py --bench compile_project_10_files --compile-mode cold
 python3 benchmark/run.py --no-build
 python3 benchmark/run.py --apex-opt-level 3
 python3 benchmark/run.py --apex-target x86_64-unknown-linux-gnu
@@ -82,6 +83,10 @@ Both include:
 - summary stats (min/mean/median/stddev/max)
 - speedups relative to Apex
 - correctness checksums
+
+For `compile_project_10_files`:
+- `--compile-mode hot` keeps compile caches/artifacts between runs (incremental-friendly).
+- `--compile-mode cold` clears artifacts between timed runs for cleaner cold-compile comparison.
 
 ## Notes
 
