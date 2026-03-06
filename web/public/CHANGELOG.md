@@ -150,6 +150,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed lint duplicate-import detection to account for aliases (`path + alias` identity), preventing false `L001` on distinct alias imports.
 - Fixed `apex fix` import cleanup to keep imports with trailing inline comments (`import ...; // comment`) instead of dropping them from rewritten output.
 - Fixed formatter shebang handling so `apex fmt` preserves `#!/usr/bin/env apex` script headers.
+- Fixed parser call/construction disambiguation for uppercase identifiers:
+  - uppercase function calls such as `Foo()` now parse as function calls when `Foo` is a known function symbol (not forced constructor syntax).
+- Fixed import checker traversal for `async { ... }` expression blocks so missing imports used inside async bodies are now reported.
+- Fixed `apex fix` shebang handling (`#!/usr/bin/env apex`) so fix + format pipelines preserve script headers instead of failing lexing after import rewrites.
+- Fixed `match` codegen literal comparison for `String` patterns in both statement and expression forms by using string-content comparison instead of integer-only fallback logic.
+- Fixed `match` Option/Result binding type propagation in codegen:
+  - `Some(v)` / `Ok(v)` / `Error(e)` bindings now inherit the real payload type instead of hardcoded `Integer`/`String`,
+  - removes invalid LLVM IR on boolean payload matches (`br i64`, phi type mismatch).
+- Fixed borrow checker async capture lifetime handling:
+  - non-moved captures used inside `async` blocks are now treated as active borrows after async block creation,
+  - subsequent moves/assignments on captured values are correctly rejected while borrow is active.
   - parser now emits an explicit error (`Visibility modifiers are not supported on constructors/destructors`) instead of accepting misleading syntax.
 - Fixed parser expression coverage by adding `if (...) { ... } else { ... }` expression parsing (`Expr::IfExpr`) in expression contexts.
 - `if` expression parsing now supports both forms:

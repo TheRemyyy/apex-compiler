@@ -4,10 +4,13 @@
 
 use crate::ast::*;
 use crate::lexer::Token;
+use std::collections::HashSet;
 
 pub struct Parser<'src> {
     tokens: Vec<(Token<'src>, std::ops::Range<usize>)>,
     pos: usize,
+    known_functions: HashSet<String>,
+    known_types: HashSet<String>,
 }
 
 #[derive(Debug)]
@@ -29,7 +32,12 @@ type ParseResult<T> = Result<T, ParseError>;
 
 impl<'src> Parser<'src> {
     pub fn new(tokens: Vec<(Token<'src>, std::ops::Range<usize>)>) -> Self {
-        Self { tokens, pos: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            known_functions: HashSet::new(),
+            known_types: HashSet::new(),
+        }
     }
 
     // === Utility Methods ===
@@ -149,7 +157,9 @@ impl<'src> Parser<'src> {
         }
 
         while !self.is_at_end() {
-            declarations.push(self.parse_declaration()?);
+            let decl = self.parse_declaration()?;
+            self.register_declaration_name(&decl.node);
+            declarations.push(decl);
         }
 
         Ok(Program {
@@ -212,6 +222,24 @@ impl<'src> Parser<'src> {
 
         let end = self.current_span().start;
         Ok(Spanned::new(decl, start..end))
+    }
+
+    fn register_declaration_name(&mut self, decl: &Decl) {
+        match decl {
+            Decl::Function(func) => {
+                self.known_functions.insert(func.name.clone());
+            }
+            Decl::Class(class) => {
+                self.known_types.insert(class.name.clone());
+            }
+            Decl::Enum(enum_decl) => {
+                self.known_types.insert(enum_decl.name.clone());
+            }
+            Decl::Interface(interface_decl) => {
+                self.known_types.insert(interface_decl.name.clone());
+            }
+            _ => {}
+        }
     }
 
     /// Parse attributes (e.g., @Test, @Ignore)
@@ -1842,10 +1870,20 @@ impl<'src> Parser<'src> {
                     let args = self.parse_args()?;
                     self.eat(&Token::RParen)?;
 
-                    // Check if name starts with uppercase AND doesn't contain '__' (module prefix)
-                    // Also check if it has generic args (full_name contains '<')
-                    let is_constructor =
-                        (is_type_name && !name.contains("__")) || full_name.contains("<");
+                    // Constructor-call heuristic:
+                    // - explicit generic type calls stay constructor-like (e.g. List<Integer>(...))
+                    // - known functions always parse as calls, even if uppercased
+                    // - known types parse as constructors
+                    // - fallback preserves legacy uppercase constructor behavior
+                    let is_constructor = if full_name.contains('<') {
+                        true
+                    } else if self.known_functions.contains(&name) {
+                        false
+                    } else if self.known_types.contains(&name) {
+                        true
+                    } else {
+                        is_type_name && !name.contains("__")
+                    };
 
                     if is_constructor {
                         Expr::Construct {
@@ -2513,5 +2551,30 @@ mod tests {
             panic!("Expected if expression");
         };
         assert!(matches!(then_branch[0].node, Stmt::Match { .. }));
+    }
+
+    #[test]
+    fn test_uppercase_function_call_is_not_forced_constructor() {
+        let source = r#"
+            function Foo(): Integer { return 7; }
+            function main(): None {
+                x: Integer = Foo();
+                return None;
+            }
+        "#;
+        let program = parse_source(source).expect("Should parse uppercase function call");
+        let Decl::Function(func) = &program.declarations[1].node else {
+            panic!("Expected main function declaration");
+        };
+        let Stmt::Let { value, .. } = &func.body[0].node else {
+            panic!("Expected let statement");
+        };
+        match &value.node {
+            Expr::Call { callee, args } => {
+                assert!(matches!(callee.node, Expr::Ident(ref n) if n == "Foo"));
+                assert!(args.is_empty());
+            }
+            other => panic!("Expected call expression, found {:?}", other),
+        }
     }
 }

@@ -391,6 +391,21 @@ def run_fix_then_check(name: str, source: str) -> None:
         raise SystemExit(f"[fix:{name}] check failed after fix\n{output}")
 
 
+def run_fix_preserves_prefix(name: str, source: str, prefix: str) -> None:
+    path = single_root / f"{name}.apex"
+    path.write_text(source)
+    fix_proc = subprocess.run([compiler, "fix", str(path)], capture_output=True, text=True)
+    if fix_proc.returncode != 0:
+        output = (fix_proc.stdout or "") + (fix_proc.stderr or "")
+        raise SystemExit(f"[fix:{name}] fix failed\n{output}")
+    fixed = path.read_text()
+    if not fixed.startswith(prefix):
+        raise SystemExit(
+            f"[fix:{name}] expected fixed output to start with {prefix!r}\n{fixed}"
+        )
+    run_single(name, fixed, True)
+
+
 def run_single_fmt_roundtrip(
     name: str, source: str, expect_ok: bool, required: list[str] | None = None
 ) -> None:
@@ -631,6 +646,17 @@ function main(): None {
 """,
     True,
 )
+run_single(
+    "uppercase_function_call_parses_as_call",
+    """
+function Foo(): Integer { return 7; }
+function main(): None {
+    x: Integer = Foo();
+    return None;
+}
+""",
+    True,
+)
 run_compile_stdout(
     "match_expression_literal_runtime_selects_correct_arm",
     """
@@ -662,11 +688,102 @@ function main(): None {
 """,
     "7",
 )
+run_compile_stdout(
+    "match_statement_string_runtime_selects_correct_arm",
+    """
+import std.io.*;
+function main(): None {
+    s: String = "b";
+    match (s) {
+        "a" => { println("A"); }
+        "b" => { println("B"); }
+        _ => { println("Z"); }
+    }
+    return None;
+}
+""",
+    "B",
+)
+run_compile_stdout(
+    "match_expression_string_runtime_selects_correct_arm",
+    """
+import std.io.*;
+function main(): None {
+    s: String = "b";
+    x: String = match (s) {
+        "a" => { "A"; },
+        "b" => { "B"; },
+        _ => { "Z"; }
+    };
+    println(x);
+    return None;
+}
+""",
+    "B",
+)
+run_compile(
+    "match_statement_option_boolean_binding_codegen",
+    """
+import std.io.*;
+function main(): None {
+    o: Option<Boolean> = Option<Boolean>();
+    match (o) {
+        Some(v) => { if (v) { println("T"); } }
+        None => { println("N"); }
+    }
+    return None;
+}
+""",
+    True,
+)
+run_compile(
+    "match_expression_option_boolean_binding_codegen",
+    """
+import std.io.*;
+function main(): None {
+    o: Option<Boolean> = Option<Boolean>();
+    x: Boolean = match (o) {
+        Some(v) => { v; },
+        None => { false; }
+    };
+    println(to_string(x));
+    return None;
+}
+""",
+    True,
+)
+run_compile(
+    "match_expression_result_boolean_binding_codegen",
+    """
+import std.io.*;
+function main(): None {
+    r: Result<Boolean, String> = Result<Boolean, String>();
+    x: Boolean = match (r) {
+        Ok(v) => { v; },
+        Error(e) => { false; }
+    };
+    println(to_string(x));
+    return None;
+}
+""",
+    True,
+)
 run_single(
     "if_expression_condition_checks_missing_import",
     """
 function main(): None {
     x: Integer = if (Math.abs(-1.0) > 0.0) { 1; } else { 2; };
+    return None;
+}
+""",
+    False,
+    ["import std.math.*;"],
+)
+run_single(
+    "async_block_checks_missing_import",
+    """
+function main(): None {
+    t: Task<Integer> = async { return Math.abs(-1); };
     return None;
 }
 """,
@@ -745,6 +862,14 @@ function main(): None {
 }
 """,
 )
+run_fix_preserves_prefix(
+    "fix_preserves_shebang_prefix",
+    """#!/usr/bin/env apex
+import std.io.*;
+function main(): None { println("ok"); return None; }
+""",
+    "#!/usr/bin/env apex\n",
+)
 run_single_fmt_roundtrip(
     "fmt_match_expr_statement_roundtrip",
     """
@@ -779,6 +904,37 @@ function main(): None {
 }
 """,
     "#!/usr/bin/env apex\n",
+)
+run_single(
+    "async_borrow_capture_blocks_move",
+    """
+function take_borrow(borrow s: String): None { return None; }
+function consume(owned s: String): None { return None; }
+function main(): None {
+    s: String = "x";
+    t: Task<None> = async { take_borrow(s); return None; };
+    consume(s);
+    return None;
+}
+""",
+    False,
+    ["Cannot move 's' while borrowed"],
+)
+run_single(
+    "async_mut_borrow_capture_blocks_assignment",
+    """
+function main(): None {
+    mut x: Integer = 1;
+    t: Task<None> = async {
+        r: &mut Integer = &mut x;
+        return None;
+    };
+    x += 1;
+    return None;
+}
+""",
+    False,
+    ["Cannot assign to 'x' while"],
 )
 run_single_fmt_roundtrip(
     "fmt_if_expr_statement_roundtrip",

@@ -413,6 +413,11 @@ impl<'a> ImportChecker<'a> {
                     self.check_expr(&msg.node);
                 }
             }
+            Expr::AsyncBlock(body) => {
+                for stmt in body {
+                    self.check_stmt(&stmt.node);
+                }
+            }
             Expr::Try(inner)
             | Expr::Borrow(inner)
             | Expr::MutBorrow(inner)
@@ -646,6 +651,19 @@ function main(): None {
         let source = r#"
 function main(): None {
     require(Math.abs(-1.0) > 0.0, "x");
+    return None;
+}
+"#;
+        let errors = check_import_errors(source);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].function_name, "Math__abs");
+    }
+
+    #[test]
+    fn async_block_checks_missing_imports() {
+        let source = r#"
+function main(): None {
+    t: Task<Integer> = async { return Math.abs(-1); };
     return None;
 }
 "#;

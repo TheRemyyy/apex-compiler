@@ -457,10 +457,19 @@ fn check_shadowed_in_block(
 }
 
 fn apply_safe_import_fixes(source: &str, program: &Program) -> String {
+    let shebang = source
+        .lines()
+        .next()
+        .filter(|line| line.starts_with("#!"))
+        .map(ToString::to_string);
+
     let mut imports = Vec::new();
     let mut body_lines = Vec::new();
 
     for line in source.lines() {
+        if shebang.as_ref().is_some_and(|s| s == line) {
+            continue;
+        }
         let trimmed = line.trim();
         let import_prefix = trimmed.split("//").next().unwrap_or("").trim_end();
         if import_prefix.starts_with("import ") && import_prefix.ends_with(';') {
@@ -483,6 +492,13 @@ fn apply_safe_import_fixes(source: &str, program: &Program) -> String {
     imports.dedup();
 
     let mut output = String::new();
+    if let Some(shebang) = shebang {
+        output.push_str(&shebang);
+        output.push('\n');
+        if !imports.is_empty() || package_line.is_some() {
+            output.push('\n');
+        }
+    }
     if let Some(package_line) = package_line {
         output.push_str(&package_line);
         output.push_str("\n\n");
@@ -908,5 +924,17 @@ function main(): None {
         let fixed = result.fixed_source.expect("fixed source");
         assert!(fixed.contains("import std.string.*;"));
         assert!(fixed.contains("import std.io.*;"));
+    }
+
+    #[test]
+    fn fix_preserves_shebang_line() {
+        let source = r#"#!/usr/bin/env apex
+import std.string.*;
+import std.io.*;
+function main(): None { return None; }
+"#;
+        let result = lint_source(source, true).expect("lint succeeds");
+        let fixed = result.fixed_source.expect("fixed source");
+        assert!(fixed.starts_with("#!/usr/bin/env apex\n"));
     }
 }

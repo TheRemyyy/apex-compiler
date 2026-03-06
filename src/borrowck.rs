@@ -10,7 +10,7 @@
 
 use crate::ast::*;
 use crate::stdlib::StdLib;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Borrow checking error
 #[derive(Debug, Clone)]
@@ -746,11 +746,40 @@ impl BorrowChecker {
             }
 
             Expr::AsyncBlock(body) => {
+                // Async blocks capture from outer scope. Non-moved captures must
+                // keep a borrow active after async block creation.
+                let local_declared = Self::collect_declared_names_in_block(body);
+                let mut free_idents = Vec::new();
+                for stmt in body {
+                    Self::collect_free_idents_stmt(&stmt.node, &local_declared, &mut free_idents);
+                }
+                let mut seen = HashSet::new();
+                free_idents.retain(|name| seen.insert(name.clone()));
+
+                let capture_moves: HashMap<String, bool> = free_idents
+                    .iter()
+                    .map(|ident| {
+                        let moved = body
+                            .iter()
+                            .any(|stmt| self.stmt_moves_ident(&stmt.node, ident));
+                        (ident.clone(), moved)
+                    })
+                    .collect();
+
                 self.enter_scope();
                 for stmt in body {
                     self.check_stmt(&stmt.node, stmt.span.clone());
                 }
                 self.exit_scope();
+
+                for ident in free_idents {
+                    if self.get_var(&ident).is_none() {
+                        continue;
+                    }
+                    if !capture_moves.get(&ident).copied().unwrap_or(false) {
+                        self.create_borrow(&ident, false, span.clone());
+                    }
+                }
             }
 
             Expr::Require { condition, message } => {
@@ -1327,6 +1356,74 @@ impl BorrowChecker {
                 ParamMode::BorrowMut => self.create_borrow(name, true, span.clone()),
                 ParamMode::Owned => {}
             }
+        }
+    }
+
+    fn collect_declared_names_in_block(block: &[Spanned<Stmt>]) -> Vec<String> {
+        let mut names = HashSet::new();
+        for stmt in block {
+            Self::collect_declared_names_stmt(&stmt.node, &mut names);
+        }
+        names.into_iter().collect()
+    }
+
+    fn collect_declared_names_stmt(stmt: &Stmt, out: &mut HashSet<String>) {
+        match stmt {
+            Stmt::Let { name, .. } => {
+                out.insert(name.clone());
+            }
+            Stmt::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                for stmt in then_block {
+                    Self::collect_declared_names_stmt(&stmt.node, out);
+                }
+                if let Some(else_stmts) = else_block {
+                    for stmt in else_stmts {
+                        Self::collect_declared_names_stmt(&stmt.node, out);
+                    }
+                }
+            }
+            Stmt::While { body, .. } => {
+                for stmt in body {
+                    Self::collect_declared_names_stmt(&stmt.node, out);
+                }
+            }
+            Stmt::For { var, body, .. } => {
+                out.insert(var.clone());
+                for stmt in body {
+                    Self::collect_declared_names_stmt(&stmt.node, out);
+                }
+            }
+            Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    Self::collect_pattern_bindings(&arm.pattern, out);
+                    for stmt in &arm.body {
+                        Self::collect_declared_names_stmt(&stmt.node, out);
+                    }
+                }
+            }
+            Stmt::Expr(_)
+            | Stmt::Return(_)
+            | Stmt::Break
+            | Stmt::Continue
+            | Stmt::Assign { .. } => {}
+        }
+    }
+
+    fn collect_pattern_bindings(pattern: &Pattern, out: &mut HashSet<String>) {
+        match pattern {
+            Pattern::Ident(name) => {
+                out.insert(name.clone());
+            }
+            Pattern::Variant(_, bindings) => {
+                for binding in bindings {
+                    out.insert(binding.clone());
+                }
+            }
+            Pattern::Wildcard | Pattern::Literal(_) => {}
         }
     }
 
@@ -2228,6 +2325,44 @@ mod tests {
             }
         "#;
         borrow_ok(source);
+    }
+
+    #[test]
+    fn async_borrow_capture_blocks_move_after_creation() {
+        let source = r#"
+            function take_borrow(borrow s: String): None { return None; }
+            function consume(owned s: String): None { return None; }
+            function main(): None {
+                s: String = "x";
+                t: Task<None> = async { take_borrow(s); return None; };
+                consume(s);
+                return None;
+            }
+        "#;
+        let errors = borrow_errors(source);
+        assert!(errors
+            .iter()
+            .any(|m| m.contains("Cannot move 's' while borrowed")));
+    }
+
+    #[test]
+    fn async_mut_borrow_capture_blocks_assignment_after_creation() {
+        let source = r#"
+            function main(): None {
+                mut x: Integer = 1;
+                t: Task<None> = async {
+                    r: &mut Integer = &mut x;
+                    return None;
+                };
+                x += 1;
+                return None;
+            }
+        "#;
+        let errors = borrow_errors(source);
+        assert!(errors.iter().any(|m| {
+            m.contains("Cannot assign to 'x' while borrowed")
+                || m.contains("Cannot assign to 'x' while mutably borrowed")
+        }));
     }
 
     #[test]

@@ -829,6 +829,14 @@ impl<'ctx> Codegen<'ctx> {
         let merge_bb = self.context.append_basic_block(func, "match.expr.merge");
 
         let match_ty = self.infer_expr_type(expr, &[]);
+        let option_inner_ty = match &match_ty {
+            Type::Option(inner) => Some((**inner).clone()),
+            _ => None,
+        };
+        let result_inner_tys = match &match_ty {
+            Type::Result(ok, err) => Some(((**ok).clone(), (**err).clone())),
+            _ => None,
+        };
         let enum_match_name = match &match_ty {
             Type::Named(name) if self.enums.contains_key(name) => Some(name.clone()),
             _ => None,
@@ -856,6 +864,28 @@ impl<'ctx> Codegen<'ctx> {
                                 val.into_int_value(),
                                 pattern_val.into_int_value(),
                                 "match_expr_lit_eq",
+                            )
+                            .unwrap()
+                    } else if val.is_pointer_value() && pattern_val.is_pointer_value() {
+                        let strcmp = self.get_or_declare_strcmp();
+                        let cmp = self
+                            .builder
+                            .build_call(
+                                strcmp,
+                                &[
+                                    val.into_pointer_value().into(),
+                                    pattern_val.into_pointer_value().into(),
+                                ],
+                                "match_expr_strcmp",
+                            )
+                            .unwrap();
+                        let cmp_val = self.extract_call_value(cmp).into_int_value();
+                        self.builder
+                            .build_int_compare(
+                                IntPredicate::EQ,
+                                cmp_val,
+                                self.context.i32_type().const_int(0, false),
+                                "match_expr_str_eq",
                             )
                             .unwrap()
                     } else {
@@ -950,7 +980,7 @@ impl<'ctx> Codegen<'ctx> {
                             bindings[0].clone(),
                             Variable {
                                 ptr: alloca,
-                                ty: Type::Integer,
+                                ty: option_inner_ty.clone().unwrap_or(Type::Integer),
                             },
                         );
                     } else if variant_name == "Ok" && !bindings.is_empty() {
@@ -967,7 +997,10 @@ impl<'ctx> Codegen<'ctx> {
                             bindings[0].clone(),
                             Variable {
                                 ptr: alloca,
-                                ty: Type::Integer,
+                                ty: result_inner_tys
+                                    .as_ref()
+                                    .map(|(ok, _)| ok.clone())
+                                    .unwrap_or(Type::Integer),
                             },
                         );
                     } else if variant_name == "Error" && !bindings.is_empty() {
@@ -984,7 +1017,10 @@ impl<'ctx> Codegen<'ctx> {
                             bindings[0].clone(),
                             Variable {
                                 ptr: alloca,
-                                ty: Type::String,
+                                ty: result_inner_tys
+                                    .as_ref()
+                                    .map(|(_, err)| err.clone())
+                                    .unwrap_or(Type::String),
                             },
                         );
                     } else if let Some(enum_name) = &enum_match_name {
