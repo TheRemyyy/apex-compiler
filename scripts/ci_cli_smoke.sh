@@ -3,9 +3,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-COMPILER="${REPO_ROOT}/target/release/apex-compiler"
+COMPILER="${APEX_COMPILER_PATH:-${REPO_ROOT}/target/release/apex-compiler}"
 
-cargo build --release >/dev/null
+if [[ "${CI_SKIP_COMPILER_BUILD:-0}" != "1" ]]; then
+  cargo build --release >/dev/null
+fi
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT

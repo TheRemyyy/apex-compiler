@@ -6,6 +6,34 @@ on:
   workflow_dispatch:
 
 jobs:
+  build-release-linux:
+    name: Build Release Binary (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install LLVM
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21 all
+          sudo apt-get install -y llvm-21-dev libpolly-21-dev
+          echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
+
+      - name: Build compiler (release)
+        run: cargo build --release
+
+      - name: Upload compiler artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apex-compiler-linux-release
+          path: target/release/apex-compiler
+
   rust:
     name: Rust Checks
     runs-on: ubuntu-latest
@@ -52,13 +80,11 @@ jobs:
   cli-smoke:
     name: CLI Smoke
     runs-on: ubuntu-latest
+    needs: build-release-linux
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
 
       - name: Install LLVM
         run: |
@@ -68,23 +94,30 @@ jobs:
           sudo apt-get install -y llvm-21-dev libpolly-21-dev
           echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
 
-      - name: Build compiler
-        run: cargo build --release
+      - name: Download compiler artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: apex-compiler-linux-release
+          path: target/release
+
+      - name: Ensure compiler is executable
+        run: chmod +x target/release/apex-compiler
 
       - name: Run CLI smoke coverage
         run: bash scripts/ci_cli_smoke.sh
+        env:
+          CI_SKIP_COMPILER_BUILD: "1"
+          APEX_COMPILER_PATH: target/release/apex-compiler
 
   check-examples:
     name: Check Examples
     runs-on: ubuntu-latest
+    needs: build-release-linux
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Install LLVM
         run: |
           wget https://apt.llvm.org/llvm.sh
@@ -93,17 +126,25 @@ jobs:
           sudo apt-get install -y llvm-21-dev libpolly-21-dev
           echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
 
-      - name: Build compiler
-        run: cargo build --release
+      - name: Download compiler artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: apex-compiler-linux-release
+          path: target/release
+
+      - name: Ensure compiler is executable
+        run: chmod +x target/release/apex-compiler
 
       - name: Check and run all examples
         run: |
+          COMPILER=./target/release/apex-compiler
+
           # Single-file examples
           for file in examples/*.apex; do
             echo "Checking $file..."
-            cargo run --release -- check "$file"
+            "$COMPILER" check "$file"
             echo "Running $file..."
-            cargo run --release -- run "$file"
+            "$COMPILER" run "$file"
           done
           
           # Multi-file projects

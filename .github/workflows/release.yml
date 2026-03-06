@@ -28,6 +28,10 @@ jobs:
             target: aarch64-apple-darwin
             artifact_name: apex-compiler
             asset_name: apex-compiler-macos-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: apex-compiler
+            asset_name: apex-compiler-macos-x64
 
     steps:
       - name: Checkout code
@@ -57,14 +61,13 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $Url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.7/clang+llvm-21.1.7-x86_64-pc-windows-msvc.tar.xz"
-          Invoke-WebRequest -Uri $Url -OutFile "llvm.tar.xz"
-          7z x llvm.tar.xz -y
-          7z x llvm.tar -y
-          $ExtractedFolder = Get-ChildItem -Directory | Where-Object { $_.Name -like "clang+llvm*" }
-          Move-Item -Path $ExtractedFolder.FullName -Destination "C:\LLVM" -Force
-          echo "LLVM_SYS_211_PREFIX=C:/LLVM" >> $env:GITHUB_ENV
-          echo "C:\LLVM\bin" >> $env:GITHUB_PATH
+          choco install llvm --version=21.1.7 -y --no-progress
+          $LLVMPath = "C:\Program Files\LLVM"
+          if (-not (Test-Path $LLVMPath)) {
+            throw "LLVM install path not found: $LLVMPath"
+          }
+          echo "LLVM_SYS_211_PREFIX=C:/Program Files/LLVM" >> $env:GITHUB_ENV
+          echo "$LLVMPath\bin" >> $env:GITHUB_PATH
 
       - name: Install Dependencies (Windows)
         if: matrix.os == 'windows-latest'
@@ -121,13 +124,15 @@ jobs:
             all-artifacts/apex-compiler-windows-x64.exe
             all-artifacts/apex-compiler-linux-x64
             all-artifacts/apex-compiler-macos-arm64
+            all-artifacts/apex-compiler-macos-x64
           body: |
             ## Apex Programming Language Compiler
             
             ### Available Downloads
             - **Windows**: `apex-compiler-windows-x64.exe` (x64 MSVC)
             - **Linux**: `apex-compiler-linux-x64` (x64 GNU)
-            - **macOS**: `apex-compiler-macos-arm64` (Apple Silicon)
+            - **macOS (Apple Silicon)**: `apex-compiler-macos-arm64`
+            - **macOS (Intel)**: `apex-compiler-macos-x64`
             
             ### Installation
             Download the binary for your platform and ensure you have **LLVM 21** installed on your system for linking.

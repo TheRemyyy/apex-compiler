@@ -92,6 +92,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - object-level per-file cache reuse for unchanged files plus relink-only final stage
   - parallel multi-file parse pipeline for lower front-end wall time on larger projects
   - parallel import-check and rewrite/cache resolution pass
+- CI workflow now builds Linux release compiler once and reuses the artifact for CLI smoke and examples jobs, avoiding duplicate release rebuilds.
+- CI examples validation now invokes `target/release/apex-compiler` directly instead of `cargo run --release -- ...`.
+- Release workflow now publishes both macOS architectures (`aarch64-apple-darwin`, `x86_64-apple-darwin`).
+- Windows release workflow LLVM setup now uses Chocolatey (`choco install llvm`) instead of downloading a hardcoded GitHub release tarball URL.
 
 ### 🐛 Fixed
 
