@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{self, Decl, Expr, ImportDecl, Program, Stmt};
+use crate::stdlib::StdLib;
 
 type ImportedMap = HashMap<String, (String, String)>;
 
@@ -917,17 +918,6 @@ fn rewrite_expr_calls_for_project(
     global_module_map: &HashMap<String, String>,
     scopes: &mut Vec<HashSet<String>>,
 ) -> Expr {
-    fn canonical_std_module(module: &str) -> Option<&'static str> {
-        match module {
-            "math" => Some("Math"),
-            "string" => Some("Str"),
-            "system" => Some("System"),
-            "time" => Some("Time"),
-            "fs" => Some("File"),
-            _ => None,
-        }
-    }
-
     match expr {
         Expr::Call { callee, args } => {
             let rewritten_callee = match &callee.node {
@@ -940,15 +930,20 @@ fn rewrite_expr_calls_for_project(
                     };
                     if let Some((ns, symbol_name)) = imported_modules.get(module_alias) {
                         if ns == "std" {
-                            if symbol_name == "io" {
-                                Expr::Ident(field.clone())
-                            } else if let Some(std_obj) = canonical_std_module(symbol_name) {
-                                Expr::Field {
-                                    object: Box::new(ast::Spanned::new(
-                                        Expr::Ident(std_obj.to_string()),
-                                        object.span.clone(),
-                                    )),
-                                    field: field.clone(),
+                            let std_namespace = format!("{}.{}", ns, symbol_name);
+                            if let Some(canonical) =
+                                StdLib::new().resolve_alias_call(&std_namespace, field)
+                            {
+                                if let Some((owner, method)) = canonical.split_once("__") {
+                                    Expr::Field {
+                                        object: Box::new(ast::Spanned::new(
+                                            Expr::Ident(owner.to_string()),
+                                            object.span.clone(),
+                                        )),
+                                        field: method.to_string(),
+                                    }
+                                } else {
+                                    Expr::Ident(canonical)
                                 }
                             } else {
                                 rewrite_expr_calls_for_project(

@@ -102,6 +102,40 @@ impl StdLib {
     pub fn get_functions(&self) -> &HashMap<String, String> {
         &self.functions
     }
+
+    /// Resolve aliased std namespace member call to canonical callable symbol.
+    ///
+    /// Example:
+    /// - ("std.io", "println") -> Some("println")
+    /// - ("std.math", "abs") -> Some("Math__abs")
+    /// - ("std.string", "len") -> Some("Str__len")
+    pub fn resolve_alias_call(&self, namespace_path: &str, member: &str) -> Option<String> {
+        if !namespace_path.starts_with("std.") {
+            return None;
+        }
+
+        // Free-function style (std.io.println -> println)
+        if self
+            .get_namespace(member)
+            .is_some_and(|ns| ns == namespace_path)
+        {
+            return Some(member.to_string());
+        }
+
+        // Module-style (std.math.abs -> Math__abs, std.string.len -> Str__len, ...)
+        let suffix = format!("__{}", member);
+        let mut candidate: Option<String> = None;
+        for (func, ns) in &self.functions {
+            if ns == namespace_path && func.ends_with(&suffix) {
+                if candidate.is_some() {
+                    // Ambiguous mapping; keep conservative.
+                    return None;
+                }
+                candidate = Some(func.clone());
+            }
+        }
+        candidate
+    }
 }
 
 impl Default for StdLib {

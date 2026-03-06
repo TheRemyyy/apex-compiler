@@ -117,10 +117,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - project build/check now runs type checker and borrow checker on the rewritten combined project AST before codegen/link.
 - Improved import-check hint text for module-style stdlib calls (`Math.abs`, `Str.len`, `System.os`) to suggest namespace wildcard imports (`import std.math.*;`) instead of mangled symbol names.
 - Fixed project rewrite handling of stdlib namespace aliases (`import std.io as io;`, `import std.math as math;`) so project-mode `check/build` no longer rewrites aliases into invalid mangled module identifiers.
+- Fixed type checker alias resolution precedence: a local variable named like an import alias (for example `io`) no longer gets treated as stdlib module alias in method-call resolution (`io.println(...)` now correctly errors on non-module variable types).
+- Replaced hardcoded stdlib alias mapping in type checking/project rewrite with stdlib-registry-based resolution:
+  - alias calls now resolve generically from `StdLib` (`std.io`, `std.math`, `std.string`, `std.system`, `std.time`, `std.fs`, ...).
+  - avoids per-namespace/per-module hardcoded branching and reduces risk of future alias regressions when stdlib surface changes.
 - Added import checker regression tests for local-vs-stdlib shadowing and `Math.*` import enforcement paths.
 - Added import checker regression test for aliased stdlib module calls (`std.io`/`std.math`/`std.string` alias flow).
 - Added CLI smoke regression coverage for project-level `apex check` catching cross-file type errors.
 - Added CLI smoke regression coverage for project-mode stdlib alias imports (`io.println`, `math.abs`) in `apex check`.
+- Added type checker regression test for local-variable shadowing over stdlib import aliases.
 - Added borrow checker regression tests for:
   - use-after-move
   - move while borrowed

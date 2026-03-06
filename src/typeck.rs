@@ -9,6 +9,7 @@
 #![allow(dead_code)]
 
 use crate::ast::*;
+use crate::stdlib::StdLib;
 use std::collections::HashMap;
 
 /// Type checking error with source location
@@ -219,6 +220,15 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
+    fn resolve_stdlib_alias_call_name(&self, alias_ident: &str, member: &str) -> Option<String> {
+        // Local bindings must shadow import aliases.
+        if self.lookup_variable(alias_ident).is_some() {
+            return None;
+        }
+        let namespace_path = self.import_aliases.get(alias_ident)?;
+        StdLib::new().resolve_alias_call(namespace_path, member)
+    }
+
     pub fn new(source: String) -> Self {
         let global_scope = Scope {
             variables: HashMap::new(),
@@ -655,36 +665,15 @@ impl TypeChecker {
                     }
                 } else if let Expr::Field { object, field } = &callee.node {
                     if let Expr::Ident(name) = &object.node {
-                        let resolved_owner = if let Some(path) = self.import_aliases.get(name) {
-                            match path.as_str() {
-                                "std.math" => "Math".to_string(),
-                                "std.string" => "Str".to_string(),
-                                "std.system" => "System".to_string(),
-                                "std.time" => "Time".to_string(),
-                                "std.args" => "Args".to_string(),
-                                _ => name.clone(),
-                            }
-                        } else {
-                            name.clone()
-                        };
-
-                        let builtin_name = format!("{}__{}", resolved_owner, field);
+                        let builtin_name = self
+                            .resolve_stdlib_alias_call_name(name, field)
+                            .unwrap_or_else(|| format!("{}__{}", name, field));
                         if let Some(required) = Self::builtin_required_effect(&builtin_name) {
                             out.insert(required.to_string());
                         }
                         if let Some(sig) = self.functions.get(&builtin_name) {
                             for eff in &sig.effects {
                                 out.insert(eff.clone());
-                            }
-                        }
-                        if resolved_owner == "io" {
-                            if let Some(required) = Self::builtin_required_effect(field) {
-                                out.insert(required.to_string());
-                            }
-                            if let Some(sig) = self.functions.get(field) {
-                                for eff in &sig.effects {
-                                    out.insert(eff.clone());
-                                }
                             }
                         }
                         // Instance-style method call; infer conservatively by method name across classes.
@@ -2261,18 +2250,16 @@ impl TypeChecker {
         if let Expr::Field { object, field } = callee {
             // Special handling for static calls (e.g. File.read, Time.now)
             if let Expr::Ident(name) = &object.node {
-                let resolved_module = if let Some(path) = self.import_aliases.get(name) {
-                    match path.as_str() {
-                        "std.math" => "Math".to_string(),
-                        "std.string" => "Str".to_string(),
-                        "std.system" => "System".to_string(),
-                        "std.time" => "Time".to_string(),
-                        "std.args" => "Args".to_string(),
-                        _ => name.clone(),
+                if let Some(canonical) = self.resolve_stdlib_alias_call_name(name, field) {
+                    if let Some(required) = Self::builtin_required_effect(&canonical) {
+                        self.enforce_required_effect(required, span.clone(), &canonical);
                     }
-                } else {
-                    name.clone()
-                };
+                    if let Some(ret) = self.check_builtin_call(&canonical, args, span.clone()) {
+                        return ret;
+                    }
+                }
+
+                let resolved_module = name.clone();
 
                 if matches!(
                     resolved_module.as_str(),
@@ -2283,15 +2270,6 @@ impl TypeChecker {
                         self.enforce_required_effect(required, span.clone(), &builtin_name);
                     }
                     if let Some(ret) = self.check_builtin_call(&builtin_name, args, span.clone()) {
-                        return ret;
-                    }
-                }
-
-                if resolved_module == "io" {
-                    if let Some(required) = Self::builtin_required_effect(field) {
-                        self.enforce_required_effect(required, span.clone(), field);
-                    }
-                    if let Some(ret) = self.check_builtin_call(field, args, span.clone()) {
                         return ret;
                     }
                 }
@@ -3857,6 +3835,29 @@ mod tests {
             }
         "#;
         check_source(src).expect("valid built-in generic constructors should typecheck");
+    }
+
+    #[test]
+    fn local_io_variable_does_not_act_as_stdlib_alias() {
+        let src = r#"
+            import std.io as io;
+            function main(): None {
+                io: Integer = 1;
+                io.println("x");
+                return None;
+            }
+        "#;
+        let errors = check_source(src)
+            .expect_err("local variable named io must not be treated as std.io alias");
+        let joined = errors
+            .iter()
+            .map(|e| e.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("Cannot call method on type Integer"),
+            "{joined}"
+        );
     }
 }
 
