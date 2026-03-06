@@ -65,6 +65,13 @@ pub fn rewrite_program_for_project(
                 imported_classes.insert(import_key.clone(), (ns.clone(), source_name.to_string()));
                 imported_modules.insert(import_key, (ns, source_name.to_string()));
             }
+        } else if namespace_functions.contains_key(&import.path)
+            || namespace_classes.contains_key(&import.path)
+            || namespace_modules.contains_key(&import.path)
+        {
+            // Namespace import without explicit symbol (e.g. `import math_utils as mu`)
+            // should allow `mu.someFunction()` rewrite resolution.
+            imported_modules.insert(import_key, (import.path.clone(), String::new()));
         }
     }
 
@@ -933,7 +940,11 @@ fn rewrite_expr_calls_for_project(
                         unreachable!()
                     };
                     if let Some((ns, symbol_name)) = imported_modules.get(module_alias) {
-                        let namespace_path = format!("{}.{}", ns, symbol_name);
+                        let namespace_path = if symbol_name.is_empty() {
+                            ns.clone()
+                        } else {
+                            format!("{}.{}", ns, symbol_name)
+                        };
                         if let Some(canonical) =
                             stdlib_registry().resolve_alias_call(&namespace_path, field)
                         {
@@ -947,6 +958,48 @@ fn rewrite_expr_calls_for_project(
                                 }
                             } else {
                                 Expr::Ident(canonical)
+                            }
+                        } else if symbol_name.is_empty() {
+                            if let Some(owner_ns) = global_function_map.get(field) {
+                                if owner_ns == ns {
+                                    Expr::Ident(mangle_project_symbol(
+                                        owner_ns,
+                                        entry_namespace,
+                                        field,
+                                    ))
+                                } else {
+                                    rewrite_expr_calls_for_project(
+                                        &callee.node,
+                                        current_namespace,
+                                        entry_namespace,
+                                        local_functions,
+                                        imported_map,
+                                        global_function_map,
+                                        local_classes,
+                                        imported_classes,
+                                        global_class_map,
+                                        local_modules,
+                                        imported_modules,
+                                        global_module_map,
+                                        scopes,
+                                    )
+                                }
+                            } else {
+                                rewrite_expr_calls_for_project(
+                                    &callee.node,
+                                    current_namespace,
+                                    entry_namespace,
+                                    local_functions,
+                                    imported_map,
+                                    global_function_map,
+                                    local_classes,
+                                    imported_classes,
+                                    global_class_map,
+                                    local_modules,
+                                    imported_modules,
+                                    global_module_map,
+                                    scopes,
+                                )
                             }
                         } else {
                             rewrite_expr_calls_for_project(
@@ -1121,7 +1174,11 @@ fn rewrite_expr_calls_for_project(
                             name,
                         ))
                     } else if let Some((ns, symbol_name)) = imported_modules.get(name) {
-                        Expr::Ident(mangle_project_symbol(ns, entry_namespace, symbol_name))
+                        if symbol_name.is_empty() {
+                            Expr::Ident(name.clone())
+                        } else {
+                            Expr::Ident(mangle_project_symbol(ns, entry_namespace, symbol_name))
+                        }
                     } else if let Some(ns) = global_module_map.get(name) {
                         Expr::Ident(mangle_project_symbol(ns, entry_namespace, name))
                     } else {
@@ -1695,6 +1752,75 @@ mod tests {
             panic!("expected module ident");
         };
         assert_eq!(name, "lib__Tools");
+    }
+
+    #[test]
+    fn rewrites_namespace_alias_module_style_calls() {
+        let program = Program {
+            package: Some("app".to_string()),
+            declarations: vec![sp(Decl::Function(ast::FunctionDecl {
+                name: "main".to_string(),
+                generic_params: vec![],
+                params: vec![],
+                is_variadic: false,
+                extern_abi: None,
+                extern_link_name: None,
+                return_type: ast::Type::None,
+                body: vec![sp(Stmt::Expr(sp(Expr::Call {
+                    callee: Box::new(sp(Expr::Field {
+                        object: Box::new(sp(Expr::Ident("mu".to_string()))),
+                        field: "factorial".to_string(),
+                    })),
+                    args: vec![sp(Expr::Literal(ast::Literal::Integer(5)))],
+                    type_args: vec![],
+                })))],
+                is_async: false,
+                is_extern: false,
+                visibility: ast::Visibility::Private,
+                attributes: vec![],
+            }))],
+        };
+
+        let imports = vec![ast::ImportDecl {
+            path: "math_utils".to_string(),
+            alias: Some("mu".to_string()),
+        }];
+        let namespace_functions = HashMap::from([
+            ("app".to_string(), HashSet::from(["main".to_string()])),
+            (
+                "math_utils".to_string(),
+                HashSet::from(["factorial".to_string()]),
+            ),
+        ]);
+        let global_function_map =
+            HashMap::from([("factorial".to_string(), "math_utils".to_string())]);
+
+        let rewritten = rewrite_program_for_project(
+            &program,
+            "app",
+            "app",
+            &namespace_functions,
+            &global_function_map,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &imports,
+        );
+
+        let Decl::Function(func) = &rewritten.declarations[0].node else {
+            panic!("expected function declaration");
+        };
+        let Stmt::Expr(call_stmt) = &func.body[0].node else {
+            panic!("expected expr statement");
+        };
+        let Expr::Call { callee, .. } = &call_stmt.node else {
+            panic!("expected call expression");
+        };
+        let Expr::Ident(name) = &callee.node else {
+            panic!("expected rewritten ident callee");
+        };
+        assert_eq!(name, "math_utils__factorial");
     }
 
     #[test]

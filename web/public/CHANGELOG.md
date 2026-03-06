@@ -56,6 +56,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### ♻️ Changed
 
 - Switched internal stdlib metadata access to a shared lazy registry (`OnceLock`) instead of repeated `StdLib::new()` construction in hot paths (type checker, borrow checker, rewrite, codegen, and import-check entry points).
+- Namespace-only alias imports in project rewrite now resolve module-style calls (`alias.fn(...)`) to project-mangled function symbols.
 - Project object compilation for cache misses now runs in parallel (per-file LLVM context + codegen instance), then links sequentially.
 - LSP rename/references now resolve symbol locations from parsed AST spans instead of raw text search.
 - LSP rename/references now resolve occurrences by cursor-selected lexical binding (scope-aware), preventing cross-scope over-rename of same-name symbols.
@@ -138,6 +139,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed test-runner `main` stripping to avoid false positives on comments mentioning `function main(...)`.
 - Fixed test-runner `main` stripping to support `public/private/protected` and `async` main signatures.
 - Fixed parser string interpolation fallback for unclosed `{...` sequences so they remain literal text instead of being interpreted as expressions.
+- Fixed project namespace alias call lowering so valid imports like `import math_utils as mu; mu.factorial(...)` compile and run in multi-file projects.
+- Fixed import checker diagnostics for unknown namespace aliases so invalid alias usage is reported during import checking (instead of surfacing later as generic undefined-variable/codegen failures).
 - Fixed parser handling of empty interpolation braces (`{}`) to preserve braces as literal text.
 - Fixed parser string interpolation normalization so all-literal interpolation parts are merged back into plain string literals.
 - Fixed import checker alias semantics: namespace alias imports no longer implicitly import all symbols as unqualified calls.

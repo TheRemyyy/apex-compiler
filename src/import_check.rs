@@ -103,6 +103,8 @@ pub struct ImportChecker<'a> {
     wildcard_imports: Vec<String>, // e.g., ["utils.math", "utils.strings"]
     /// Namespace aliases from imports (`import std.io as io`)
     namespace_aliases: HashMap<String, String>,
+    /// Aliases that were declared but do not resolve to a known namespace.
+    invalid_namespace_aliases: HashSet<String>,
     /// Standard library registry
     stdlib: &'a StdLib,
     /// Available function names for suggestions
@@ -123,6 +125,7 @@ impl<'a> ImportChecker<'a> {
         let mut imported_functions = HashSet::new();
         let mut wildcard_imports = Vec::new();
         let mut namespace_aliases = HashMap::new();
+        let mut invalid_namespace_aliases = HashSet::new();
         let known_namespaces: HashSet<String> = function_namespaces
             .values()
             .cloned()
@@ -139,6 +142,8 @@ impl<'a> ImportChecker<'a> {
                 // remains conservative and does not auto-import by alias identifier.
                 if known_namespaces.contains(&path) {
                     namespace_aliases.insert(alias_name, path.clone());
+                } else if !path.contains('.') {
+                    invalid_namespace_aliases.insert(alias_name);
                 }
                 continue;
             }
@@ -180,6 +185,7 @@ impl<'a> ImportChecker<'a> {
             imported_functions,
             wildcard_imports,
             namespace_aliases,
+            invalid_namespace_aliases,
             stdlib,
             available_functions,
             local_functions: HashSet::new(),
@@ -335,6 +341,15 @@ impl<'a> ImportChecker<'a> {
                                     let _ = canonical_name;
                                     handled_alias_call = true;
                                 }
+                            } else if self.invalid_namespace_aliases.contains(module_or_type) {
+                                self.errors.push(ImportError {
+                                    function_name: format!("{}.{}", module_or_type, field),
+                                    defined_in: "<unknown namespace alias>".to_string(),
+                                    used_in: self.current_namespace.clone(),
+                                    span: callee.span.clone(),
+                                    suggestion: None,
+                                });
+                                handled_alias_call = true;
                             }
 
                             if !handled_alias_call {
@@ -693,6 +708,21 @@ function main(): None {
         let errors = check_import_errors(source);
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].function_name, "Math__abs");
+    }
+
+    #[test]
+    fn invalid_namespace_alias_reports_import_error_on_use() {
+        let source = r#"
+import does_not_exist as dne;
+function main(): None {
+    dne.print("x");
+    return None;
+}
+"#;
+        let errors = check_import_errors(source);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].function_name, "dne.print");
+        assert_eq!(errors[0].defined_in, "<unknown namespace alias>");
     }
 
     #[test]
