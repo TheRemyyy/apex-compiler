@@ -224,6 +224,18 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
+    fn flatten_field_chain(expr: &Expr) -> Option<Vec<String>> {
+        match expr {
+            Expr::Ident(name) => Some(vec![name.clone()]),
+            Expr::Field { object, field } => {
+                let mut parts = Self::flatten_field_chain(&object.node)?;
+                parts.push(field.clone());
+                Some(parts)
+            }
+            _ => None,
+        }
+    }
+
     fn resolve_stdlib_alias_call_name(&self, alias_ident: &str, member: &str) -> Option<String> {
         // Local bindings must shadow import aliases.
         if self.lookup_variable(alias_ident).is_some() {
@@ -2847,6 +2859,59 @@ impl TypeChecker {
 
         // 2. Method call
         if let Expr::Field { object, field } = callee {
+            if let Some(path_parts) = Self::flatten_field_chain(callee) {
+                if path_parts.len() >= 2 {
+                    let mangled = path_parts.join("__");
+                    if let Some(sig) = self.functions.get(&mangled).cloned() {
+                        self.enforce_call_effects(&sig, span.clone(), &mangled);
+                        let (inst_params, inst_return_type) = self.instantiate_signature_for_call(
+                            &mangled,
+                            &sig,
+                            type_args,
+                            span.clone(),
+                        );
+                        let expected = inst_params.len();
+                        let bad_arity = if sig.is_variadic {
+                            args.len() < expected
+                        } else {
+                            args.len() != expected
+                        };
+                        if bad_arity {
+                            self.error(
+                                format!(
+                                    "Function '{}' expects {} arguments, got {}",
+                                    mangled,
+                                    if sig.is_variadic {
+                                        format!("at least {}", expected)
+                                    } else {
+                                        expected.to_string()
+                                    },
+                                    args.len()
+                                ),
+                                span.clone(),
+                            );
+                        } else {
+                            for (arg, (_, param_type)) in args.iter().zip(inst_params.iter()) {
+                                let arg_type = self.check_expr(&arg.node, arg.span.clone());
+                                if !self.types_compatible(param_type, &arg_type) {
+                                    self.error(
+                                        format!(
+                                            "Argument type mismatch: expected {}, got {}",
+                                            param_type, arg_type
+                                        ),
+                                        arg.span.clone(),
+                                    );
+                                }
+                            }
+                            if sig.is_variadic && sig.is_extern {
+                                self.check_variadic_ffi_tail_args(&mangled, args, expected);
+                            }
+                        }
+                        return inst_return_type;
+                    }
+                }
+            }
+
             // Special handling for static calls (e.g. File.read, Time.now)
             if let Expr::Ident(name) = &object.node {
                 if let Some(canonical) = self.resolve_stdlib_alias_call_name(name, field) {
@@ -4668,6 +4733,41 @@ mod tests {
             }
         "#;
         check_source(src).expect("explicit generic nested module mangled call should typecheck");
+    }
+
+    #[test]
+    fn nested_module_dot_call_typechecks() {
+        let src = r#"
+            module A {
+                module Y {
+                    function add(a: Integer, b: Integer): Integer { return a + b; }
+                }
+            }
+            function main(): None {
+                y: Integer = A.Y.add(1, 2);
+                return None;
+            }
+        "#;
+        check_source(src).expect("nested module dot call should typecheck");
+    }
+
+    #[test]
+    fn explicit_generic_nested_module_dot_call_typechecks() {
+        let src = r#"
+            module A {
+                module X {
+                    function id<T>(x: T): T { return x; }
+                }
+                module Y {
+                    function add(a: Integer, b: Integer): Integer { return a + b; }
+                }
+            }
+            function main(): None {
+                y: Integer = A.X.id<Integer>(A.Y.add(1, 2));
+                return None;
+            }
+        "#;
+        check_source(src).expect("explicit generic nested module dot call should typecheck");
     }
 
     #[test]

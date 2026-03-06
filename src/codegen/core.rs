@@ -77,6 +77,12 @@ struct AsyncFunctionPlan<'ctx> {
     inner_return_type: Type,
 }
 
+#[derive(Clone)]
+struct GenericTemplate {
+    func: FunctionDecl,
+    span: Span,
+}
+
 /// Code generator
 pub struct Codegen<'ctx> {
     pub context: &'ctx Context,
@@ -99,6 +105,1128 @@ pub struct Codegen<'ctx> {
 }
 
 impl<'ctx> Codegen<'ctx> {
+    fn type_specialization_suffix(ty: &Type) -> String {
+        match ty {
+            Type::Integer => "I64".to_string(),
+            Type::Float => "F64".to_string(),
+            Type::Boolean => "Bool".to_string(),
+            Type::String => "Str".to_string(),
+            Type::Char => "Char".to_string(),
+            Type::None => "None".to_string(),
+            Type::Named(name) => format!("N{}", name.replace("__", "_")),
+            Type::Generic(name, args) => format!(
+                "G{}{}",
+                name.replace("__", "_"),
+                args.iter()
+                    .map(Self::type_specialization_suffix)
+                    .collect::<Vec<_>>()
+                    .join("_")
+            ),
+            Type::Function(params, ret) => format!(
+                "Fn{}To{}",
+                params
+                    .iter()
+                    .map(Self::type_specialization_suffix)
+                    .collect::<Vec<_>>()
+                    .join("_"),
+                Self::type_specialization_suffix(ret)
+            ),
+            Type::Option(inner) => format!("Opt{}", Self::type_specialization_suffix(inner)),
+            Type::Result(ok, err) => format!(
+                "Res{}_{}",
+                Self::type_specialization_suffix(ok),
+                Self::type_specialization_suffix(err)
+            ),
+            Type::List(inner) => format!("List{}", Self::type_specialization_suffix(inner)),
+            Type::Map(k, v) => format!(
+                "Map{}_{}",
+                Self::type_specialization_suffix(k),
+                Self::type_specialization_suffix(v)
+            ),
+            Type::Set(inner) => format!("Set{}", Self::type_specialization_suffix(inner)),
+            Type::Ref(inner) => format!("Ref{}", Self::type_specialization_suffix(inner)),
+            Type::MutRef(inner) => format!("MutRef{}", Self::type_specialization_suffix(inner)),
+            Type::Box(inner) => format!("Box{}", Self::type_specialization_suffix(inner)),
+            Type::Rc(inner) => format!("Rc{}", Self::type_specialization_suffix(inner)),
+            Type::Arc(inner) => format!("Arc{}", Self::type_specialization_suffix(inner)),
+            Type::Ptr(inner) => format!("Ptr{}", Self::type_specialization_suffix(inner)),
+            Type::Task(inner) => format!("Task{}", Self::type_specialization_suffix(inner)),
+            Type::Range(inner) => format!("Range{}", Self::type_specialization_suffix(inner)),
+        }
+    }
+
+    fn substitute_type(ty: &Type, bindings: &HashMap<String, Type>) -> Type {
+        match ty {
+            Type::Named(name) => bindings.get(name).cloned().unwrap_or_else(|| ty.clone()),
+            Type::Generic(name, args) => Type::Generic(
+                name.clone(),
+                args.iter()
+                    .map(|arg| Self::substitute_type(arg, bindings))
+                    .collect(),
+            ),
+            Type::Function(params, ret) => Type::Function(
+                params
+                    .iter()
+                    .map(|p| Self::substitute_type(p, bindings))
+                    .collect(),
+                Box::new(Self::substitute_type(ret, bindings)),
+            ),
+            Type::Option(inner) => Type::Option(Box::new(Self::substitute_type(inner, bindings))),
+            Type::Result(ok, err) => Type::Result(
+                Box::new(Self::substitute_type(ok, bindings)),
+                Box::new(Self::substitute_type(err, bindings)),
+            ),
+            Type::List(inner) => Type::List(Box::new(Self::substitute_type(inner, bindings))),
+            Type::Map(k, v) => Type::Map(
+                Box::new(Self::substitute_type(k, bindings)),
+                Box::new(Self::substitute_type(v, bindings)),
+            ),
+            Type::Set(inner) => Type::Set(Box::new(Self::substitute_type(inner, bindings))),
+            Type::Ref(inner) => Type::Ref(Box::new(Self::substitute_type(inner, bindings))),
+            Type::MutRef(inner) => Type::MutRef(Box::new(Self::substitute_type(inner, bindings))),
+            Type::Box(inner) => Type::Box(Box::new(Self::substitute_type(inner, bindings))),
+            Type::Rc(inner) => Type::Rc(Box::new(Self::substitute_type(inner, bindings))),
+            Type::Arc(inner) => Type::Arc(Box::new(Self::substitute_type(inner, bindings))),
+            Type::Ptr(inner) => Type::Ptr(Box::new(Self::substitute_type(inner, bindings))),
+            Type::Task(inner) => Type::Task(Box::new(Self::substitute_type(inner, bindings))),
+            Type::Range(inner) => Type::Range(Box::new(Self::substitute_type(inner, bindings))),
+            _ => ty.clone(),
+        }
+    }
+
+    fn collect_generic_templates_from_decl(
+        decl: &Spanned<Decl>,
+        module_prefix: Option<&str>,
+        templates: &mut HashMap<String, GenericTemplate>,
+    ) {
+        match &decl.node {
+            Decl::Function(func) => {
+                if func.generic_params.is_empty() {
+                    return;
+                }
+                let key = if let Some(prefix) = module_prefix {
+                    format!("{}__{}", prefix, func.name)
+                } else {
+                    func.name.clone()
+                };
+                templates.insert(
+                    key,
+                    GenericTemplate {
+                        func: func.clone(),
+                        span: decl.span.clone(),
+                    },
+                );
+            }
+            Decl::Module(module) => {
+                let next_prefix = if let Some(prefix) = module_prefix {
+                    format!("{}__{}", prefix, module.name)
+                } else {
+                    module.name.clone()
+                };
+                for inner in &module.declarations {
+                    Self::collect_generic_templates_from_decl(inner, Some(&next_prefix), templates);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn template_key_for_callee(callee: &Expr) -> Option<String> {
+        match callee {
+            Expr::Ident(name) => Some(name.clone()),
+            _ => Self::flatten_field_chain(callee).and_then(|parts| {
+                if parts.len() >= 2 {
+                    Some(parts.join("__"))
+                } else {
+                    None
+                }
+            }),
+        }
+    }
+
+    fn rewrite_stmt_generic_calls(
+        stmt: &Stmt,
+        templates: &HashMap<String, GenericTemplate>,
+        emitted: &mut HashSet<String>,
+        generated: &mut Vec<Spanned<Decl>>,
+    ) -> Result<Stmt> {
+        Ok(match stmt {
+            Stmt::Let {
+                name,
+                ty,
+                value,
+                mutable,
+            } => Stmt::Let {
+                name: name.clone(),
+                ty: ty.clone(),
+                value: Spanned::new(
+                    Self::rewrite_expr_generic_calls(&value.node, templates, emitted, generated)?,
+                    value.span.clone(),
+                ),
+                mutable: *mutable,
+            },
+            Stmt::Assign { target, value } => Stmt::Assign {
+                target: Spanned::new(
+                    Self::rewrite_expr_generic_calls(&target.node, templates, emitted, generated)?,
+                    target.span.clone(),
+                ),
+                value: Spanned::new(
+                    Self::rewrite_expr_generic_calls(&value.node, templates, emitted, generated)?,
+                    value.span.clone(),
+                ),
+            },
+            Stmt::Expr(expr) => Stmt::Expr(Spanned::new(
+                Self::rewrite_expr_generic_calls(&expr.node, templates, emitted, generated)?,
+                expr.span.clone(),
+            )),
+            Stmt::Return(expr) => Stmt::Return(
+                expr.as_ref()
+                    .map(|e| {
+                        Ok(Spanned::new(
+                            Self::rewrite_expr_generic_calls(
+                                &e.node, templates, emitted, generated,
+                            )?,
+                            e.span.clone(),
+                        ))
+                    })
+                    .transpose()?,
+            ),
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            } => Stmt::If {
+                condition: Spanned::new(
+                    Self::rewrite_expr_generic_calls(
+                        &condition.node,
+                        templates,
+                        emitted,
+                        generated,
+                    )?,
+                    condition.span.clone(),
+                ),
+                then_block: then_block
+                    .iter()
+                    .map(|s| {
+                        Ok(Spanned::new(
+                            Self::rewrite_stmt_generic_calls(
+                                &s.node, templates, emitted, generated,
+                            )?,
+                            s.span.clone(),
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+                else_block: else_block
+                    .as_ref()
+                    .map(|blk| {
+                        blk.iter()
+                            .map(|s| {
+                                Ok(Spanned::new(
+                                    Self::rewrite_stmt_generic_calls(
+                                        &s.node, templates, emitted, generated,
+                                    )?,
+                                    s.span.clone(),
+                                ))
+                            })
+                            .collect::<Result<Vec<_>>>()
+                    })
+                    .transpose()?,
+            },
+            Stmt::While { condition, body } => Stmt::While {
+                condition: Spanned::new(
+                    Self::rewrite_expr_generic_calls(
+                        &condition.node,
+                        templates,
+                        emitted,
+                        generated,
+                    )?,
+                    condition.span.clone(),
+                ),
+                body: body
+                    .iter()
+                    .map(|s| {
+                        Ok(Spanned::new(
+                            Self::rewrite_stmt_generic_calls(
+                                &s.node, templates, emitted, generated,
+                            )?,
+                            s.span.clone(),
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            },
+            Stmt::For {
+                var,
+                var_type,
+                iterable,
+                body,
+            } => Stmt::For {
+                var: var.clone(),
+                var_type: var_type.clone(),
+                iterable: Spanned::new(
+                    Self::rewrite_expr_generic_calls(
+                        &iterable.node,
+                        templates,
+                        emitted,
+                        generated,
+                    )?,
+                    iterable.span.clone(),
+                ),
+                body: body
+                    .iter()
+                    .map(|s| {
+                        Ok(Spanned::new(
+                            Self::rewrite_stmt_generic_calls(
+                                &s.node, templates, emitted, generated,
+                            )?,
+                            s.span.clone(),
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            },
+            Stmt::Match { expr, arms } => Stmt::Match {
+                expr: Spanned::new(
+                    Self::rewrite_expr_generic_calls(&expr.node, templates, emitted, generated)?,
+                    expr.span.clone(),
+                ),
+                arms: arms
+                    .iter()
+                    .map(|arm| {
+                        Ok(MatchArm {
+                            pattern: arm.pattern.clone(),
+                            body: arm
+                                .body
+                                .iter()
+                                .map(|s| {
+                                    Ok(Spanned::new(
+                                        Self::rewrite_stmt_generic_calls(
+                                            &s.node, templates, emitted, generated,
+                                        )?,
+                                        s.span.clone(),
+                                    ))
+                                })
+                                .collect::<Result<Vec<_>>>()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            },
+            Stmt::Break => Stmt::Break,
+            Stmt::Continue => Stmt::Continue,
+        })
+    }
+
+    fn substitute_expr_types(expr: &Expr, bindings: &HashMap<String, Type>) -> Expr {
+        match expr {
+            Expr::Call {
+                callee,
+                args,
+                type_args,
+            } => Expr::Call {
+                callee: Box::new(Spanned::new(
+                    Self::substitute_expr_types(&callee.node, bindings),
+                    callee.span.clone(),
+                )),
+                args: args
+                    .iter()
+                    .map(|a| {
+                        Spanned::new(
+                            Self::substitute_expr_types(&a.node, bindings),
+                            a.span.clone(),
+                        )
+                    })
+                    .collect(),
+                type_args: type_args
+                    .iter()
+                    .map(|t| Self::substitute_type(t, bindings))
+                    .collect(),
+            },
+            Expr::Binary { op, left, right } => Expr::Binary {
+                op: *op,
+                left: Box::new(Spanned::new(
+                    Self::substitute_expr_types(&left.node, bindings),
+                    left.span.clone(),
+                )),
+                right: Box::new(Spanned::new(
+                    Self::substitute_expr_types(&right.node, bindings),
+                    right.span.clone(),
+                )),
+            },
+            Expr::Unary { op, expr } => Expr::Unary {
+                op: *op,
+                expr: Box::new(Spanned::new(
+                    Self::substitute_expr_types(&expr.node, bindings),
+                    expr.span.clone(),
+                )),
+            },
+            Expr::Field { object, field } => Expr::Field {
+                object: Box::new(Spanned::new(
+                    Self::substitute_expr_types(&object.node, bindings),
+                    object.span.clone(),
+                )),
+                field: field.clone(),
+            },
+            Expr::Index { object, index } => Expr::Index {
+                object: Box::new(Spanned::new(
+                    Self::substitute_expr_types(&object.node, bindings),
+                    object.span.clone(),
+                )),
+                index: Box::new(Spanned::new(
+                    Self::substitute_expr_types(&index.node, bindings),
+                    index.span.clone(),
+                )),
+            },
+            Expr::Lambda { params, body } => Expr::Lambda {
+                params: params
+                    .iter()
+                    .map(|p| Parameter {
+                        name: p.name.clone(),
+                        ty: Self::substitute_type(&p.ty, bindings),
+                        mutable: p.mutable,
+                        mode: p.mode,
+                    })
+                    .collect(),
+                body: Box::new(Spanned::new(
+                    Self::substitute_expr_types(&body.node, bindings),
+                    body.span.clone(),
+                )),
+            },
+            Expr::StringInterp(parts) => Expr::StringInterp(
+                parts
+                    .iter()
+                    .map(|p| match p {
+                        StringPart::Literal(s) => StringPart::Literal(s.clone()),
+                        StringPart::Expr(e) => StringPart::Expr(Spanned::new(
+                            Self::substitute_expr_types(&e.node, bindings),
+                            e.span.clone(),
+                        )),
+                    })
+                    .collect(),
+            ),
+            Expr::Try(inner) => Expr::Try(Box::new(Spanned::new(
+                Self::substitute_expr_types(&inner.node, bindings),
+                inner.span.clone(),
+            ))),
+            Expr::Borrow(inner) => Expr::Borrow(Box::new(Spanned::new(
+                Self::substitute_expr_types(&inner.node, bindings),
+                inner.span.clone(),
+            ))),
+            Expr::MutBorrow(inner) => Expr::MutBorrow(Box::new(Spanned::new(
+                Self::substitute_expr_types(&inner.node, bindings),
+                inner.span.clone(),
+            ))),
+            Expr::Deref(inner) => Expr::Deref(Box::new(Spanned::new(
+                Self::substitute_expr_types(&inner.node, bindings),
+                inner.span.clone(),
+            ))),
+            Expr::Await(inner) => Expr::Await(Box::new(Spanned::new(
+                Self::substitute_expr_types(&inner.node, bindings),
+                inner.span.clone(),
+            ))),
+            Expr::Require { condition, message } => Expr::Require {
+                condition: Box::new(Spanned::new(
+                    Self::substitute_expr_types(&condition.node, bindings),
+                    condition.span.clone(),
+                )),
+                message: message.as_ref().map(|m| {
+                    Box::new(Spanned::new(
+                        Self::substitute_expr_types(&m.node, bindings),
+                        m.span.clone(),
+                    ))
+                }),
+            },
+            Expr::Range {
+                start,
+                end,
+                inclusive,
+            } => Expr::Range {
+                start: start.as_ref().map(|s| {
+                    Box::new(Spanned::new(
+                        Self::substitute_expr_types(&s.node, bindings),
+                        s.span.clone(),
+                    ))
+                }),
+                end: end.as_ref().map(|e| {
+                    Box::new(Spanned::new(
+                        Self::substitute_expr_types(&e.node, bindings),
+                        e.span.clone(),
+                    ))
+                }),
+                inclusive: *inclusive,
+            },
+            Expr::IfExpr {
+                condition,
+                then_branch,
+                else_branch,
+            } => Expr::IfExpr {
+                condition: Box::new(Spanned::new(
+                    Self::substitute_expr_types(&condition.node, bindings),
+                    condition.span.clone(),
+                )),
+                then_branch: then_branch
+                    .iter()
+                    .map(|s| {
+                        Spanned::new(
+                            Self::substitute_stmt_types(&s.node, bindings),
+                            s.span.clone(),
+                        )
+                    })
+                    .collect(),
+                else_branch: else_branch.as_ref().map(|blk| {
+                    blk.iter()
+                        .map(|s| {
+                            Spanned::new(
+                                Self::substitute_stmt_types(&s.node, bindings),
+                                s.span.clone(),
+                            )
+                        })
+                        .collect()
+                }),
+            },
+            Expr::Block(block) => Expr::Block(
+                block
+                    .iter()
+                    .map(|s| {
+                        Spanned::new(
+                            Self::substitute_stmt_types(&s.node, bindings),
+                            s.span.clone(),
+                        )
+                    })
+                    .collect(),
+            ),
+            Expr::AsyncBlock(block) => Expr::AsyncBlock(
+                block
+                    .iter()
+                    .map(|s| {
+                        Spanned::new(
+                            Self::substitute_stmt_types(&s.node, bindings),
+                            s.span.clone(),
+                        )
+                    })
+                    .collect(),
+            ),
+            Expr::Match { expr, arms } => Expr::Match {
+                expr: Box::new(Spanned::new(
+                    Self::substitute_expr_types(&expr.node, bindings),
+                    expr.span.clone(),
+                )),
+                arms: arms
+                    .iter()
+                    .map(|arm| MatchArm {
+                        pattern: arm.pattern.clone(),
+                        body: arm
+                            .body
+                            .iter()
+                            .map(|s| {
+                                Spanned::new(
+                                    Self::substitute_stmt_types(&s.node, bindings),
+                                    s.span.clone(),
+                                )
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            },
+            _ => expr.clone(),
+        }
+    }
+
+    fn substitute_stmt_types(stmt: &Stmt, bindings: &HashMap<String, Type>) -> Stmt {
+        match stmt {
+            Stmt::Let {
+                name,
+                ty,
+                value,
+                mutable,
+            } => Stmt::Let {
+                name: name.clone(),
+                ty: Self::substitute_type(ty, bindings),
+                value: Spanned::new(
+                    Self::substitute_expr_types(&value.node, bindings),
+                    value.span.clone(),
+                ),
+                mutable: *mutable,
+            },
+            Stmt::Assign { target, value } => Stmt::Assign {
+                target: Spanned::new(
+                    Self::substitute_expr_types(&target.node, bindings),
+                    target.span.clone(),
+                ),
+                value: Spanned::new(
+                    Self::substitute_expr_types(&value.node, bindings),
+                    value.span.clone(),
+                ),
+            },
+            Stmt::Expr(expr) => Stmt::Expr(Spanned::new(
+                Self::substitute_expr_types(&expr.node, bindings),
+                expr.span.clone(),
+            )),
+            Stmt::Return(expr) => Stmt::Return(expr.as_ref().map(|e| {
+                Spanned::new(
+                    Self::substitute_expr_types(&e.node, bindings),
+                    e.span.clone(),
+                )
+            })),
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            } => Stmt::If {
+                condition: Spanned::new(
+                    Self::substitute_expr_types(&condition.node, bindings),
+                    condition.span.clone(),
+                ),
+                then_block: then_block
+                    .iter()
+                    .map(|s| {
+                        Spanned::new(
+                            Self::substitute_stmt_types(&s.node, bindings),
+                            s.span.clone(),
+                        )
+                    })
+                    .collect(),
+                else_block: else_block.as_ref().map(|blk| {
+                    blk.iter()
+                        .map(|s| {
+                            Spanned::new(
+                                Self::substitute_stmt_types(&s.node, bindings),
+                                s.span.clone(),
+                            )
+                        })
+                        .collect()
+                }),
+            },
+            Stmt::While { condition, body } => Stmt::While {
+                condition: Spanned::new(
+                    Self::substitute_expr_types(&condition.node, bindings),
+                    condition.span.clone(),
+                ),
+                body: body
+                    .iter()
+                    .map(|s| {
+                        Spanned::new(
+                            Self::substitute_stmt_types(&s.node, bindings),
+                            s.span.clone(),
+                        )
+                    })
+                    .collect(),
+            },
+            Stmt::For {
+                var,
+                var_type,
+                iterable,
+                body,
+            } => Stmt::For {
+                var: var.clone(),
+                var_type: var_type
+                    .as_ref()
+                    .map(|t| Self::substitute_type(t, bindings)),
+                iterable: Spanned::new(
+                    Self::substitute_expr_types(&iterable.node, bindings),
+                    iterable.span.clone(),
+                ),
+                body: body
+                    .iter()
+                    .map(|s| {
+                        Spanned::new(
+                            Self::substitute_stmt_types(&s.node, bindings),
+                            s.span.clone(),
+                        )
+                    })
+                    .collect(),
+            },
+            Stmt::Match { expr, arms } => Stmt::Match {
+                expr: Spanned::new(
+                    Self::substitute_expr_types(&expr.node, bindings),
+                    expr.span.clone(),
+                ),
+                arms: arms
+                    .iter()
+                    .map(|arm| MatchArm {
+                        pattern: arm.pattern.clone(),
+                        body: arm
+                            .body
+                            .iter()
+                            .map(|s| {
+                                Spanned::new(
+                                    Self::substitute_stmt_types(&s.node, bindings),
+                                    s.span.clone(),
+                                )
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            },
+            Stmt::Break => Stmt::Break,
+            Stmt::Continue => Stmt::Continue,
+        }
+    }
+
+    fn rewrite_expr_generic_calls(
+        expr: &Expr,
+        templates: &HashMap<String, GenericTemplate>,
+        emitted: &mut HashSet<String>,
+        generated: &mut Vec<Spanned<Decl>>,
+    ) -> Result<Expr> {
+        Ok(match expr {
+            Expr::Call {
+                callee,
+                args,
+                type_args,
+            } => {
+                let rewritten_callee = Spanned::new(
+                    Self::rewrite_expr_generic_calls(&callee.node, templates, emitted, generated)?,
+                    callee.span.clone(),
+                );
+                let rewritten_args = args
+                    .iter()
+                    .map(|arg| {
+                        Ok(Spanned::new(
+                            Self::rewrite_expr_generic_calls(
+                                &arg.node, templates, emitted, generated,
+                            )?,
+                            arg.span.clone(),
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                if !type_args.is_empty() {
+                    if let Some(template_key) = Self::template_key_for_callee(&callee.node) {
+                        if let Some(template) = templates.get(&template_key) {
+                            if template.func.generic_params.len() != type_args.len() {
+                                return Ok(Expr::Call {
+                                    callee: Box::new(rewritten_callee),
+                                    args: rewritten_args,
+                                    type_args: type_args.clone(),
+                                });
+                            }
+                            let suffix = type_args
+                                .iter()
+                                .map(Self::type_specialization_suffix)
+                                .collect::<Vec<_>>()
+                                .join("_");
+                            let spec_name = format!("{}__spec__{}", template_key, suffix);
+
+                            if emitted.insert(spec_name.clone()) {
+                                let mut bindings: HashMap<String, Type> = HashMap::new();
+                                for (param, ty) in
+                                    template.func.generic_params.iter().zip(type_args.iter())
+                                {
+                                    bindings.insert(param.name.clone(), ty.clone());
+                                }
+
+                                let mut spec_func = template.func.clone();
+                                spec_func.name = spec_name.clone();
+                                spec_func.generic_params.clear();
+                                for param in &mut spec_func.params {
+                                    param.ty = Self::substitute_type(&param.ty, &bindings);
+                                }
+                                spec_func.return_type =
+                                    Self::substitute_type(&spec_func.return_type, &bindings);
+                                spec_func.body = spec_func
+                                    .body
+                                    .iter()
+                                    .map(|s| {
+                                        Spanned::new(
+                                            Self::substitute_stmt_types(&s.node, &bindings),
+                                            s.span.clone(),
+                                        )
+                                    })
+                                    .collect();
+
+                                let rewritten_body = spec_func
+                                    .body
+                                    .iter()
+                                    .map(|s| {
+                                        Ok(Spanned::new(
+                                            Self::rewrite_stmt_generic_calls(
+                                                &s.node, templates, emitted, generated,
+                                            )?,
+                                            s.span.clone(),
+                                        ))
+                                    })
+                                    .collect::<Result<Vec<_>>>()?;
+                                spec_func.body = rewritten_body;
+                                generated.push(Spanned::new(
+                                    Decl::Function(spec_func),
+                                    template.span.clone(),
+                                ));
+                            }
+
+                            Expr::Call {
+                                callee: Box::new(Spanned::new(
+                                    Expr::Ident(spec_name),
+                                    rewritten_callee.span,
+                                )),
+                                args: rewritten_args,
+                                type_args: Vec::new(),
+                            }
+                        } else {
+                            Expr::Call {
+                                callee: Box::new(rewritten_callee),
+                                args: rewritten_args,
+                                type_args: type_args.clone(),
+                            }
+                        }
+                    } else {
+                        Expr::Call {
+                            callee: Box::new(rewritten_callee),
+                            args: rewritten_args,
+                            type_args: type_args.clone(),
+                        }
+                    }
+                } else {
+                    Expr::Call {
+                        callee: Box::new(rewritten_callee),
+                        args: rewritten_args,
+                        type_args: type_args.clone(),
+                    }
+                }
+            }
+            Expr::Binary { op, left, right } => Expr::Binary {
+                op: *op,
+                left: Box::new(Spanned::new(
+                    Self::rewrite_expr_generic_calls(&left.node, templates, emitted, generated)?,
+                    left.span.clone(),
+                )),
+                right: Box::new(Spanned::new(
+                    Self::rewrite_expr_generic_calls(&right.node, templates, emitted, generated)?,
+                    right.span.clone(),
+                )),
+            },
+            Expr::Unary { op, expr } => Expr::Unary {
+                op: *op,
+                expr: Box::new(Spanned::new(
+                    Self::rewrite_expr_generic_calls(&expr.node, templates, emitted, generated)?,
+                    expr.span.clone(),
+                )),
+            },
+            Expr::Field { object, field } => Expr::Field {
+                object: Box::new(Spanned::new(
+                    Self::rewrite_expr_generic_calls(&object.node, templates, emitted, generated)?,
+                    object.span.clone(),
+                )),
+                field: field.clone(),
+            },
+            Expr::Index { object, index } => Expr::Index {
+                object: Box::new(Spanned::new(
+                    Self::rewrite_expr_generic_calls(&object.node, templates, emitted, generated)?,
+                    object.span.clone(),
+                )),
+                index: Box::new(Spanned::new(
+                    Self::rewrite_expr_generic_calls(&index.node, templates, emitted, generated)?,
+                    index.span.clone(),
+                )),
+            },
+            Expr::Lambda { params, body } => Expr::Lambda {
+                params: params.clone(),
+                body: Box::new(Spanned::new(
+                    Self::rewrite_expr_generic_calls(&body.node, templates, emitted, generated)?,
+                    body.span.clone(),
+                )),
+            },
+            Expr::Match { expr, arms } => Expr::Match {
+                expr: Box::new(Spanned::new(
+                    Self::rewrite_expr_generic_calls(&expr.node, templates, emitted, generated)?,
+                    expr.span.clone(),
+                )),
+                arms: arms
+                    .iter()
+                    .map(|arm| {
+                        Ok(MatchArm {
+                            pattern: arm.pattern.clone(),
+                            body: arm
+                                .body
+                                .iter()
+                                .map(|s| {
+                                    Ok(Spanned::new(
+                                        Self::rewrite_stmt_generic_calls(
+                                            &s.node, templates, emitted, generated,
+                                        )?,
+                                        s.span.clone(),
+                                    ))
+                                })
+                                .collect::<Result<Vec<_>>>()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            },
+            Expr::StringInterp(parts) => Expr::StringInterp(
+                parts
+                    .iter()
+                    .map(|p| match p {
+                        StringPart::Literal(s) => Ok(StringPart::Literal(s.clone())),
+                        StringPart::Expr(e) => Ok(StringPart::Expr(Spanned::new(
+                            Self::rewrite_expr_generic_calls(
+                                &e.node, templates, emitted, generated,
+                            )?,
+                            e.span.clone(),
+                        ))),
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            ),
+            Expr::Try(inner) => Expr::Try(Box::new(Spanned::new(
+                Self::rewrite_expr_generic_calls(&inner.node, templates, emitted, generated)?,
+                inner.span.clone(),
+            ))),
+            Expr::Borrow(inner) => Expr::Borrow(Box::new(Spanned::new(
+                Self::rewrite_expr_generic_calls(&inner.node, templates, emitted, generated)?,
+                inner.span.clone(),
+            ))),
+            Expr::MutBorrow(inner) => Expr::MutBorrow(Box::new(Spanned::new(
+                Self::rewrite_expr_generic_calls(&inner.node, templates, emitted, generated)?,
+                inner.span.clone(),
+            ))),
+            Expr::Deref(inner) => Expr::Deref(Box::new(Spanned::new(
+                Self::rewrite_expr_generic_calls(&inner.node, templates, emitted, generated)?,
+                inner.span.clone(),
+            ))),
+            Expr::Await(inner) => Expr::Await(Box::new(Spanned::new(
+                Self::rewrite_expr_generic_calls(&inner.node, templates, emitted, generated)?,
+                inner.span.clone(),
+            ))),
+            Expr::AsyncBlock(block) => Expr::AsyncBlock(
+                block
+                    .iter()
+                    .map(|s| {
+                        Ok(Spanned::new(
+                            Self::rewrite_stmt_generic_calls(
+                                &s.node, templates, emitted, generated,
+                            )?,
+                            s.span.clone(),
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            ),
+            Expr::Require { condition, message } => Expr::Require {
+                condition: Box::new(Spanned::new(
+                    Self::rewrite_expr_generic_calls(
+                        &condition.node,
+                        templates,
+                        emitted,
+                        generated,
+                    )?,
+                    condition.span.clone(),
+                )),
+                message: message
+                    .as_ref()
+                    .map(|m| {
+                        Ok(Box::new(Spanned::new(
+                            Self::rewrite_expr_generic_calls(
+                                &m.node, templates, emitted, generated,
+                            )?,
+                            m.span.clone(),
+                        )))
+                    })
+                    .transpose()?,
+            },
+            Expr::Range {
+                start,
+                end,
+                inclusive,
+            } => Expr::Range {
+                start: start
+                    .as_ref()
+                    .map(|s| {
+                        Ok(Box::new(Spanned::new(
+                            Self::rewrite_expr_generic_calls(
+                                &s.node, templates, emitted, generated,
+                            )?,
+                            s.span.clone(),
+                        )))
+                    })
+                    .transpose()?,
+                end: end
+                    .as_ref()
+                    .map(|e| {
+                        Ok(Box::new(Spanned::new(
+                            Self::rewrite_expr_generic_calls(
+                                &e.node, templates, emitted, generated,
+                            )?,
+                            e.span.clone(),
+                        )))
+                    })
+                    .transpose()?,
+                inclusive: *inclusive,
+            },
+            Expr::IfExpr {
+                condition,
+                then_branch,
+                else_branch,
+            } => Expr::IfExpr {
+                condition: Box::new(Spanned::new(
+                    Self::rewrite_expr_generic_calls(
+                        &condition.node,
+                        templates,
+                        emitted,
+                        generated,
+                    )?,
+                    condition.span.clone(),
+                )),
+                then_branch: then_branch
+                    .iter()
+                    .map(|s| {
+                        Ok(Spanned::new(
+                            Self::rewrite_stmt_generic_calls(
+                                &s.node, templates, emitted, generated,
+                            )?,
+                            s.span.clone(),
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+                else_branch: else_branch
+                    .as_ref()
+                    .map(|blk| {
+                        blk.iter()
+                            .map(|s| {
+                                Ok(Spanned::new(
+                                    Self::rewrite_stmt_generic_calls(
+                                        &s.node, templates, emitted, generated,
+                                    )?,
+                                    s.span.clone(),
+                                ))
+                            })
+                            .collect::<Result<Vec<_>>>()
+                    })
+                    .transpose()?,
+            },
+            Expr::Block(block) => Expr::Block(
+                block
+                    .iter()
+                    .map(|s| {
+                        Ok(Spanned::new(
+                            Self::rewrite_stmt_generic_calls(
+                                &s.node, templates, emitted, generated,
+                            )?,
+                            s.span.clone(),
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            ),
+            _ => expr.clone(),
+        })
+    }
+
+    fn rewrite_decl_generic_calls(
+        decl: &Spanned<Decl>,
+        templates: &HashMap<String, GenericTemplate>,
+        emitted: &mut HashSet<String>,
+        generated: &mut Vec<Spanned<Decl>>,
+    ) -> Result<Spanned<Decl>> {
+        Ok(match &decl.node {
+            Decl::Function(func) => {
+                let mut f = func.clone();
+                f.body = f
+                    .body
+                    .iter()
+                    .map(|s| {
+                        Ok(Spanned::new(
+                            Self::rewrite_stmt_generic_calls(
+                                &s.node, templates, emitted, generated,
+                            )?,
+                            s.span.clone(),
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Spanned::new(Decl::Function(f), decl.span.clone())
+            }
+            Decl::Module(module) => {
+                let mut m = module.clone();
+                m.declarations = m
+                    .declarations
+                    .iter()
+                    .map(|inner| {
+                        Self::rewrite_decl_generic_calls(inner, templates, emitted, generated)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Spanned::new(Decl::Module(m), decl.span.clone())
+            }
+            Decl::Class(class) => {
+                let mut c = class.clone();
+                if let Some(ctor) = &mut c.constructor {
+                    ctor.body = ctor
+                        .body
+                        .iter()
+                        .map(|s| {
+                            Ok(Spanned::new(
+                                Self::rewrite_stmt_generic_calls(
+                                    &s.node, templates, emitted, generated,
+                                )?,
+                                s.span.clone(),
+                            ))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                }
+                if let Some(dtor) = &mut c.destructor {
+                    dtor.body = dtor
+                        .body
+                        .iter()
+                        .map(|s| {
+                            Ok(Spanned::new(
+                                Self::rewrite_stmt_generic_calls(
+                                    &s.node, templates, emitted, generated,
+                                )?,
+                                s.span.clone(),
+                            ))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                }
+                c.methods = c
+                    .methods
+                    .iter()
+                    .map(|method| {
+                        let mut nm = method.clone();
+                        nm.body = nm
+                            .body
+                            .iter()
+                            .map(|s| {
+                                Ok(Spanned::new(
+                                    Self::rewrite_stmt_generic_calls(
+                                        &s.node, templates, emitted, generated,
+                                    )?,
+                                    s.span.clone(),
+                                ))
+                            })
+                            .collect::<Result<Vec<_>>>()?;
+                        Ok(nm)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Spanned::new(Decl::Class(c), decl.span.clone())
+            }
+            _ => decl.clone(),
+        })
+    }
+
+    fn specialize_explicit_generic_calls(program: &Program) -> Result<Program> {
+        let mut templates: HashMap<String, GenericTemplate> = HashMap::new();
+        for decl in &program.declarations {
+            Self::collect_generic_templates_from_decl(decl, None, &mut templates);
+        }
+        if templates.is_empty() {
+            return Ok(program.clone());
+        }
+
+        let mut emitted_specs: HashSet<String> = HashSet::new();
+        let mut generated: Vec<Spanned<Decl>> = Vec::new();
+        let rewritten = program
+            .declarations
+            .iter()
+            .map(|decl| {
+                Self::rewrite_decl_generic_calls(
+                    decl,
+                    &templates,
+                    &mut emitted_specs,
+                    &mut generated,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let mut all_decls = rewritten;
+        all_decls.extend(generated);
+        Ok(Program {
+            package: program.package.clone(),
+            declarations: all_decls,
+        })
+    }
+
     pub fn new(context: &'ctx Context, name: &str) -> Self {
         let module = context.create_module(name);
         let builder = context.create_builder();
@@ -176,6 +1304,9 @@ impl<'ctx> Codegen<'ctx> {
         program: &Program,
         active_symbols: Option<&HashSet<String>>,
     ) -> Result<()> {
+        let specialized_program = Self::specialize_explicit_generic_calls(program)?;
+        let program = &specialized_program;
+
         self.import_aliases.clear();
         for decl in &program.declarations {
             if let Decl::Import(import) = &decl.node {
@@ -273,7 +1404,9 @@ impl<'ctx> Codegen<'ctx> {
         }
 
         match decl {
-            Decl::Function(func) => active_symbols.contains(&func.name),
+            Decl::Function(func) => {
+                active_symbols.contains(&func.name) || func.name.contains("__spec__")
+            }
             Decl::Class(class) => active_symbols.contains(&class.name),
             Decl::Module(module) => module_has_active_symbol(module, &module.name, active_symbols),
             Decl::Enum(en) => active_symbols.contains(&en.name),

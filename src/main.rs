@@ -43,8 +43,8 @@ use crate::typeck::TypeChecker;
 
 #[derive(ClapParser)]
 #[command(name = "apex")]
-#[command(author = "Remyyy")]
-#[command(version = "1.3.1")]
+#[command(author = "TheRemyyy")]
+#[command(version = "1.4")]
 #[command(about = "Apex Programming Language Compiler")]
 struct Cli {
     #[command(subcommand)]

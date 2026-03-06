@@ -206,9 +206,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed filtered project codegen for nested modules:
   - nested module functions are now declared/compiled recursively when a parent module namespace is active,
   - prevents `undefined reference` link failures for deep module symbols referenced through namespace aliases.
-- Fixed explicit generic call runtime crash path by replacing UB/segfault behavior with a deterministic codegen diagnostic:
-  - explicit generic calls now fail with `Codegen error: Explicit generic call code generation is not supported yet`
-  - avoids generating invalid call ABI for unresolved generic runtime lowering.
+- Fixed explicit generic free/module function calls in codegen via on-demand specialization:
+  - calls like `id<Integer>(77)`, `A.X.id<Integer>(...)`, and alias-based variants now compile and run without runtime crashes.
+  - generated specializations are emitted with stable symbol naming (`__spec__...`) and explicit type-argument rewriting.
+- Fixed filtered project codegen linkage for generated generic specializations:
+  - specialization symbols are now compiled even under active-symbol filtering,
+  - preventing `undefined reference to ...__spec__...` linker errors in project builds.
 - Fixed parser behavior where visibility modifiers on `constructor`/`destructor` were silently ignored.
 - Fixed formatter roundtrip stability for expression statements starting with `match`/`if`:
   - `apex fmt` now emits parenthesized expression-statement forms (`(match (...){...});`, `(if (...){...} else {...});`) to avoid reparsing as statement nodes with different semantics.

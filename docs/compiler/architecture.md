@@ -69,7 +69,8 @@ This document describes the internal architecture of the Apex compiler.
   - Type-check declaration collection now also recurses nested modules, so deep mangled symbols are available to semantic checks (`A__X__id`, `A__Y__add`, ...).
   - Filtered project compilation now recursively declares and compiles nested module symbols when a parent module namespace is active, preventing missing-symbol linker failures for deep module calls.
 - **Generic call safety hardening**:
-  - Explicit generic calls that do not have concrete runtime lowering now fail deterministically during codegen instead of producing invalid IR/ABI paths that can crash at runtime.
+  - Codegen now performs on-demand specialization for explicit generic free/module calls (for example `id<T>(...)`, `A.X.id<T>(...)`) and rewrites call sites to concrete specialized symbols.
+  - Project filtered compilation now always emits generated specialization bodies to avoid missing-symbol linker regressions.
 - **Shared stdlib registry**:
   - Compiler stages now reuse a single lazy-initialized stdlib registry (`OnceLock`) instead of repeatedly constructing stdlib lookup maps during hot-path analysis and lowering.
 - **Lint scope analysis hardening**:
