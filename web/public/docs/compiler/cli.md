@@ -18,6 +18,7 @@ apex <command> [arguments] [flags]
 | `test` | Discovers and runs @Test functions. | `apex test` or `apex test --path test.apex` |
 | `check` | Checks code for errors without compiling. | `apex check` |
 | `info` | Shows project information. | `apex info` |
+| `fmt` | Formats Apex source files. | `apex fmt` or `apex fmt src/` |
 | `lex` | **Debug:** Outputs the stream of tokens. | `apex lex main.apex` |
 | `parse` | **Debug:** Outputs the AST. | `apex parse main.apex` |
 | `lsp` | Starts the LSP server for IDE integration. | `apex lsp` |
@@ -125,6 +126,23 @@ apex check
 # Check specific file
 apex check src/utils.apex
 ```
+
+### Formatting Code
+
+```bash
+# Format current project
+apex fmt
+
+# Format one file
+apex fmt src/main.apex
+
+# CI/check mode
+apex fmt --check
+```
+
+Notes:
+- When run inside a project without an explicit path, `apex fmt` formats the files listed in `apex.toml`.
+- You can point `apex fmt` at either a single `.apex` file or a directory.
 
 ### Debug Output
 

@@ -79,6 +79,14 @@ apex check              # Check entry point
 apex check src/lib.apex # Check specific file
 ```
 
+### Format Project
+
+```bash
+apex fmt                # Format files listed in apex.toml
+apex fmt --check        # CI mode, fails if files need changes
+apex fmt src/           # Format a specific directory tree
+```
+
 ### Show Project Info
 
 ```bash

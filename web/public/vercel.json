@@ -1,7 +1,0 @@
-{
-  "rewrites": [
-    { "source": "/docs/:path*", "destination": "/index.html" },
-    { "source": "/changelog", "destination": "/index.html" },
-    { "source": "/", "destination": "/index.html" }
-  ]
-}

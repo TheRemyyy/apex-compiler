@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### ✨ Added
 
+- `apex fmt` command for formatting Apex source files.
+  - Supports single-file, directory, and project-aware formatting.
+  - Supports `--check` mode for CI.
+- Expanded CI coverage:
+  - release-built CLI smoke coverage for `new`, `info`, `check`, `fmt`, `lex`, `parse`, `compile`, `run`, `test`, and `bindgen`
+  - frontend typecheck, test, and production build verification
 - `apex compile` now supports:
   - `--opt-level <0|1|2|3|s|z|fast>`
   - `--target <triple>`
@@ -18,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### ♻️ Changed
 
+- `apex fmt` now preserves source comments instead of refusing commented files.
 - Project builds now wire `target` from `apex.toml` into final Clang linking (`--target <triple>`).
 - `apex info` now displays `Target` value (`native/default` when not set).
 - Clang fallback flow now degrades native tuning more gracefully:
@@ -27,12 +34,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### 🐛 Fixed
 
+- Web docs routing now uses extensionless `/docs/...` URLs consistently in footer links and sitemap output.
+- Markdown HTML rendered in the docs/changelog web UI is now sanitized before insertion.
+- Removed duplicate Vercel routing config from `web/public/vercel.json`; `web/vercel.json` is now the only deploy config.
+- Removed machine-specific LLVM/linker paths from `.cargo/config.toml`.
+- `apex new` now scaffolds `src/main.apex` with the required `import std.io.*;`, so a fresh project checks and runs immediately.
 - Fixed `apex new` default config paths:
   - `entry` is now `src/main.apex`
   - `files` includes `src/main.apex`
 - Fixed test runner generation:
   - generated hook/test invocations now call functions (`testName();`) instead of expression statements (`testName;`)
   - `main()` stripping logic no longer over-consumes source after the main function.
+  - generated test runner sources now inject `import std.io.*;` when needed.
 - Fixed `apex test --filter` summary counters:
   - `total`/`ignored` now reflect the filtered subset, not the unfiltered discovery set.
 

@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
-    name: Test
+  rust:
+    name: Rust Checks
     runs-on: ubuntu-latest
     
     steps:
@@ -42,6 +42,31 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy -- -D warnings
+
+  cli-smoke:
+    name: CLI Smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install LLVM
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21 all
+          sudo apt-get install -y llvm-21-dev libpolly-21-dev
+          echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
+
+      - name: Build compiler
+        run: cargo build --release
+
+      - name: Run CLI smoke coverage
+        run: bash scripts/ci_cli_smoke.sh
 
   check-examples:
     name: Check Examples
@@ -84,3 +109,34 @@ jobs:
               cd ../..
             fi
           done
+
+  web:
+    name: Web Checks
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run check
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build web app
+        run: npm run build

@@ -6,132 +6,132 @@
     <priority>1.0</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/overview.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/overview</loc>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/getting_started/installation.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/getting_started/installation</loc>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/getting_started/quick_start.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/getting_started/quick_start</loc>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/getting_started/editor_setup.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/getting_started/editor_setup</loc>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/basics/syntax.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/basics/syntax</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/basics/variables.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/basics/variables</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/basics/types.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/basics/types</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/basics/control_flow.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/basics/control_flow</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/features/functions.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/features/functions</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/features/modules.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/features/modules</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/features/classes.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/features/classes</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/features/interfaces.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/features/interfaces</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/features/enums.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/features/enums</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/advanced/memory_management.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/advanced/memory_management</loc>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/advanced/ownership.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/advanced/ownership</loc>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/advanced/async.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/advanced/async</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/advanced/error_handling.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/advanced/error_handling</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/advanced/generics.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/advanced/generics</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/stdlib/overview.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/stdlib/overview</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/stdlib/io.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/stdlib/io</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/stdlib/math.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/stdlib/math</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/stdlib/string.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/stdlib/string</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/stdlib/collections.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/stdlib/collections</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/stdlib/system.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/stdlib/system</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/compiler/architecture.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/compiler/architecture</loc>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
   <url>
-    <loc>https://apex-compiler.vercel.app/docs/compiler/cli.md</loc>
+    <loc>https://apex-compiler.vercel.app/docs/compiler/cli</loc>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>

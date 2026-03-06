@@ -4,6 +4,7 @@ mod ast;
 mod bindgen;
 mod borrowck;
 mod codegen;
+mod formatter;
 mod import_check;
 mod lexer;
 mod lsp;
@@ -104,6 +105,14 @@ enum Commands {
     },
     /// Show project info
     Info,
+    /// Format Apex source files
+    Fmt {
+        /// File or directory to format (default: current project or current directory)
+        path: Option<PathBuf>,
+        /// Check formatting without writing changes
+        #[arg(long)]
+        check: bool,
+    },
     /// Show tokens (debug)
     Lex {
         /// Input file
@@ -177,6 +186,7 @@ fn main() {
         ),
         Commands::Check { file } => check_file(file.as_deref()),
         Commands::Info => show_project_info(),
+        Commands::Fmt { path, check } => format_targets(path.as_deref(), check),
         Commands::Lex { file } => lex_file(&file),
         Commands::Parse { file } => parse_file(&file),
         Commands::Lsp => {
@@ -237,7 +247,9 @@ fn new_project(name: &str, path: Option<&Path>) -> Result<(), String> {
 
     // Create main.apex
     let main_content = format!(
-        r#"// Welcome to {}!
+        r#"import std.io.*;
+
+// Welcome to {}!
 // This is the entry point of your application.
 
 function main(): None {{
@@ -2212,6 +2224,103 @@ fn show_project_info() -> Result<(), String> {
     Ok(())
 }
 
+fn format_targets(path: Option<&Path>, check_only: bool) -> Result<(), String> {
+    let current_dir = std::env::current_dir().map_err(|e| e.to_string())?;
+    let targets = if let Some(path) = path {
+        collect_apex_files(path)?
+    } else if let Some(project_root) = find_project_root(&current_dir) {
+        let config = ProjectConfig::load(&project_root.join("apex.toml"))?;
+        config.get_source_files(&project_root)
+    } else {
+        collect_apex_files(&current_dir)?
+    };
+
+    if targets.is_empty() {
+        return Err("No Apex files found to format.".to_string());
+    }
+
+    let mut changed = Vec::new();
+    for file in targets {
+        let source = fs::read_to_string(&file)
+            .map_err(|e| format!("{}: Failed to read file: {}", "error".red().bold(), e))?;
+        let formatted = formatter::format_source(&source)
+            .map_err(|e| format!("{} in '{}': {}", "error".red().bold(), file.display(), e))?;
+
+        if source != formatted {
+            if check_only {
+                changed.push(file);
+            } else {
+                fs::write(&file, formatted).map_err(|e| {
+                    format!(
+                        "{}: Failed to write '{}': {}",
+                        "error".red().bold(),
+                        file.display(),
+                        e
+                    )
+                })?;
+                changed.push(file);
+            }
+        }
+    }
+
+    if check_only {
+        if changed.is_empty() {
+            println!("{}", "All Apex files are properly formatted.".green());
+            return Ok(());
+        }
+
+        eprintln!("{} Formatting differences found:", "error".red().bold());
+        for file in changed {
+            eprintln!("  - {}", file.display());
+        }
+        return Err("Formatting check failed".to_string());
+    }
+
+    if changed.is_empty() {
+        println!("{}", "No formatting changes needed.".green());
+    } else {
+        println!("{} {} file(s).", "Formatted".green().bold(), changed.len());
+        for file in changed {
+            println!("  - {}", file.display());
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_apex_files(path: &Path) -> Result<Vec<PathBuf>, String> {
+    if path.is_file() {
+        if path.extension().and_then(|ext| ext.to_str()) == Some("apex") {
+            return Ok(vec![path.to_path_buf()]);
+        }
+        return Err(format!("Path '{}' is not an .apex file", path.display()));
+    }
+
+    if !path.is_dir() {
+        return Err(format!("Path '{}' does not exist", path.display()));
+    }
+
+    let mut files = Vec::new();
+    collect_apex_files_recursive(path, &mut files)?;
+    files.sort();
+    Ok(files)
+}
+
+fn collect_apex_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    for entry in fs::read_dir(dir)
+        .map_err(|e| format!("Failed to read directory '{}': {}", dir.display(), e))?
+    {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_apex_files_recursive(&path, files)?;
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("apex") {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
 /// Show tokens (debug)
 fn lex_file(file: &Path) -> Result<(), String> {
     let source = fs::read_to_string(file)
@@ -2718,5 +2827,88 @@ mod project_rewrite_tests {
             panic!("expected module ident");
         };
         assert_eq!(name, "Utils");
+    }
+
+    #[test]
+    fn rewrites_wildcard_imported_function_and_class_symbols() {
+        let program = Program {
+            package: Some("app".to_string()),
+            declarations: vec![sp(Decl::Function(ast::FunctionDecl {
+                name: "main".to_string(),
+                generic_params: vec![],
+                params: vec![],
+                is_variadic: false,
+                extern_abi: None,
+                extern_link_name: None,
+                return_type: ast::Type::None,
+                body: vec![
+                    sp(Stmt::Expr(sp(Expr::Call {
+                        callee: Box::new(sp(Expr::Ident("helper".to_string()))),
+                        args: vec![],
+                    }))),
+                    sp(Stmt::Let {
+                        name: "widget".to_string(),
+                        ty: ast::Type::Named("Widget".to_string()),
+                        value: sp(Expr::Construct {
+                            ty: "Widget".to_string(),
+                            args: vec![],
+                        }),
+                        mutable: false,
+                    }),
+                ],
+                is_async: false,
+                is_extern: false,
+                visibility: ast::Visibility::Private,
+                attributes: vec![],
+            }))],
+        };
+
+        let imports = vec![ast::ImportDecl {
+            path: "lib.*".to_string(),
+        }];
+        let namespace_functions = HashMap::from([
+            ("app".to_string(), HashSet::from(["main".to_string()])),
+            ("lib".to_string(), HashSet::from(["helper".to_string()])),
+        ]);
+        let global_function_map = HashMap::from([("helper".to_string(), "lib".to_string())]);
+        let namespace_classes =
+            HashMap::from([("lib".to_string(), HashSet::from(["Widget".to_string()]))]);
+        let global_class_map = HashMap::from([("Widget".to_string(), "lib".to_string())]);
+
+        let rewritten = rewrite_program_for_project(
+            &program,
+            "app",
+            "app",
+            &namespace_functions,
+            &global_function_map,
+            &namespace_classes,
+            &global_class_map,
+            &HashMap::new(),
+            &HashMap::new(),
+            &imports,
+        );
+
+        let Decl::Function(func) = &rewritten.declarations[0].node else {
+            panic!("expected function declaration");
+        };
+        let Stmt::Expr(expr_stmt) = &func.body[0].node else {
+            panic!("expected expr statement");
+        };
+        let Expr::Call { callee, .. } = &expr_stmt.node else {
+            panic!("expected call expression");
+        };
+        let Expr::Ident(name) = &callee.node else {
+            panic!("expected ident callee");
+        };
+        assert_eq!(name, "lib__helper");
+
+        let Stmt::Let { ty, value, .. } = &func.body[1].node else {
+            panic!("expected let statement");
+        };
+        assert_eq!(ty, &ast::Type::Named("lib__Widget".to_string()));
+        let Expr::Construct { ty, .. } = &value.node else {
+            panic!("expected construct expression");
+        };
+        assert_eq!(ty, "lib__Widget");
     }
 }

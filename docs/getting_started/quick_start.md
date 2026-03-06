@@ -50,6 +50,15 @@ To check for errors without compiling (faster for development):
 apex check hello.apex
 ```
 
+#### 4. Formatting
+
+To normalize layout before commits or in CI:
+
+```bash
+apex fmt hello.apex
+apex fmt --check
+```
+
 ## Your First Real Program
 
 Here is a more complex example demonstrating variables, loops, string interpolation, and mutability.

@@ -16,8 +16,8 @@ export function Footer() {
                 <div>
                     <h3 className="mb-4 text-sm font-semibold text-white">Resources</h3>
                     <ul className="space-y-3 text-sm">
-                        <li><Link to="/docs/overview.md" className="hover:text-white transition-colors">Documentation</Link></li>
-                        <li><Link to="/docs/stdlib/overview.md" className="hover:text-white transition-colors">Standard Library</Link></li>
+                        <li><Link to="/docs/overview" className="hover:text-white transition-colors">Documentation</Link></li>
+                        <li><Link to="/docs/stdlib/overview" className="hover:text-white transition-colors">Standard Library</Link></li>
                         <li><Link to="/changelog" className="hover:text-white transition-colors">Changelog</Link></li>
                         <li><a href="https://github.com/TheRemyyy/apex-compiler" className="hover:text-white transition-colors">GitHub</a></li>
                     </ul>

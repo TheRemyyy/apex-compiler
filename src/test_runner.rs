@@ -218,7 +218,7 @@ pub fn generate_test_runner_with_source(
 
     // Extract just the declarations from original source (skip package, imports)
     // For simplicity, we include the whole source but filter out any existing main()
-    let filtered_source = filter_out_main_function(original_source);
+    let filtered_source = ensure_test_runner_imports(&filter_out_main_function(original_source));
     code.push_str(&filtered_source);
     code.push('\n');
 
@@ -271,6 +271,22 @@ pub fn generate_test_runner_with_source(
     code
 }
 
+fn ensure_test_runner_imports(source: &str) -> String {
+    if source.contains("import std.io.*;") {
+        return source.to_string();
+    }
+
+    if let Some(package_end) = source.find(';') {
+        let prefix = &source[..=package_end];
+        let suffix = &source[package_end + 1..];
+        if prefix.trim_start().starts_with("package ") {
+            return format!("{}\n\nimport std.io.*;{}\n", prefix, suffix);
+        }
+    }
+
+    format!("import std.io.*;\n\n{}", source)
+}
+
 /// Simple filter to remove existing main function from source
 fn filter_out_main_function(source: &str) -> String {
     let mut result = String::new();
@@ -319,6 +335,40 @@ fn filter_out_main_function(source: &str) -> String {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ensure_test_runner_imports, generate_test_runner_with_source, TestDiscovery};
+
+    #[test]
+    fn injects_stdio_import_when_missing() {
+        let source = "function helper(): None { return None; }\n";
+        let rewritten = ensure_test_runner_imports(source);
+        assert!(rewritten.starts_with("import std.io.*;"));
+    }
+
+    #[test]
+    fn preserves_package_when_injecting_stdio_import() {
+        let source = "package tests;\nfunction helper(): None { return None; }\n";
+        let rewritten = ensure_test_runner_imports(source);
+        assert!(rewritten.starts_with("package tests;"));
+        assert!(rewritten.contains("\n\nimport std.io.*;"));
+    }
+
+    #[test]
+    fn generated_runner_contains_stdio_import() {
+        let discovery = TestDiscovery {
+            suites: vec![],
+            total_tests: 0,
+            ignored_tests: 0,
+        };
+        let generated = generate_test_runner_with_source(
+            &discovery,
+            "function helper(): None { return None; }\n",
+        );
+        assert!(generated.contains("import std.io.*;"));
+    }
 }
 
 /// Generate runner code with mutable counters

@@ -19,6 +19,7 @@ This document describes the internal architecture of the Apex compiler.
 - `src/parser.rs`: Parser implementation.
 - `src/typeck.rs`: Type checker implementation.
 - `src/borrowck.rs`: Borrow checker implementation.
+- `src/formatter.rs`: AST-driven source formatter used by `apex fmt`.
 - `src/codegen/mod.rs`: Codegen module entry.
 - `src/codegen/core.rs`: Core IR generation and lowering.
 - `src/codegen/types.rs`: Built-in collection/Option/Result/Range codegen helpers.

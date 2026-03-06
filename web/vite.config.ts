@@ -11,6 +11,10 @@ export default defineConfig({
     cssInjectedByJsPlugin(),
     webfontDl()
   ],
+  test: {
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.ts',
+  },
   build: {
     minify: 'terser',
     terserOptions: {

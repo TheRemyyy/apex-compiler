@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState } from 'react';
-import { marked } from 'marked';
 import { motion } from 'framer-motion';
+import { renderMarkdown } from '../lib/markdown';
 
 export function Changelog() {
     const [html, setHtml] = useState('');
@@ -9,7 +9,7 @@ export function Changelog() {
         fetch('/CHANGELOG.md')
             .then(res => res.text())
             .then(async text => {
-                const parsed = await marked.parse(text);
+                const parsed = await renderMarkdown(text);
                 setHtml(parsed);
             })
             .catch(() => setHtml('<h1>Changelog not found</h1>'));

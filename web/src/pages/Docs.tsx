@@ -1,51 +1,6 @@
 import { useState, useEffect } from 'react';
-import { marked } from 'marked';
 import { useLocation, useNavigate } from 'react-router-dom';
-
-// Configure marked to add IDs to headings
-const renderer = new marked.Renderer();
-// @ts-ignore
-renderer.heading = (text: string, depth: number) => {
-    const escapedText = text.toLowerCase().replace(/[^\w]+/g, '-');
-    return `<h${depth} id="${escapedText}">${text}</h${depth}>`;
-};
-
-marked.use({ renderer });
-
-function rewriteInternalDocLinks(html: string, currentPath: string): string {
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = html;
-
-    const baseDocPath = `${currentPath}.md`;
-    const baseUrl = new URL(baseDocPath, window.location.origin);
-
-    const isExternalHref = (href: string) => /^(https?:|mailto:|tel:)/i.test(href);
-
-    tempDiv.querySelectorAll('a').forEach((anchor) => {
-        const rawHref = anchor.getAttribute('href');
-        if (!rawHref || rawHref.startsWith('#') || isExternalHref(rawHref)) {
-            return;
-        }
-
-        const resolved = new URL(rawHref, baseUrl);
-        let path = resolved.pathname;
-
-        if (path.endsWith('.md')) {
-            path = path.slice(0, -3);
-        }
-
-        // Normalize accidental /docs/docs/... links caused by nested relative paths.
-        if (path.startsWith('/docs/docs/')) {
-            path = path.replace('/docs/docs/', '/docs/');
-        }
-
-        const finalHref = `${path}${resolved.hash}`;
-        anchor.setAttribute('href', finalHref);
-        anchor.setAttribute('data-router-link', 'true');
-    });
-
-    return tempDiv.innerHTML;
-}
+import { renderMarkdown, rewriteInternalDocLinks } from '../lib/markdown';
 
 // Navigation structure - URL paths (without .md)
 const NAV_ITEMS = [
@@ -175,7 +130,7 @@ export function Docs() {
                 return res.text();
             })
             .then(async text => {
-                const html = await marked.parse(text);
+                const html = await renderMarkdown(text);
                 const rewrittenHtml = rewriteInternalDocLinks(html, normalizedPath);
                 setContent(rewrittenHtml);
                 setLoading(false);
