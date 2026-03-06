@@ -41,6 +41,10 @@ files = [
 ]
 output = "my_project"
 opt_level = "3"
+output_kind = "bin"
+link_libs = ["ssl"]
+link_search = ["native/lib"]
+link_args = ["-Wl,--as-needed"]
 ```
 
 ### Configuration Fields
@@ -54,6 +58,10 @@ opt_level = "3"
 | `output` | No | Output binary name (default: project name) |
 | `opt_level` | No | Final Clang optimization level: `0`, `1`, `2`, `3`, `s`, `z`, or `fast` (default: `3`) |
 | `target` | No | Target triple (optional) |
+| `output_kind` | No | Final artifact kind: `bin`, `shared`, or `static` (default: `bin`) |
+| `link_libs` | No | Extra libraries passed to Clang as `-l<name>` |
+| `link_search` | No | Extra library search paths passed as `-L<path>` |
+| `link_args` | No | Extra raw linker arguments forwarded to Clang |
 
 ## Project Commands
 
@@ -92,6 +100,7 @@ Project Information
   Version: 1.0.0
   Entry: src/main.apex
   Output: my_project
+  Output Kind: Bin
   Opt Level: 3
   Target: native/default
   Root: /path/to/project
@@ -108,6 +117,8 @@ Source Files:
 - If `opt_level` is missing or invalid, Apex safely falls back to maximum-performance `-O3`.
 - If `target` is set in `apex.toml`, Apex forwards it to Clang as `--target <triple>`.
 - When `target` is set, host-native tuning flags are skipped to keep target/toolchain compatibility.
+- `output_kind = "shared"` emits a shared library, and `output_kind = "static"` emits a static archive.
+- `link_libs`, `link_search`, and `link_args` let project builds declare native link requirements in `apex.toml`.
 - Single-file mode (`apex compile file.apex`, `apex run file.apex`) defaults to maximum-performance settings.
 
 ## How It Works
@@ -148,6 +159,7 @@ files = [
     "src/main.apex"
 ]
 output = "multi_file_demo"
+output_kind = "bin"
 ```
 
 ```apex

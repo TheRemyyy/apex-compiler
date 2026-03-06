@@ -57,6 +57,20 @@ To normalize layout before commits or in CI:
 ```bash
 apex fmt hello.apex
 apex fmt --check
+apex lint hello.apex
+apex fix hello.apex
+```
+
+For Unix-like scripting, Apex also accepts a shebang:
+
+```apex
+#!/usr/bin/env apex
+import std.io.*;
+
+function main(): None {
+    println("hello");
+    return None;
+}
 ```
 
 ## Your First Real Program

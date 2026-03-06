@@ -11,8 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `apex fmt` command for formatting Apex source files.
   - Supports single-file, directory, and project-aware formatting.
   - Supports `--check` mode for CI.
+- New tooling commands:
+  - `apex lint` for static source diagnostics
+  - `apex fix` for safe automated cleanup
+  - `apex bench` for repeated wall-time measurement
+  - `apex profile` for single-run wall-time reporting
+- Project linker/distribution configuration in `apex.toml`:
+  - `output_kind = "bin" | "shared" | "static"`
+  - `link_libs`
+  - `link_search`
+  - `link_args`
 - Expanded CI coverage:
-  - release-built CLI smoke coverage for `new`, `info`, `check`, `fmt`, `lex`, `parse`, `compile`, `run`, `test`, and `bindgen`
+  - release-built CLI smoke coverage for `new`, `info`, `check`, `lint`, `fix`, `fmt`, `lex`, `parse`, `compile`, `run`, `test`, `bench`, `profile`, and `bindgen`
   - frontend typecheck, test, and production build verification
 - `apex compile` now supports:
   - `--opt-level <0|1|2|3|s|z|fast>`
@@ -26,7 +36,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - `apex fmt` now preserves source comments instead of refusing commented files.
 - Project builds now wire `target` from `apex.toml` into final Clang linking (`--target <triple>`).
+- Project builds can now emit shared libraries and static archives via `output_kind`.
+- Single-file scripts can start with a Unix shebang (`#!/usr/bin/env apex`).
 - `apex info` now displays `Target` value (`native/default` when not set).
+- `apex info` now displays output kind and native linker settings from `apex.toml`.
 - Clang fallback flow now degrades native tuning more gracefully:
   - tries `-march=native -mtune=native`
   - then `-march=native`
@@ -39,6 +52,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Removed duplicate Vercel routing config from `web/public/vercel.json`; `web/vercel.json` is now the only deploy config.
 - Removed machine-specific LLVM/linker paths from `.cargo/config.toml`.
 - `apex new` now scaffolds `src/main.apex` with the required `import std.io.*;`, so a fresh project checks and runs immediately.
+- Added regression coverage for shebang tokenization, lint import rules, and project linker config parsing.
 - Fixed `apex new` default config paths:
   - `entry` is now `src/main.apex`
   - `files` includes `src/main.apex`

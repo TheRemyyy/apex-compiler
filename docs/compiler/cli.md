@@ -18,12 +18,16 @@ apex <command> [arguments] [flags]
 | `test` | Discovers and runs @Test functions. | `apex test` or `apex test --path test.apex` |
 | `check` | Checks code for errors without compiling. | `apex check` |
 | `info` | Shows project information. | `apex info` |
+| `lint` | Runs static lint checks. | `apex lint src/main.apex` |
+| `fix` | Applies safe automated source fixes. | `apex fix src/main.apex` |
 | `fmt` | Formats Apex source files. | `apex fmt` or `apex fmt src/` |
 | `lex` | **Debug:** Outputs the stream of tokens. | `apex lex main.apex` |
 | `parse` | **Debug:** Outputs the AST. | `apex parse main.apex` |
 | `lsp` | Starts the LSP server for IDE integration. | `apex lsp` |
 | `compile` | Compiles a single file (legacy mode). | `apex compile file.apex` |
 | `bindgen` | Generates Apex `extern` declarations from a C header. | `apex bindgen include/lib.h -o bindings.apex` |
+| `bench` | Measures repeated execution time. | `apex bench file.apex --iterations 10` |
+| `profile` | Runs once and reports wall time. | `apex profile file.apex` |
 
 ## Global Flags
 
@@ -143,6 +147,39 @@ apex fmt --check
 Notes:
 - When run inside a project without an explicit path, `apex fmt` formats the files listed in `apex.toml`.
 - You can point `apex fmt` at either a single `.apex` file or a directory.
+
+### Linting and Safe Fixes
+
+```bash
+apex lint src/main.apex
+apex fix src/main.apex
+```
+
+Current `apex lint` rules cover:
+- duplicate imports
+- unsorted imports
+- apparently unused specific imports
+
+`apex fix` currently applies safe import deduping/sorting and then runs formatter output normalization.
+
+### Benchmarking and Profiling
+
+```bash
+apex bench file.apex --iterations 10
+apex profile file.apex
+```
+
+`apex bench` reports min/mean/max wall time across repeated runs.  
+`apex profile` currently reports wall time for one run.
+
+### Script Entry Points
+
+```bash
+chmod +x hello.apex
+./hello.apex
+```
+
+Apex source files can start with a Unix shebang such as `#!/usr/bin/env apex`. The lexer strips the shebang before normal parsing, which makes single-file scripts runnable on Unix-like systems.
 
 ### Debug Output
 

@@ -228,6 +228,15 @@ impl<'src> std::fmt::Display for Token<'src> {
 
 /// Tokenize source code
 pub fn tokenize(source: &str) -> Result<Vec<(Token<'_>, std::ops::Range<usize>)>, String> {
+    let source = if source.starts_with("#!") {
+        match source.find('\n') {
+            Some(pos) => &source[pos..],
+            None => "",
+        }
+    } else {
+        source
+    };
+
     let lexer = Token::lexer(source);
     let mut tokens = Vec::new();
 
@@ -242,4 +251,16 @@ pub fn tokenize(source: &str) -> Result<Vec<(Token<'_>, std::ops::Range<usize>)>
     }
 
     Ok(tokens)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{tokenize, Token};
+
+    #[test]
+    fn skips_unix_shebang_line() {
+        let tokens = tokenize("#!/usr/bin/env apex\nfunction main(): None { return None; }")
+            .expect("tokenization succeeds");
+        assert!(matches!(tokens.first(), Some((Token::Function, _))));
+    }
 }

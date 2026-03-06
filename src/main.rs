@@ -7,6 +7,7 @@ mod codegen;
 mod formatter;
 mod import_check;
 mod lexer;
+mod lint;
 mod lsp;
 mod namespace;
 mod parser;
@@ -22,13 +23,14 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Instant;
 
 use crate::ast::{Decl, Expr, ImportDecl, Program, Stmt};
 use crate::borrowck::BorrowChecker;
 use crate::codegen::Codegen;
 use crate::import_check::ImportChecker;
 use crate::parser::Parser;
-use crate::project::{find_project_root, ProjectConfig};
+use crate::project::{find_project_root, OutputKind, ProjectConfig};
 use crate::test_runner::{discover_tests, generate_test_runner_with_source, print_discovery};
 use crate::typeck::TypeChecker;
 
@@ -105,6 +107,16 @@ enum Commands {
     },
     /// Show project info
     Info,
+    /// Run static lint checks
+    Lint {
+        /// File to lint (default: project entry point)
+        path: Option<PathBuf>,
+    },
+    /// Apply safe automated fixes
+    Fix {
+        /// File to fix (default: project entry point)
+        path: Option<PathBuf>,
+    },
     /// Format Apex source files
     Fmt {
         /// File or directory to format (default: current project or current directory)
@@ -144,6 +156,19 @@ enum Commands {
         /// Output Apex file (prints to stdout if omitted)
         #[arg(short, long)]
         output: Option<PathBuf>,
+    },
+    /// Benchmark execution time
+    Bench {
+        /// Input file (optional, runs project if not specified)
+        file: Option<PathBuf>,
+        /// Number of measured runs
+        #[arg(short, long, default_value_t = 5)]
+        iterations: usize,
+    },
+    /// Profile a single execution
+    Profile {
+        /// Input file (optional, runs project if not specified)
+        file: Option<PathBuf>,
     },
 }
 
@@ -186,6 +211,8 @@ fn main() {
         ),
         Commands::Check { file } => check_file(file.as_deref()),
         Commands::Info => show_project_info(),
+        Commands::Lint { path } => lint_target(path.as_deref()),
+        Commands::Fix { path } => fix_target(path.as_deref()),
         Commands::Fmt { path, check } => format_targets(path.as_deref(), check),
         Commands::Lex { file } => lex_file(&file),
         Commands::Parse { file } => parse_file(&file),
@@ -199,6 +226,8 @@ fn main() {
             run_tests(path.as_deref(), list, filter.as_deref())
         }
         Commands::Bindgen { header, output } => bindgen_header(&header, output.as_deref()),
+        Commands::Bench { file, iterations } => bench_target(file.as_deref(), iterations),
+        Commands::Profile { file } => profile_target(file.as_deref()),
     };
 
     if let Err(e) = result {
@@ -302,6 +331,7 @@ entry = "src/main.apex"
 files = ["src/main.apex"]
 output = "{}"
 opt_level = "3"
+output_kind = "bin"
 ```
 "#,
         name, name, name
@@ -582,13 +612,20 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
 
     // Compile combined program AST (import/type checks already done above).
     let output_path = project_root.join(&config.output);
+    let link = LinkConfig {
+        opt_level: Some(&config.opt_level),
+        target: config.target.as_deref(),
+        output_kind: config.output_kind.clone(),
+        link_search: &config.link_search,
+        link_libs: &config.link_libs,
+        link_args: &config.link_args,
+    };
     compile_program_ast(
         &combined_program,
         &entry_path,
         &output_path,
         emit_llvm,
-        Some(&config.opt_level),
-        config.target.as_deref(),
+        &link,
     )?;
 
     println!(
@@ -1797,8 +1834,7 @@ fn compile_program_ast(
     source_path: &Path,
     output_path: &Path,
     emit_llvm: bool,
-    opt_level: Option<&str>,
-    target: Option<&str>,
+    link: &LinkConfig<'_>,
 ) -> Result<(), String> {
     let context = Context::create();
     let module_name = source_path
@@ -1818,7 +1854,7 @@ fn compile_program_ast(
     } else {
         let ir_path = output_path.with_extension("ll");
         codegen.write_ir(&ir_path)?;
-        compile_ir(&ir_path, output_path, opt_level, target)?;
+        compile_ir(&ir_path, output_path, link)?;
         let _ = fs::remove_file(&ir_path);
     }
 
@@ -2007,7 +2043,15 @@ fn compile_source(
         let ir_path = output_path.with_extension("ll");
         codegen.write_ir(&ir_path)?;
 
-        compile_ir(&ir_path, output_path, opt_level, target)?;
+        let link = LinkConfig {
+            opt_level,
+            target,
+            output_kind: OutputKind::Bin,
+            link_search: &[],
+            link_libs: &[],
+            link_args: &[],
+        };
+        compile_ir(&ir_path, output_path, &link)?;
         let _ = fs::remove_file(&ir_path);
     }
 
@@ -2031,14 +2075,18 @@ fn resolve_clang_opt_flag(opt_level: Option<&str>) -> &'static str {
     }
 }
 
+struct LinkConfig<'a> {
+    opt_level: Option<&'a str>,
+    target: Option<&'a str>,
+    output_kind: OutputKind,
+    link_search: &'a [String],
+    link_libs: &'a [String],
+    link_args: &'a [String],
+}
+
 /// Compile LLVM IR using clang
-fn compile_ir(
-    ir_path: &Path,
-    output_path: &Path,
-    opt_level: Option<&str>,
-    target: Option<&str>,
-) -> Result<(), String> {
-    let opt_flag = resolve_clang_opt_flag(opt_level);
+fn compile_ir(ir_path: &Path, output_path: &Path, link: &LinkConfig<'_>) -> Result<(), String> {
+    let opt_flag = resolve_clang_opt_flag(link.opt_level);
     let run_clang = |march_native: bool, mtune_native: bool| {
         let mut cmd = Command::new("clang");
         cmd.arg(ir_path)
@@ -2047,11 +2095,21 @@ fn compile_ir(
             .arg("-Wno-override-module")
             .arg(opt_flag);
 
-        if let Some(target_triple) = target {
+        match link.output_kind {
+            OutputKind::Bin => {}
+            OutputKind::Shared => {
+                cmd.arg("-shared");
+            }
+            OutputKind::Static => {
+                cmd.arg("-c");
+            }
+        }
+
+        if let Some(target_triple) = link.target {
             cmd.arg("--target").arg(target_triple);
         }
 
-        if target.is_none() {
+        if link.target.is_none() {
             if march_native {
                 cmd.arg("-march=native");
             }
@@ -2069,19 +2127,62 @@ fn compile_ir(
         #[cfg(not(windows))]
         cmd.arg("-lm").arg("-pthread");
 
+        for path in link.link_search {
+            cmd.arg(format!("-L{}", path));
+        }
+
+        for lib in link.link_libs {
+            cmd.arg(format!("-l{}", lib));
+        }
+
+        for arg in link.link_args {
+            cmd.arg(arg);
+        }
+
         cmd.output()
     };
 
     // Keep aggressive native tuning, but degrade gracefully if one native flag is unsupported.
     let mut attempts: Vec<(bool, bool)> = vec![(true, true), (true, false), (false, false)];
-    if target.is_some() {
+    if link.target.is_some() {
         attempts = vec![(false, false)];
     }
 
     let mut last_stderr = String::new();
     for (march_native, mtune_native) in attempts {
         match run_clang(march_native, mtune_native) {
-            Ok(output) if output.status.success() => return Ok(()),
+            Ok(output) if output.status.success() => {
+                if link.output_kind == OutputKind::Static {
+                    let object_path = output_path.with_extension("o");
+                    fs::rename(output_path, &object_path).map_err(|e| {
+                        format!(
+                            "{}: Failed to stage object file for static archive: {}",
+                            "error".red().bold(),
+                            e
+                        )
+                    })?;
+                    let status = Command::new("ar")
+                        .arg("rcs")
+                        .arg(output_path)
+                        .arg(&object_path)
+                        .status()
+                        .map_err(|e| {
+                            format!(
+                                "{}: Failed to run ar for static library creation: {}",
+                                "error".red().bold(),
+                                e
+                            )
+                        })?;
+                    let _ = fs::remove_file(&object_path);
+                    if !status.success() {
+                        return Err(format!(
+                            "{}: ar failed while creating static library",
+                            "error".red().bold()
+                        ));
+                    }
+                }
+                return Ok(());
+            }
             Ok(output) => {
                 last_stderr = String::from_utf8_lossy(&output.stderr).to_string();
             }
@@ -2201,6 +2302,7 @@ fn show_project_info() -> Result<(), String> {
     println!("  {}: {}", "Version".dimmed(), config.version);
     println!("  {}: {}", "Entry".dimmed(), config.entry);
     println!("  {}: {}", "Output".dimmed(), config.output);
+    println!("  {}: {:?}", "Output Kind".dimmed(), config.output_kind);
     println!("  {}: {}", "Opt Level".dimmed(), config.opt_level);
     println!(
         "  {}: {}",
@@ -2218,6 +2320,20 @@ fn show_project_info() -> Result<(), String> {
         println!("\n{}", "Dependencies:".dimmed());
         for (name, version) in &config.dependencies {
             println!("  - {} = {}", name, version);
+        }
+    }
+
+    if !config.link_search.is_empty() {
+        println!("\n{}", "Link Search Paths:".dimmed());
+        for path in &config.link_search {
+            println!("  - {}", path);
+        }
+    }
+
+    if !config.link_libs.is_empty() {
+        println!("\n{}", "Link Libraries:".dimmed());
+        for lib in &config.link_libs {
+            println!("  - {}", lib);
         }
     }
 
@@ -2288,6 +2404,65 @@ fn format_targets(path: Option<&Path>, check_only: bool) -> Result<(), String> {
     Ok(())
 }
 
+fn resolve_default_file(path: Option<&Path>) -> Result<PathBuf, String> {
+    if let Some(path) = path {
+        return Ok(path.to_path_buf());
+    }
+
+    let current_dir = std::env::current_dir().map_err(|e| e.to_string())?;
+    if let Some(project_root) = find_project_root(&current_dir) {
+        let config = ProjectConfig::load(&project_root.join("apex.toml"))?;
+        return Ok(config.get_entry_path(&project_root));
+    }
+
+    Err("No file specified and no apex.toml found in current directory.".to_string())
+}
+
+fn lint_target(path: Option<&Path>) -> Result<(), String> {
+    let file = resolve_default_file(path)?;
+    let source = fs::read_to_string(&file)
+        .map_err(|e| format!("{}: Failed to read file: {}", "error".red().bold(), e))?;
+    let result = lint::lint_source(&source, false)
+        .map_err(|e| format!("{} in '{}': {}", "error".red().bold(), file.display(), e))?;
+
+    if result.findings.is_empty() {
+        println!("{}", "No lint findings.".green());
+        return Ok(());
+    }
+
+    eprintln!(
+        "{} Lint findings in {}:",
+        "warning".yellow().bold(),
+        file.display()
+    );
+    for finding in result.findings {
+        eprintln!("  {}", finding.format());
+    }
+    Err("Lint failed".to_string())
+}
+
+fn fix_target(path: Option<&Path>) -> Result<(), String> {
+    let file = resolve_default_file(path)?;
+    let source = fs::read_to_string(&file)
+        .map_err(|e| format!("{}: Failed to read file: {}", "error".red().bold(), e))?;
+    let result = lint::lint_source(&source, true)
+        .map_err(|e| format!("{} in '{}': {}", "error".red().bold(), file.display(), e))?;
+    let fixed_source = result.fixed_source.unwrap_or(source.clone());
+
+    let formatted_source = formatter::format_source(&fixed_source)
+        .map_err(|e| format!("{} in '{}': {}", "error".red().bold(), file.display(), e))?;
+
+    if source == formatted_source {
+        println!("{}", "No safe fixes needed.".green());
+        return Ok(());
+    }
+
+    fs::write(&file, formatted_source)
+        .map_err(|e| format!("{}: Failed to write file: {}", "error".red().bold(), e))?;
+    println!("{} {}", "Fixed".green().bold(), file.display());
+    Ok(())
+}
+
 fn collect_apex_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     if path.is_file() {
         if path.extension().and_then(|ext| ext.to_str()) == Some("apex") {
@@ -2318,6 +2493,57 @@ fn collect_apex_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<
             files.push(path);
         }
     }
+    Ok(())
+}
+
+fn bench_target(file: Option<&Path>, iterations: usize) -> Result<(), String> {
+    if iterations == 0 {
+        return Err("Iterations must be greater than zero.".to_string());
+    }
+
+    let mut samples_ms = Vec::with_capacity(iterations);
+    for _ in 0..iterations {
+        let start = Instant::now();
+        if let Some(file) = file {
+            run_single_file(file, &[], false, true)?;
+        } else {
+            run_project(&[], false, true)?;
+        }
+        samples_ms.push(start.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    let min = samples_ms
+        .iter()
+        .copied()
+        .fold(f64::INFINITY, |acc, value| acc.min(value));
+    let max = samples_ms
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, |acc, value| acc.max(value));
+    let mean = samples_ms.iter().sum::<f64>() / samples_ms.len() as f64;
+
+    println!("{}", "Benchmark Summary".cyan().bold());
+    println!("  Runs: {}", samples_ms.len());
+    println!("  Min:  {:.3} ms", min);
+    println!("  Mean: {:.3} ms", mean);
+    println!("  Max:  {:.3} ms", max);
+    Ok(())
+}
+
+fn profile_target(file: Option<&Path>) -> Result<(), String> {
+    let start = Instant::now();
+    if let Some(file) = file {
+        run_single_file(file, &[], false, true)?;
+    } else {
+        run_project(&[], false, true)?;
+    }
+    let elapsed = start.elapsed();
+
+    println!("{}", "Profile Summary".cyan().bold());
+    println!("  Wall time: {:.3} ms", elapsed.as_secs_f64() * 1000.0);
+    println!(
+        "  CPU/RSS profiling is not wired yet; this command currently reports execution time."
+    );
     Ok(())
 }
 

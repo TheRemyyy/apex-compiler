@@ -7,6 +7,18 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputKind {
+    Bin,
+    Shared,
+    Static,
+}
+
+fn default_output_kind() -> OutputKind {
+    OutputKind::Bin
+}
+
 /// Project configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectConfig {
@@ -33,6 +45,18 @@ pub struct ProjectConfig {
     /// Target triple (optional)
     #[serde(default)]
     pub target: Option<String>,
+    /// Output kind (bin/shared/static)
+    #[serde(default = "default_output_kind")]
+    pub output_kind: OutputKind,
+    /// Additional libraries to link (`-lfoo`)
+    #[serde(default)]
+    pub link_libs: Vec<String>,
+    /// Additional library search paths (`-L/path`)
+    #[serde(default)]
+    pub link_search: Vec<String>,
+    /// Additional raw linker arguments
+    #[serde(default)]
+    pub link_args: Vec<String>,
 }
 
 fn default_output() -> String {
@@ -55,6 +79,10 @@ impl Default for ProjectConfig {
             dependencies: HashMap::new(),
             opt_level: default_opt_level(),
             target: None,
+            output_kind: default_output_kind(),
+            link_libs: vec![],
+            link_search: vec![],
+            link_args: vec![],
         }
     }
 }
@@ -93,6 +121,10 @@ impl ProjectConfig {
             dependencies: HashMap::new(),
             opt_level: "3".to_string(),
             target: None,
+            output_kind: default_output_kind(),
+            link_libs: vec![],
+            link_search: vec![],
+            link_args: vec![],
         }
     }
 
@@ -162,4 +194,41 @@ pub fn find_project_root(start_dir: &Path) -> Option<PathBuf> {
 #[allow(dead_code)]
 pub fn is_in_project(path: &Path) -> bool {
     find_project_root(path).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OutputKind, ProjectConfig};
+
+    #[test]
+    fn defaults_include_linker_configuration_fields() {
+        let config = ProjectConfig::new("demo");
+        assert_eq!(config.output_kind, OutputKind::Bin);
+        assert!(config.link_libs.is_empty());
+        assert!(config.link_search.is_empty());
+        assert!(config.link_args.is_empty());
+    }
+
+    #[test]
+    fn parses_linker_configuration_from_toml() {
+        let config: ProjectConfig = toml::from_str(
+            r#"
+name = "demo"
+version = "0.1.0"
+entry = "src/main.apex"
+files = ["src/main.apex"]
+output = "demo"
+output_kind = "shared"
+link_libs = ["ssl", "crypto"]
+link_search = ["native/lib", "/usr/local/lib"]
+link_args = ["-Wl,--as-needed"]
+"#,
+        )
+        .expect("project config parses");
+
+        assert_eq!(config.output_kind, OutputKind::Shared);
+        assert_eq!(config.link_libs, vec!["ssl", "crypto"]);
+        assert_eq!(config.link_search, vec!["native/lib", "/usr/local/lib"]);
+        assert_eq!(config.link_args, vec!["-Wl,--as-needed"]);
+    }
 }
