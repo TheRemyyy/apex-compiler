@@ -159,8 +159,11 @@ impl<'a> ImportChecker<'a> {
                         .is_some_and(|ns| ns == &symbol_ns)
                         || stdlib
                             .get_namespace(symbol)
-                            .is_some_and(|ns| ns == &symbol_ns);
-                    if !is_known_symbol_alias {
+                            .is_some_and(|ns| ns == &symbol_ns)
+                        || Self::path_resolves_to_user_module(&function_namespaces, &path);
+                    if is_known_symbol_alias {
+                        namespace_aliases.insert(alias_name, path.clone());
+                    } else {
                         invalid_namespace_aliases.insert(alias_name);
                     }
                 } else {
@@ -225,8 +228,13 @@ impl<'a> ImportChecker<'a> {
                     }
                 }
                 Decl::Module(module) => {
+                    let next_prefix = if let Some(prefix) = module_prefix {
+                        format!("{}__{}", prefix, module.name)
+                    } else {
+                        module.name.clone()
+                    };
                     for inner in &module.declarations {
-                        walk_decl(out, &inner.node, Some(&module.name));
+                        walk_decl(out, &inner.node, Some(&next_prefix));
                     }
                 }
                 _ => {}
@@ -283,6 +291,72 @@ impl<'a> ImportChecker<'a> {
             }
         }
         found
+    }
+
+    fn path_resolves_to_user_module(
+        function_namespaces: &HashMap<String, String>,
+        path: &str,
+    ) -> bool {
+        let namespaces: HashSet<&str> = function_namespaces.values().map(String::as_str).collect();
+        for ns in namespaces {
+            if path == ns {
+                return true;
+            }
+            let Some(suffix) = path.strip_prefix(ns) else {
+                continue;
+            };
+            let Some(module_path) = suffix.strip_prefix('.') else {
+                continue;
+            };
+            if module_path.is_empty() {
+                continue;
+            }
+            let module_prefix = module_path.replace('.', "__");
+            if function_namespaces.iter().any(|(func, owner)| {
+                owner == ns
+                    && (func == &module_prefix || func.starts_with(&format!("{}__", module_prefix)))
+            }) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn resolve_user_call_in_namespace_path(
+        &self,
+        namespace_path: &str,
+        field: &str,
+    ) -> Option<String> {
+        if let Some(found) = self.resolve_user_call_in_namespace(namespace_path, field) {
+            return Some(found);
+        }
+
+        let namespaces: HashSet<&str> = self
+            .function_namespaces
+            .values()
+            .map(String::as_str)
+            .collect();
+        for ns in namespaces {
+            let Some(suffix) = namespace_path.strip_prefix(ns) else {
+                continue;
+            };
+            let Some(module_path) = suffix.strip_prefix('.') else {
+                continue;
+            };
+            if module_path.is_empty() {
+                continue;
+            }
+            let module_prefix = module_path.replace('.', "__");
+            let candidate = format!("{}__{}", module_prefix, field);
+            if self
+                .function_namespaces
+                .get(&candidate)
+                .is_some_and(|owner| owner == ns)
+            {
+                return Some(candidate);
+            }
+        }
+        None
     }
 
     /// Check if a function call is valid (imported or local)
@@ -357,7 +431,7 @@ impl<'a> ImportChecker<'a> {
                                     let _ = canonical_name;
                                     handled_alias_call = true;
                                 } else if let Some(canonical_name) =
-                                    self.resolve_user_call_in_namespace(ns, field)
+                                    self.resolve_user_call_in_namespace_path(ns, field)
                                 {
                                     let _ = canonical_name;
                                     handled_alias_call = true;
@@ -720,6 +794,27 @@ function main(): None {
 "#;
         let errors = check_import_errors(source);
         assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn dotted_module_alias_allows_module_style_calls() {
+        let source = r#"
+package lib;
+import lib.A.X as ax;
+
+module A {
+    module X {
+        function f(): Integer { return 1; }
+    }
+}
+
+function main(): None {
+    x: Integer = ax.f();
+    return None;
+}
+"#;
+        let errors = check_import_errors(source);
+        assert!(errors.is_empty(), "{errors:?}");
     }
 
     #[test]

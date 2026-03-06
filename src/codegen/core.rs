@@ -2866,7 +2866,18 @@ impl<'ctx> Codegen<'ctx> {
 
             Expr::Unary { op, expr } => self.compile_unary(*op, &expr.node),
 
-            Expr::Call { callee, args, .. } => self.compile_call(&callee.node, args),
+            Expr::Call {
+                callee,
+                args,
+                type_args,
+            } => {
+                if !type_args.is_empty() {
+                    return Err(CodegenError::new(
+                        "Explicit generic call code generation is not supported yet".to_string(),
+                    ));
+                }
+                self.compile_call(&callee.node, args)
+            }
 
             Expr::Field { object, field } => self.compile_field(&object.node, field),
 

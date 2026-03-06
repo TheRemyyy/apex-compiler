@@ -152,6 +152,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed import checker diagnostics for unknown namespace aliases so invalid alias usage is reported during import checking (instead of surfacing later as generic undefined-variable/codegen failures).
 - Fixed unknown namespace-alias import-check hint text to be actionable (`import <namespace> as <alias>;`) instead of emitting invalid synthetic import suggestions.
 - Fixed invalid dotted namespace alias handling (`import nope.ns as n; n.call();`) to consistently produce unknown-namespace-alias diagnostics during import checking.
+- Fixed dotted module-alias imports so paths like `import lib.A.X as ax; ax.f()` resolve and compile correctly in project mode.
 - Fixed CI `cli-smoke` compiler path resolution when reusing downloaded release artifact:
   - `scripts/ci_cli_smoke.sh` now normalizes relative `APEX_COMPILER_PATH` to absolute path before changing working directories.
   - CI now passes absolute compiler path via `${{ github.workspace }}/target/release/apex-compiler`.
@@ -187,6 +188,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - avoids per-namespace/per-module hardcoded branching and reduces risk of future alias regressions when stdlib surface changes.
 - Fixed import checker traversal bug where alias-resolved callee handling (`io.println(...)`) could skip validation of nested argument calls; missing imports inside arguments (for example `Math.abs` without `std.math`) are now correctly reported.
 - Fixed nested module function namespace extraction/collection to recurse through deep module trees (`Outer__Inner__f`), avoiding missed symbol ownership during import checking and project rewrite.
+- Fixed type checker declaration collection for nested modules to recursively register deep module function signatures (`A__X__id`, `A__Y__add`), preventing false `Undefined variable` errors after correct project rewrite mangling.
+- Fixed import-check local function collection for nested modules to preserve full module prefix chains (`A__X__f` instead of truncated `X__f`), reducing false import diagnostics in deeply nested module files.
 - Fixed single-file borrow checking for stdlib namespace aliases (`import std.io as io; io.println(s);`):
   - alias calls now resolve to stdlib borrow-mode signatures in borrow checker (no false move on borrowed stdlib args),
   - and borrow arguments in function calls are now treated as temporary call-site borrows released after the call expression.
@@ -203,6 +206,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed filtered project codegen for nested modules:
   - nested module functions are now declared/compiled recursively when a parent module namespace is active,
   - prevents `undefined reference` link failures for deep module symbols referenced through namespace aliases.
+- Fixed explicit generic call runtime crash path by replacing UB/segfault behavior with a deterministic codegen diagnostic:
+  - explicit generic calls now fail with `Codegen error: Explicit generic call code generation is not supported yet`
+  - avoids generating invalid call ABI for unresolved generic runtime lowering.
 - Fixed parser behavior where visibility modifiers on `constructor`/`destructor` were silently ignored.
 - Fixed formatter roundtrip stability for expression statements starting with `match`/`if`:
   - `apex fmt` now emits parenthesized expression-statement forms (`(match (...){...});`, `(if (...){...} else {...});`) to avoid reparsing as statement nodes with different semantics.

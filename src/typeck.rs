@@ -1249,54 +1249,7 @@ impl TypeChecker {
             match &decl.node {
                 Decl::Import(_) => {}
                 Decl::Function(func) => {
-                    self.validate_effect_attributes(
-                        &func.attributes,
-                        decl.span.clone(),
-                        &format!("Function '{}'", func.name),
-                    );
-                    self.validate_extern_signature(func, decl.span.clone());
-                    let generic_bindings = self.make_generic_type_bindings(&func.generic_params);
-                    let generic_type_vars: Vec<usize> = func
-                        .generic_params
-                        .iter()
-                        .filter_map(|p| match generic_bindings.get(&p.name) {
-                            Some(ResolvedType::TypeVar(id)) => Some(*id),
-                            _ => None,
-                        })
-                        .collect();
-                    let params: Vec<(String, ResolvedType)> = func
-                        .params
-                        .iter()
-                        .map(|p| {
-                            (
-                                p.name.clone(),
-                                self.resolve_type_with_bindings(&p.ty, &generic_bindings),
-                            )
-                        })
-                        .collect();
-                    let mut return_type =
-                        self.resolve_type_with_bindings(&func.return_type, &generic_bindings);
-                    if func.is_async && !matches!(return_type, ResolvedType::Task(_)) {
-                        return_type = ResolvedType::Task(Box::new(return_type));
-                    }
-                    let (effects, is_pure, allow_any, has_explicit_effects) =
-                        self.parse_effects_from_attributes(&func.attributes);
-
-                    self.functions.insert(
-                        func.name.clone(),
-                        FuncSig {
-                            params,
-                            return_type,
-                            generic_type_vars,
-                            is_variadic: func.is_variadic,
-                            is_extern: func.is_extern,
-                            effects,
-                            is_pure,
-                            allow_any,
-                            has_explicit_effects,
-                            span: decl.span.clone(),
-                        },
-                    );
+                    self.insert_function_signature(func, &func.name, decl.span.clone(), None);
                 }
                 Decl::Class(class) => {
                     let mut fields = HashMap::new();
@@ -1441,62 +1394,83 @@ impl TypeChecker {
                     );
                 }
                 Decl::Module(module) => {
-                    // Collect module functions with prefixed names
-                    for inner_decl in &module.declarations {
-                        if let Decl::Function(func) = &inner_decl.node {
-                            self.validate_effect_attributes(
-                                &func.attributes,
-                                inner_decl.span.clone(),
-                                &format!("Function '{}__{}'", module.name, func.name),
-                            );
-                            self.validate_extern_signature(func, inner_decl.span.clone());
-                            let prefixed_name = format!("{}__{}", module.name, func.name);
-                            let generic_bindings =
-                                self.make_generic_type_bindings(&func.generic_params);
-                            let generic_type_vars: Vec<usize> = func
-                                .generic_params
-                                .iter()
-                                .filter_map(|p| match generic_bindings.get(&p.name) {
-                                    Some(ResolvedType::TypeVar(id)) => Some(*id),
-                                    _ => None,
-                                })
-                                .collect();
-                            let params: Vec<(String, ResolvedType)> = func
-                                .params
-                                .iter()
-                                .map(|p| {
-                                    (
-                                        p.name.clone(),
-                                        self.resolve_type_with_bindings(&p.ty, &generic_bindings),
-                                    )
-                                })
-                                .collect();
-                            let mut return_type = self
-                                .resolve_type_with_bindings(&func.return_type, &generic_bindings);
-                            if func.is_async && !matches!(return_type, ResolvedType::Task(_)) {
-                                return_type = ResolvedType::Task(Box::new(return_type));
-                            }
-                            let (effects, is_pure, allow_any, has_explicit_effects) =
-                                self.parse_effects_from_attributes(&func.attributes);
-
-                            self.functions.insert(
-                                prefixed_name,
-                                FuncSig {
-                                    params,
-                                    return_type,
-                                    generic_type_vars,
-                                    is_variadic: func.is_variadic,
-                                    is_extern: func.is_extern,
-                                    effects,
-                                    is_pure,
-                                    allow_any,
-                                    has_explicit_effects,
-                                    span: inner_decl.span.clone(),
-                                },
-                            );
-                        }
-                    }
+                    self.collect_module_function_signatures(module, &module.name);
                 }
+            }
+        }
+    }
+
+    fn insert_function_signature(
+        &mut self,
+        func: &FunctionDecl,
+        key: &str,
+        span: Span,
+        label_override: Option<String>,
+    ) {
+        let label = label_override.unwrap_or_else(|| format!("Function '{}'", key));
+        self.validate_effect_attributes(&func.attributes, span.clone(), &label);
+        self.validate_extern_signature(func, span.clone());
+
+        let generic_bindings = self.make_generic_type_bindings(&func.generic_params);
+        let generic_type_vars: Vec<usize> = func
+            .generic_params
+            .iter()
+            .filter_map(|p| match generic_bindings.get(&p.name) {
+                Some(ResolvedType::TypeVar(id)) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        let params: Vec<(String, ResolvedType)> = func
+            .params
+            .iter()
+            .map(|p| {
+                (
+                    p.name.clone(),
+                    self.resolve_type_with_bindings(&p.ty, &generic_bindings),
+                )
+            })
+            .collect();
+        let mut return_type = self.resolve_type_with_bindings(&func.return_type, &generic_bindings);
+        if func.is_async && !matches!(return_type, ResolvedType::Task(_)) {
+            return_type = ResolvedType::Task(Box::new(return_type));
+        }
+        let (effects, is_pure, allow_any, has_explicit_effects) =
+            self.parse_effects_from_attributes(&func.attributes);
+
+        self.functions.insert(
+            key.to_string(),
+            FuncSig {
+                params,
+                return_type,
+                generic_type_vars,
+                is_variadic: func.is_variadic,
+                is_extern: func.is_extern,
+                effects,
+                is_pure,
+                allow_any,
+                has_explicit_effects,
+                span,
+            },
+        );
+    }
+
+    fn collect_module_function_signatures(&mut self, module: &ModuleDecl, prefix: &str) {
+        for inner_decl in &module.declarations {
+            match &inner_decl.node {
+                Decl::Function(func) => {
+                    let prefixed_name = format!("{}__{}", prefix, func.name);
+                    self.insert_function_signature(
+                        func,
+                        &prefixed_name,
+                        inner_decl.span.clone(),
+                        Some(format!("Function '{}'", prefixed_name)),
+                    );
+                }
+                Decl::Module(nested) => {
+                    let nested_prefix = format!("{}__{}", prefix, nested.name);
+                    self.collect_module_function_signatures(nested, &nested_prefix);
+                }
+                Decl::Class(_) | Decl::Enum(_) | Decl::Interface(_) | Decl::Import(_) => {}
             }
         }
     }
@@ -4675,6 +4649,25 @@ mod tests {
             }
         "#;
         check_source(src).expect("explicit generic module call should typecheck");
+    }
+
+    #[test]
+    fn explicit_generic_nested_module_mangled_call_typechecks() {
+        let src = r#"
+            module A {
+                module X {
+                    function id<T>(x: T): T { return x; }
+                }
+                module Y {
+                    function add(a: Integer, b: Integer): Integer { return a + b; }
+                }
+            }
+            function main(): None {
+                y: Integer = A__X__id<Integer>(A__Y__add(1, 2));
+                return None;
+            }
+        "#;
+        check_source(src).expect("explicit generic nested module mangled call should typecheck");
     }
 
     #[test]

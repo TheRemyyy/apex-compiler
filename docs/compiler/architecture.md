@@ -52,19 +52,24 @@ This document describes the internal architecture of the Apex compiler.
 - **Import-check traversal hardening**:
   - Import checking now traverses class constructors/destructors/methods, module functions, and interface default implementations (not only top-level functions).
   - Module function namespace extraction uses mangled names consistently (`Module__func`) during import resolution.
+  - Nested-module local function collection now preserves full prefix chains (`A__X__f`) for correct local-shadow/import checks.
   - Namespace alias imports (`import ... as alias`) no longer implicitly grant unqualified access to all symbols in that namespace.
 - **Alias resolution hardening**:
   - Specific-symbol aliases (for example `import std.math.Math__abs as abs_fn`) are resolved across type checking and code generation, so aliased calls compile and execute correctly.
   - Alias canonicalization now uses symbol-table/registry lookups instead of brittle namespace-prefix checks.
   - Project rewrite now resolves namespace-only alias imports (`import math_utils as mu`) for module-style calls (`mu.factorial(...)`) to correct mangled symbols.
   - Project rewrite now also resolves nested module calls through namespace aliases (for example `import lib as l; l.Tools.ping()` and `l.A.X.f()`) to deep mangled project symbols.
+  - Dotted module alias imports (for example `import lib.A.X as ax`) now resolve module-style calls (`ax.f()`) to the correct deep mangled symbols.
 - **Import alias diagnostics hardening**:
   - Unknown namespace aliases are now surfaced during import checking when used in module-style calls, reducing delayed downstream failures.
   - Unknown alias diagnostics now emit actionable guidance for valid alias imports instead of suggesting invalid synthetic import paths.
   - Invalid dotted namespace alias paths now consistently route to namespace-alias diagnostics (`import <namespace> as <alias>;`) instead of falling through to generic later-stage errors.
 - **Nested module codegen hardening**:
   - Function symbol extraction now recurses through nested modules in project parsing/import-check phases.
+  - Type-check declaration collection now also recurses nested modules, so deep mangled symbols are available to semantic checks (`A__X__id`, `A__Y__add`, ...).
   - Filtered project compilation now recursively declares and compiles nested module symbols when a parent module namespace is active, preventing missing-symbol linker failures for deep module calls.
+- **Generic call safety hardening**:
+  - Explicit generic calls that do not have concrete runtime lowering now fail deterministically during codegen instead of producing invalid IR/ABI paths that can crash at runtime.
 - **Shared stdlib registry**:
   - Compiler stages now reuse a single lazy-initialized stdlib registry (`OnceLock`) instead of repeatedly constructing stdlib lookup maps during hot-path analysis and lowering.
 - **Lint scope analysis hardening**:
