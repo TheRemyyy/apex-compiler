@@ -917,9 +917,91 @@ fn rewrite_expr_calls_for_project(
     global_module_map: &HashMap<String, String>,
     scopes: &mut Vec<HashSet<String>>,
 ) -> Expr {
+    fn canonical_std_module(module: &str) -> Option<&'static str> {
+        match module {
+            "math" => Some("Math"),
+            "string" => Some("Str"),
+            "system" => Some("System"),
+            "time" => Some("Time"),
+            "fs" => Some("File"),
+            _ => None,
+        }
+    }
+
     match expr {
         Expr::Call { callee, args } => {
             let rewritten_callee = match &callee.node {
+                Expr::Field { object, field }
+                    if matches!(&object.node, Expr::Ident(_))
+                        && !matches!(&object.node, Expr::Ident(name) if is_shadowed(name, scopes)) =>
+                {
+                    let Expr::Ident(module_alias) = &object.node else {
+                        unreachable!()
+                    };
+                    if let Some((ns, symbol_name)) = imported_modules.get(module_alias) {
+                        if ns == "std" {
+                            if symbol_name == "io" {
+                                Expr::Ident(field.clone())
+                            } else if let Some(std_obj) = canonical_std_module(symbol_name) {
+                                Expr::Field {
+                                    object: Box::new(ast::Spanned::new(
+                                        Expr::Ident(std_obj.to_string()),
+                                        object.span.clone(),
+                                    )),
+                                    field: field.clone(),
+                                }
+                            } else {
+                                rewrite_expr_calls_for_project(
+                                    &callee.node,
+                                    current_namespace,
+                                    entry_namespace,
+                                    local_functions,
+                                    imported_map,
+                                    global_function_map,
+                                    local_classes,
+                                    imported_classes,
+                                    global_class_map,
+                                    local_modules,
+                                    imported_modules,
+                                    global_module_map,
+                                    scopes,
+                                )
+                            }
+                        } else {
+                            rewrite_expr_calls_for_project(
+                                &callee.node,
+                                current_namespace,
+                                entry_namespace,
+                                local_functions,
+                                imported_map,
+                                global_function_map,
+                                local_classes,
+                                imported_classes,
+                                global_class_map,
+                                local_modules,
+                                imported_modules,
+                                global_module_map,
+                                scopes,
+                            )
+                        }
+                    } else {
+                        rewrite_expr_calls_for_project(
+                            &callee.node,
+                            current_namespace,
+                            entry_namespace,
+                            local_functions,
+                            imported_map,
+                            global_function_map,
+                            local_classes,
+                            imported_classes,
+                            global_class_map,
+                            local_modules,
+                            imported_modules,
+                            global_module_map,
+                            scopes,
+                        )
+                    }
+                }
                 Expr::Ident(name) => {
                     if is_shadowed(name, scopes) {
                         Expr::Ident(name.clone())
@@ -1618,5 +1700,95 @@ mod tests {
             panic!("expected module ident");
         };
         assert_eq!(name, "lib__Tools");
+    }
+
+    #[test]
+    fn rewrites_aliased_stdlib_module_calls() {
+        let program = Program {
+            package: Some("app".to_string()),
+            declarations: vec![sp(Decl::Function(ast::FunctionDecl {
+                name: "main".to_string(),
+                generic_params: vec![],
+                params: vec![],
+                is_variadic: false,
+                extern_abi: None,
+                extern_link_name: None,
+                return_type: ast::Type::None,
+                body: vec![
+                    sp(Stmt::Expr(sp(Expr::Call {
+                        callee: Box::new(sp(Expr::Field {
+                            object: Box::new(sp(Expr::Ident("io".to_string()))),
+                            field: "println".to_string(),
+                        })),
+                        args: vec![sp(Expr::Literal(ast::Literal::String("x".to_string())))],
+                    }))),
+                    sp(Stmt::Expr(sp(Expr::Call {
+                        callee: Box::new(sp(Expr::Field {
+                            object: Box::new(sp(Expr::Ident("math".to_string()))),
+                            field: "abs".to_string(),
+                        })),
+                        args: vec![sp(Expr::Literal(ast::Literal::Integer(-1)))],
+                    }))),
+                ],
+                is_async: false,
+                is_extern: false,
+                visibility: ast::Visibility::Private,
+                attributes: vec![],
+            }))],
+        };
+
+        let imports = vec![
+            ast::ImportDecl {
+                path: "std.io".to_string(),
+                alias: Some("io".to_string()),
+            },
+            ast::ImportDecl {
+                path: "std.math".to_string(),
+                alias: Some("math".to_string()),
+            },
+        ];
+
+        let rewritten = rewrite_program_for_project(
+            &program,
+            "app",
+            "app",
+            &HashMap::from([("app".to_string(), HashSet::from(["main".to_string()]))]),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &imports,
+        );
+
+        let Decl::Function(func) = &rewritten.declarations[0].node else {
+            panic!("expected function declaration");
+        };
+
+        let Stmt::Expr(first) = &func.body[0].node else {
+            panic!("expected expr statement");
+        };
+        let Expr::Call { callee, .. } = &first.node else {
+            panic!("expected call expression");
+        };
+        let Expr::Ident(name) = &callee.node else {
+            panic!("expected io alias to rewrite to direct ident call");
+        };
+        assert_eq!(name, "println");
+
+        let Stmt::Expr(second) = &func.body[1].node else {
+            panic!("expected expr statement");
+        };
+        let Expr::Call { callee, .. } = &second.node else {
+            panic!("expected call expression");
+        };
+        let Expr::Field { object, field } = &callee.node else {
+            panic!("expected math alias to rewrite to std module field call");
+        };
+        let Expr::Ident(name) = &object.node else {
+            panic!("expected std module ident");
+        };
+        assert_eq!(name, "Math");
+        assert_eq!(field, "abs");
     }
 }

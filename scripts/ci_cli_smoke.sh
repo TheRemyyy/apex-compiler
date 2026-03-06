@@ -28,6 +28,7 @@ BORROW_REBORROW_AFTER_SCOPE_FILE="${TMP_DIR}/borrow_reborrow_after_scope.apex"
 BORROW_LAMBDA_MOVE_FILE="${TMP_DIR}/borrow_lambda_move.apex"
 BORROW_COMPOUND_BORROWED_FILE="${TMP_DIR}/borrow_compound_borrowed.apex"
 PROJECT_TYPECHECK_DIR="${TMP_DIR}/project_typecheck"
+PROJECT_STDLIB_ALIAS_DIR="${TMP_DIR}/project_stdlib_alias"
 
 "${COMPILER}" new sample_project --path "${PROJECT_DIR}" >/dev/null
 
@@ -225,6 +226,25 @@ if (cd "${PROJECT_TYPECHECK_DIR}" && "${COMPILER}" check >"${BORROW_ERR_OUT}" 2>
   exit 1
 fi
 grep -q "mismatch" "${BORROW_ERR_OUT}"
+
+mkdir -p "${PROJECT_STDLIB_ALIAS_DIR}/src"
+cat <<'EOF_ALIAS_CFG' > "${PROJECT_STDLIB_ALIAS_DIR}/apex.toml"
+name = "project_stdlib_alias"
+version = "0.1.0"
+entry = "src/main.apex"
+files = ["src/main.apex"]
+output = "project_stdlib_alias"
+opt_level = "0"
+EOF_ALIAS_CFG
+cat <<'EOF_ALIAS_MAIN' > "${PROJECT_STDLIB_ALIAS_DIR}/src/main.apex"
+import std.io as io;
+import std.math as math;
+function main(): None {
+    io.println(to_string(math.abs(-1)));
+    return None;
+}
+EOF_ALIAS_MAIN
+(cd "${PROJECT_STDLIB_ALIAS_DIR}" && "${COMPILER}" check >/dev/null)
 
 "${COMPILER}" new shared_project --path "${SHARED_PROJECT}" >/dev/null
 python3 - <<'PY' "${SHARED_PROJECT}/apex.toml"
