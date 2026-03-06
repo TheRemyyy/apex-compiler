@@ -52,9 +52,14 @@ This document describes the internal architecture of the Apex compiler.
 - **Import-check traversal hardening**:
   - Import checking now traverses class constructors/destructors/methods, module functions, and interface default implementations (not only top-level functions).
   - Module function namespace extraction uses mangled names consistently (`Module__func`) during import resolution.
+  - Namespace alias imports (`import ... as alias`) no longer implicitly grant unqualified access to all symbols in that namespace.
 - **Lint scope analysis hardening**:
   - Shadowing diagnostics now account for parameters and `for`-loop variables.
   - Unused-variable diagnostics now include unused `for`-loop iterator variables.
+- **String interpolation parser hardening**:
+  - Unclosed interpolation fragments (`"{...`) are preserved as literal text.
+  - Empty braces (`{}`) are preserved as literal text.
+  - Interpolation nodes that end up fully literal are normalized back to plain string literals.
 
 ## Directory Structure
 

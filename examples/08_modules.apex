@@ -3,6 +3,7 @@
 
 import std.io.*;
 import std.math.*;
+import std.string.*;
 
 // Math utilities module
 module Math {

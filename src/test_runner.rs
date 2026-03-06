@@ -272,16 +272,21 @@ pub fn generate_test_runner_with_source(
 }
 
 fn ensure_test_runner_imports(source: &str) -> String {
-    if source.contains("import std.io.*;") {
+    if source
+        .lines()
+        .any(|line| line.trim_start().starts_with("import std.io.*;"))
+    {
         return source.to_string();
     }
 
-    if let Some(package_end) = source.find(';') {
-        let prefix = &source[..=package_end];
-        let suffix = &source[package_end + 1..];
-        if prefix.trim_start().starts_with("package ") {
-            return format!("{}\n\nimport std.io.*;{}\n", prefix, suffix);
-        }
+    let mut lines: Vec<&str> = source.lines().collect();
+    if let Some(idx) = lines
+        .iter()
+        .position(|line| line.trim_start().starts_with("package "))
+    {
+        lines.insert(idx + 1, "");
+        lines.insert(idx + 2, "import std.io.*;");
+        return format!("{}\n", lines.join("\n"));
     }
 
     format!("import std.io.*;\n\n{}", source)
@@ -292,6 +297,7 @@ fn filter_out_main_function(source: &str) -> String {
     let mut result = String::new();
     let mut in_main = false;
     let mut brace_depth = 0;
+    let mut seen_main_open_brace = false;
 
     fn brace_delta(line: &str) -> i32 {
         line.chars().fold(0, |acc, c| match c {
@@ -299,6 +305,20 @@ fn filter_out_main_function(source: &str) -> String {
             '}' => acc - 1,
             _ => acc,
         })
+    }
+
+    fn is_main_signature(line: &str) -> bool {
+        let mut rest = line.trim_start();
+        for vis in ["public ", "private ", "protected "] {
+            if rest.starts_with(vis) {
+                rest = &rest[vis.len()..];
+                break;
+            }
+        }
+        if rest.starts_with("async ") {
+            rest = &rest["async ".len()..];
+        }
+        rest.starts_with("function main(")
     }
 
     for line in source.lines() {
@@ -310,22 +330,23 @@ fn filter_out_main_function(source: &str) -> String {
         }
 
         // Detect main function start
-        if trimmed.contains("function main(") && !in_main {
+        if is_main_signature(trimmed) && !in_main {
             in_main = true;
             brace_depth = brace_delta(trimmed);
-            if brace_depth <= 0 {
-                in_main = false;
-                brace_depth = 0;
-            }
+            seen_main_open_brace = trimmed.contains('{');
             continue;
         }
 
         if in_main {
             // Track braces to find end of main; include the opening brace on signature line.
             brace_depth += brace_delta(trimmed);
-            if brace_depth <= 0 {
+            if trimmed.contains('{') {
+                seen_main_open_brace = true;
+            }
+            if seen_main_open_brace && brace_depth <= 0 {
                 in_main = false;
                 brace_depth = 0;
+                seen_main_open_brace = false;
             }
             continue;
         }
@@ -401,6 +422,55 @@ function helper(): None { return None; }
 "#;
         let generated = generate_test_runner_with_source(&discovery, source);
         assert!(!generated.contains("public function main(): Integer"));
+        assert!(generated.contains("function helper(): None"));
+    }
+
+    #[test]
+    fn injects_stdio_import_even_if_comment_mentions_it() {
+        let source = "// import std.io.*;\nfunction helper(): None { return None; }\n";
+        let rewritten = ensure_test_runner_imports(source);
+        assert!(rewritten.starts_with("import std.io.*;\n\n// import std.io.*;"));
+    }
+
+    #[test]
+    fn preserves_package_when_comments_have_semicolons() {
+        let source =
+            "// note; with semicolon\npackage tests;\nfunction helper(): None { return None; }\n";
+        let rewritten = ensure_test_runner_imports(source);
+        assert!(rewritten.contains("package tests;\n\nimport std.io.*;"));
+    }
+
+    #[test]
+    fn does_not_strip_comment_that_mentions_main_signature() {
+        let discovery = TestDiscovery {
+            suites: vec![],
+            total_tests: 0,
+            ignored_tests: 0,
+        };
+        let source = r#"
+// function main(): None { not real }
+function helper(): None { return None; }
+"#;
+        let generated = generate_test_runner_with_source(&discovery, source);
+        assert!(generated.contains("// function main(): None { not real }"));
+        assert!(generated.contains("function helper(): None"));
+    }
+
+    #[test]
+    fn strips_public_async_main_function_from_source() {
+        let discovery = TestDiscovery {
+            suites: vec![],
+            total_tests: 0,
+            ignored_tests: 0,
+        };
+        let source = r#"
+public async function main(): Integer {
+    return 0;
+}
+function helper(): None { return None; }
+"#;
+        let generated = generate_test_runner_with_source(&discovery, source);
+        assert!(!generated.contains("public async function main(): Integer"));
         assert!(generated.contains("function helper(): None"));
     }
 }

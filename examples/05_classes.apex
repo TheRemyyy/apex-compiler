@@ -2,6 +2,7 @@
 // Tests: class, constructor, destructor, fields, methods, visibility, this
 
 import std.io.*;
+import std.math.*;
 
 // Simple class with fields only
 class Point {

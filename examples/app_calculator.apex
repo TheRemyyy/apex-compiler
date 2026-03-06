@@ -2,6 +2,7 @@
 // A comprehensive calculator demonstrating Apex features
 
 import std.io.*;
+import std.math.*;
 
 // Calculator class with operations
 class Calculator {

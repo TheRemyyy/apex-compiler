@@ -132,6 +132,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed lint `L005` shadowing analysis to detect shadowing against:
   - function/class method/constructor parameters
   - `for` loop variables that shadow outer names
+- Fixed test-runner import injection detection to only match real import lines (comment text like `// import std.io.*;` no longer suppresses injection).
+- Fixed test-runner package handling for sources with leading comments containing `;`, so stdio import insertion keeps correct package-first ordering.
+- Fixed test-runner `main` stripping to avoid false positives on comments mentioning `function main(...)`.
+- Fixed test-runner `main` stripping to support `public/private/protected` and `async` main signatures.
+- Fixed parser string interpolation fallback for unclosed `{...` sequences so they remain literal text instead of being interpreted as expressions.
+- Fixed parser handling of empty interpolation braces (`{}`) to preserve braces as literal text.
+- Fixed parser string interpolation normalization so all-literal interpolation parts are merged back into plain string literals.
+- Fixed import checker alias semantics: namespace alias imports no longer implicitly import all symbols as unqualified calls.
+- Fixed import checker false negatives where `import std.math as math;` incorrectly allowed direct `Math__abs(...)` calls without proper import.
+- Fixed import checker false negatives where `import std.math as math;` incorrectly allowed `Math.abs(...)` calls without proper import.
+- Fixed lint `L003` unused-specific-import detection to use alias binding names (for `import ... as alias`) when determining usage.
+- Fixed lint `L003` messages for aliased specific imports to include full import identity (`path as alias`) instead of only raw path.
 - Fixed generic function type parameters being resolved as class names during type checking:
   - function/method generic params now bind to internal type variables in signatures and body checks
   - call sites like `id<Integer>(1)` no longer fail with spurious `expected T, got Integer` errors.

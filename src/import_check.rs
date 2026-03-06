@@ -123,28 +123,22 @@ impl<'a> ImportChecker<'a> {
         let mut imported_functions = HashSet::new();
         let mut wildcard_imports = Vec::new();
         let mut namespace_aliases = HashMap::new();
+        let known_namespaces: HashSet<String> = function_namespaces
+            .values()
+            .cloned()
+            .chain(stdlib.get_functions().values().cloned())
+            .collect();
 
         for import in imports {
             let path = import.path;
             let alias = import.alias;
 
             if let Some(alias_name) = alias {
-                // Alias import acts like importing a namespace and accessing through alias.
-                namespace_aliases.insert(alias_name, path.clone());
-                wildcard_imports.push(path.clone());
-
-                // Import all functions from aliased namespace (user-defined)
-                for (func, func_ns) in function_namespaces.iter() {
-                    if func_ns == &path {
-                        imported_functions.insert(func.clone());
-                    }
-                }
-
-                // Import all stdlib functions from aliased namespace
-                for (func, func_ns) in stdlib.get_functions() {
-                    if func_ns == &path {
-                        imported_functions.insert(func.clone());
-                    }
+                // Alias only namespaces (e.g. import std.math as math).
+                // Function aliasing is parser-accepted syntax but import checking currently
+                // remains conservative and does not auto-import by alias identifier.
+                if known_namespaces.contains(&path) {
+                    namespace_aliases.insert(alias_name, path.clone());
                 }
                 continue;
             }
@@ -333,12 +327,12 @@ impl<'a> ImportChecker<'a> {
                                 if let Some(canonical_name) =
                                     self.resolve_stdlib_call_in_namespace(ns, field)
                                 {
-                                    self.check_function_call(&canonical_name, callee.span.clone());
+                                    let _ = canonical_name;
                                     handled_alias_call = true;
                                 } else if let Some(canonical_name) =
                                     self.resolve_user_call_in_namespace(ns, field)
                                 {
-                                    self.check_function_call(&canonical_name, callee.span.clone());
+                                    let _ = canonical_name;
                                     handled_alias_call = true;
                                 }
                             }
@@ -818,5 +812,35 @@ module MathEx {
         let map = extract_function_namespaces(&program, "demo");
         assert!(map.contains_key("MathEx__addOne"));
         assert!(!map.contains_key("addOne"));
+    }
+
+    #[test]
+    fn alias_namespace_does_not_import_direct_mangled_stdlib_calls() {
+        let source = r#"
+import std.math as math;
+function main(): None {
+    x: Float = Math__abs(-1.0);
+    y: Float = math.abs(-2.0);
+    return None;
+}
+"#;
+        let errors = check_import_errors(source);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].function_name, "Math__abs");
+    }
+
+    #[test]
+    fn alias_namespace_does_not_import_module_style_symbol_without_alias() {
+        let source = r#"
+import std.math as math;
+function main(): None {
+    x: Float = Math.abs(-1.0);
+    y: Float = math.abs(-2.0);
+    return None;
+}
+"#;
+        let errors = check_import_errors(source);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].function_name, "Math__abs");
     }
 }

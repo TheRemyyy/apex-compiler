@@ -2,6 +2,7 @@
 // Implementing common data structures in Apex
 
 import std.io.*;
+import std.string.*;
 
 // Stack implementation
 class Stack {

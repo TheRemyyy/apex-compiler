@@ -2236,6 +2236,7 @@ impl<'src> Parser<'src> {
 
                 let mut expr_str = String::new();
                 let mut depth = 1;
+                let mut closed = false;
                 for c in chars.by_ref() {
                     if c == '{' {
                         depth += 1;
@@ -2243,6 +2244,7 @@ impl<'src> Parser<'src> {
                     } else if c == '}' {
                         depth -= 1;
                         if depth == 0 {
+                            closed = true;
                             break;
                         }
                         expr_str.push(c);
@@ -2251,10 +2253,14 @@ impl<'src> Parser<'src> {
                     }
                 }
 
+                if !closed {
+                    parts.push(StringPart::Literal(format!("{{{}", expr_str)));
+                    continue;
+                }
+
                 // Parse the expression inside {}
                 if expr_str.trim().is_empty() {
-                    // Treat empty {} as literal empty string to avoid crash
-                    parts.push(StringPart::Literal(String::new()));
+                    parts.push(StringPart::Literal("{}".to_string()));
                 } else {
                     let tokens_result = crate::lexer::tokenize(&expr_str);
                     match tokens_result {
@@ -2296,6 +2302,17 @@ impl<'src> Parser<'src> {
             if let StringPart::Literal(s) = &parts[0] {
                 return Ok(Expr::Literal(Literal::String(s.clone())));
             }
+        }
+
+        if parts.iter().all(|p| matches!(p, StringPart::Literal(_))) {
+            let merged = parts
+                .into_iter()
+                .map(|p| match p {
+                    StringPart::Literal(s) => s,
+                    StringPart::Expr(_) => unreachable!(),
+                })
+                .collect::<String>();
+            return Ok(Expr::Literal(Literal::String(merged)));
         }
 
         if parts.is_empty() {
@@ -2850,5 +2867,47 @@ mod tests {
         };
         let field = &en.variants[0].fields[0];
         assert!(matches!(field.ty, Type::Ptr(_)));
+    }
+
+    #[test]
+    fn test_string_interp_empty_braces_stay_literal() {
+        let source = r#"
+            function main(): None {
+                s: String = "before {} after";
+                return None;
+            }
+        "#;
+        let program = parse_source(source).expect("Should parse");
+        let Decl::Function(func) = &program.declarations[0].node else {
+            panic!("Expected function declaration");
+        };
+        let Stmt::Let { value, .. } = &func.body[0].node else {
+            panic!("Expected let statement");
+        };
+        let Expr::Literal(Literal::String(s)) = &value.node else {
+            panic!("Expected string literal");
+        };
+        assert_eq!(s, "before {} after");
+    }
+
+    #[test]
+    fn test_string_interp_unclosed_brace_stays_literal() {
+        let source = r#"
+            function main(): None {
+                s: String = "value: {x";
+                return None;
+            }
+        "#;
+        let program = parse_source(source).expect("Should parse");
+        let Decl::Function(func) = &program.declarations[0].node else {
+            panic!("Expected function declaration");
+        };
+        let Stmt::Let { value, .. } = &func.body[0].node else {
+            panic!("Expected let statement");
+        };
+        let Expr::Literal(Literal::String(s)) = &value.node else {
+            panic!("Expected string literal");
+        };
+        assert_eq!(s, "value: {x");
     }
 }

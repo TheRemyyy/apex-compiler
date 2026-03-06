@@ -1,6 +1,6 @@
 use crate::ast::{Decl, Expr, ImportDecl, Parameter, Program, Span, Stmt, Type};
-use crate::parser::Parser;
 use crate::lexer;
+use crate::parser::Parser;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,12 +136,16 @@ fn check_unused_specific_imports(program: &Program) -> Vec<LintFinding> {
         let Some(imported_name) = import.path.rsplit('.').next() else {
             continue;
         };
+        let binding_name = import.alias.as_deref().unwrap_or(imported_name);
 
-        if !used_names.contains(imported_name) {
+        if !used_names.contains(binding_name) {
             findings.push(LintFinding {
                 code: "L003",
                 level: LintLevel::Warning,
-                message: format!("specific import '{}' appears unused", import.path),
+                message: format!(
+                    "specific import '{}' appears unused",
+                    import_identity(import)
+                ),
                 suggestion: Some(
                     "remove it or switch to a wildcard import only if justified".to_string(),
                 ),
@@ -251,7 +255,10 @@ fn collect_declared_and_used_in_stmt(
             collect_declared_and_used_in_block(body, declared, used);
         }
         Stmt::For {
-            var, iterable, body, ..
+            var,
+            iterable,
+            body,
+            ..
         } => {
             declared.push((var.clone(), stmt.span.clone()));
             collect_expr_idents(&iterable.node, used);
@@ -357,13 +364,18 @@ fn check_shadowed_variables(program: &Program) -> Vec<LintFinding> {
     for decl in &program.declarations {
         match &decl.node {
             Decl::Function(func) => {
-                let mut scopes = vec![scope_with_params(&func.params), HashMap::<String, Span>::new()];
+                let mut scopes = vec![
+                    scope_with_params(&func.params),
+                    HashMap::<String, Span>::new(),
+                ];
                 check_shadowed_in_block(&func.body, &mut scopes, &mut findings);
             }
             Decl::Class(class) => {
                 if let Some(ctor) = &class.constructor {
-                    let mut scopes =
-                        vec![scope_with_params(&ctor.params), HashMap::<String, Span>::new()];
+                    let mut scopes = vec![
+                        scope_with_params(&ctor.params),
+                        HashMap::<String, Span>::new(),
+                    ];
                     check_shadowed_in_block(&ctor.body, &mut scopes, &mut findings);
                 }
                 if let Some(dtor) = &class.destructor {
@@ -371,8 +383,10 @@ fn check_shadowed_variables(program: &Program) -> Vec<LintFinding> {
                     check_shadowed_in_block(&dtor.body, &mut scopes, &mut findings);
                 }
                 for method in &class.methods {
-                    let mut scopes =
-                        vec![scope_with_params(&method.params), HashMap::<String, Span>::new()];
+                    let mut scopes = vec![
+                        scope_with_params(&method.params),
+                        HashMap::<String, Span>::new(),
+                    ];
                     check_shadowed_in_block(&method.body, &mut scopes, &mut findings);
                 }
             }
@@ -448,11 +462,8 @@ fn check_shadowed_in_block(
             }
             Stmt::For { var, body, .. } => {
                 scopes.push(HashMap::new());
-                if let Some(parent_span) = scopes
-                    .iter()
-                    .rev()
-                    .skip(1)
-                    .find_map(|scope| scope.get(var))
+                if let Some(parent_span) =
+                    scopes.iter().rev().skip(1).find_map(|scope| scope.get(var))
                 {
                     findings.push(LintFinding {
                         code: "L005",
@@ -1004,7 +1015,9 @@ function main(): None {
 "#;
         let result = lint_source(source, false).expect("lint succeeds");
         assert!(result.findings.iter().any(|f| {
-            f.code == "L003" && f.message.contains("specific import 'std.math.abs' appears unused")
+            f.code == "L003"
+                && f.message
+                    .contains("specific import 'std.math.abs' appears unused")
         }));
     }
 
@@ -1019,7 +1032,8 @@ function main(): None {
         assert!(result
             .findings
             .iter()
-            .any(|f| f.code == "L005" && f.message.contains("Variable 'x' shadows an outer variable")));
+            .any(|f| f.code == "L005"
+                && f.message.contains("Variable 'x' shadows an outer variable")));
     }
 
     #[test]
@@ -1036,7 +1050,8 @@ function main(): None {
         assert!(result
             .findings
             .iter()
-            .any(|f| f.code == "L005" && f.message.contains("Variable 'i' shadows an outer variable")));
+            .any(|f| f.code == "L005"
+                && f.message.contains("Variable 'i' shadows an outer variable")));
     }
 
     #[test]
@@ -1049,9 +1064,42 @@ function main(): None {
 }
 "#;
         let result = lint_source(source, false).expect("lint succeeds");
-        assert!(result
-            .findings
-            .iter()
-            .any(|f| f.code == "L004" && f.message.contains("Variable 'i' is declared but never used")));
+        assert!(result.findings.iter().any(|f| f.code == "L004"
+            && f.message
+                .contains("Variable 'i' is declared but never used")));
+    }
+
+    #[test]
+    fn does_not_flag_used_aliased_specific_import() {
+        let source = r#"import std.math.Math__abs as abs_fn;
+
+function main(): None {
+    x: Float = abs_fn(-1.0);
+    return None;
+}
+"#;
+        let result = lint_source(source, false).expect("lint succeeds");
+        assert!(!result.findings.iter().any(|f| {
+            f.code == "L003"
+                && f.message
+                    .contains("specific import 'std.math.Math__abs as abs_fn' appears unused")
+        }));
+    }
+
+    #[test]
+    fn flags_unused_aliased_specific_import() {
+        let source = r#"import std.math.Math__abs as abs_fn;
+
+function main(): None {
+    println("ok");
+    return None;
+}
+"#;
+        let result = lint_source(source, false).expect("lint succeeds");
+        assert!(result.findings.iter().any(|f| {
+            f.code == "L003"
+                && f.message
+                    .contains("specific import 'std.math.Math__abs as abs_fn' appears unused")
+        }));
     }
 }

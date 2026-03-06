@@ -2,6 +2,8 @@
 // A comprehensive banking app demonstrating Apex features
 
 import std.io.*;
+import std.math.*;
+import std.string.*;
 
 // Account types
 class BankAccount {

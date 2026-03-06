@@ -118,6 +118,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - running `apex check` without an explicit file now performs project-aware validation (same multi-file pipeline as project builds), not entry-file-only checking.
   - project build/check now runs type checker and borrow checker on the rewritten combined project AST before codegen/link.
 - Improved import-check hint text for module-style stdlib calls (`Math.abs`, `Str.len`, `System.os`) to suggest namespace wildcard imports (`import std.math.*;`) instead of mangled symbol names.
+- Fixed parser built-in generic handling gap for enum named fields so `Ptr<T>` now parses as `Type::Ptr` (instead of generic fallback).
+- Fixed import checker traversal gaps so missing imports are now reported inside:
+  - class methods
+  - constructors/destructors
+  - module functions
+  - interface default method implementations
+- Fixed namespace extraction for module functions to use only mangled symbols (`Module__func`) and avoid leaking unqualified names.
+- Fixed test-runner code generation to declare mutable test counters (`mut tests_total/tests_passed/tests_failed/tests_ignored`), preventing invalid assignments in generated runner code.
+- Fixed test-runner source rewriting to strip non-plain entry signatures like `public function main(...)`, preventing duplicate-main generation.
+- Fixed lint `L003` behavior to correctly flag unused specific imports for stdlib symbols (for example `import std.math.abs;` when unused).
+- Fixed lint `L004` unused-variable analysis to include `for (...)` loop variables.
+- Fixed lint `L005` shadowing analysis to detect shadowing against:
+  - function/class method/constructor parameters
+  - `for` loop variables that shadow outer names
+- Fixed test-runner import injection detection to only match real import lines (comment text like `// import std.io.*;` no longer suppresses injection).
+- Fixed test-runner package handling for sources with leading comments containing `;`, so stdio import insertion keeps correct package-first ordering.
+- Fixed test-runner `main` stripping to avoid false positives on comments mentioning `function main(...)`.
+- Fixed test-runner `main` stripping to support `public/private/protected` and `async` main signatures.
+- Fixed parser string interpolation fallback for unclosed `{...` sequences so they remain literal text instead of being interpreted as expressions.
+- Fixed parser handling of empty interpolation braces (`{}`) to preserve braces as literal text.
+- Fixed parser string interpolation normalization so all-literal interpolation parts are merged back into plain string literals.
+- Fixed import checker alias semantics: namespace alias imports no longer implicitly import all symbols as unqualified calls.
+- Fixed import checker false negatives where `import std.math as math;` incorrectly allowed direct `Math__abs(...)` calls without proper import.
+- Fixed import checker false negatives where `import std.math as math;` incorrectly allowed `Math.abs(...)` calls without proper import.
+- Fixed lint `L003` unused-specific-import detection to use alias binding names (for `import ... as alias`) when determining usage.
+- Fixed lint `L003` messages for aliased specific imports to include full import identity (`path as alias`) instead of only raw path.
 - Fixed generic function type parameters being resolved as class names during type checking:
   - function/method generic params now bind to internal type variables in signatures and body checks
   - call sites like `id<Integer>(1)` no longer fail with spurious `expected T, got Integer` errors.

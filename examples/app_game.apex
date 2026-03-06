@@ -2,6 +2,7 @@
 // A simple game demonstrating Apex features
 
 import std.io.*;
+import std.math.*;
 
 // Player class
 class Player {
