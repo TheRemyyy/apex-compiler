@@ -3891,6 +3891,13 @@ impl<'ctx> Codegen<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>> {
         // Handle List<T> construction
         if ty == "List" || ty.starts_with("List<") {
+            if args.len() == 1 {
+                if let Expr::Literal(Literal::Integer(size)) = &args[0].node {
+                    if *size > 0 {
+                        return self.create_fixed_list(*size as u64);
+                    }
+                }
+            }
             return self.create_empty_list();
         }
 

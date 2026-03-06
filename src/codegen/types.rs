@@ -3,7 +3,7 @@
 
 use crate::ast::{Expr, Spanned, Type};
 use inkwell::types::BasicType;
-use inkwell::values::{BasicValueEnum, PointerValue, ValueKind};
+use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue, ValueKind};
 use inkwell::{AddressSpace, IntPredicate};
 
 use crate::codegen::core::{Codegen, CodegenError, Result};
@@ -671,6 +671,93 @@ impl<'ctx> Codegen<'ctx> {
 
     // === List<T> helpers ===
 
+    pub fn create_fixed_list(&mut self, size: u64) -> Result<BasicValueEnum<'ctx>> {
+        if size == 0 {
+            return self.create_empty_list();
+        }
+
+        // List struct: { capacity: i64, length: i64, data: ptr }
+        let list_type = self.context.struct_type(
+            &[
+                self.context.i64_type().into(),
+                self.context.i64_type().into(),
+                self.context.ptr_type(AddressSpace::default()).into(),
+            ],
+            false,
+        );
+
+        let alloca = self.builder.build_alloca(list_type, "list").unwrap();
+        let i32_type = self.context.i32_type();
+        let zero = i32_type.const_int(0, false);
+
+        let capacity_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    list_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(0, false)],
+                    "capacity",
+                )
+                .unwrap()
+        };
+        self.builder
+            .build_store(capacity_ptr, self.context.i64_type().const_int(size, false))
+            .unwrap();
+
+        let length_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    list_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(1, false)],
+                    "length",
+                )
+                .unwrap()
+        };
+        self.builder
+            .build_store(length_ptr, self.context.i64_type().const_int(0, false))
+            .unwrap();
+
+        let arr_ty = self.context.i64_type().array_type(size as u32);
+        let data_alloca = self
+            .builder
+            .build_alloca(arr_ty, "list_fixed_data")
+            .unwrap();
+        let data_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    arr_ty.as_basic_type_enum(),
+                    data_alloca,
+                    &[zero, zero],
+                    "list_fixed_data_ptr",
+                )
+                .unwrap()
+        };
+        let data_i8_ptr = self
+            .builder
+            .build_pointer_cast(
+                data_ptr,
+                self.context.ptr_type(AddressSpace::default()),
+                "list_fixed_data_i8",
+            )
+            .unwrap();
+        let data_ptr_field = unsafe {
+            self.builder
+                .build_gep(
+                    list_type.as_basic_type_enum(),
+                    alloca,
+                    &[zero, i32_type.const_int(2, false)],
+                    "data_ptr",
+                )
+                .unwrap()
+        };
+        self.builder
+            .build_store(data_ptr_field, data_i8_ptr)
+            .unwrap();
+
+        Ok(self.builder.build_load(list_type, alloca, "list").unwrap())
+    }
+
     pub fn create_empty_list(&mut self) -> Result<BasicValueEnum<'ctx>> {
         // List struct: { capacity: i64, length: i64, data: ptr }
         let list_type = self.context.struct_type(
@@ -748,6 +835,120 @@ impl<'ctx> Codegen<'ctx> {
         self.builder.build_store(data_ptr_field, data_ptr).unwrap();
 
         Ok(self.builder.build_load(list_type, alloca, "list").unwrap())
+    }
+
+    fn grow_list_data_with_copy(
+        &mut self,
+        function: FunctionValue<'ctx>,
+        data_ptr_ptr: PointerValue<'ctx>,
+        capacity_ptr: PointerValue<'ctx>,
+        capacity: IntValue<'ctx>,
+        length: IntValue<'ctx>,
+    ) -> Result<()> {
+        let i64_type = self.context.i64_type();
+        let new_capacity = self
+            .builder
+            .build_int_mul(capacity, i64_type.const_int(2, false), "new_cap")
+            .unwrap();
+        let new_size = self
+            .builder
+            .build_int_mul(new_capacity, i64_type.const_int(8, false), "new_size")
+            .unwrap();
+        let old_data = self
+            .builder
+            .build_load(
+                self.context.ptr_type(AddressSpace::default()),
+                data_ptr_ptr,
+                "old_data",
+            )
+            .unwrap()
+            .into_pointer_value();
+
+        let malloc = self.get_or_declare_malloc();
+        let grown_call = self
+            .builder
+            .build_call(malloc, &[new_size.into()], "grown_data")
+            .unwrap();
+        let grown_data = match grown_call.try_as_basic_value() {
+            ValueKind::Basic(v) => v.into_pointer_value(),
+            _ => panic!("malloc should return a value"),
+        };
+
+        let bytes_to_copy = self
+            .builder
+            .build_int_mul(length, i64_type.const_int(8, false), "copy_bytes")
+            .unwrap();
+        let has_bytes = self
+            .builder
+            .build_int_compare(
+                IntPredicate::SGT,
+                bytes_to_copy,
+                i64_type.const_zero(),
+                "has_copy_bytes",
+            )
+            .unwrap();
+
+        let copy_cond_bb = self.context.append_basic_block(function, "list_copy_cond");
+        let copy_body_bb = self.context.append_basic_block(function, "list_copy_body");
+        let copy_done_bb = self.context.append_basic_block(function, "list_copy_done");
+        self.builder
+            .build_conditional_branch(has_bytes, copy_cond_bb, copy_done_bb)
+            .unwrap();
+
+        self.builder.position_at_end(copy_cond_bb);
+        let idx_ptr = self.builder.build_alloca(i64_type, "copy_idx").unwrap();
+        self.builder
+            .build_store(idx_ptr, i64_type.const_zero())
+            .unwrap();
+        let cond_bb = self
+            .context
+            .append_basic_block(function, "list_copy_loop_cond");
+        self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+        self.builder.position_at_end(cond_bb);
+        let idx = self
+            .builder
+            .build_load(i64_type, idx_ptr, "copy_idx_val")
+            .unwrap()
+            .into_int_value();
+        let keep_copying = self
+            .builder
+            .build_int_compare(IntPredicate::SLT, idx, bytes_to_copy, "copy_continue")
+            .unwrap();
+        self.builder
+            .build_conditional_branch(keep_copying, copy_body_bb, copy_done_bb)
+            .unwrap();
+
+        self.builder.position_at_end(copy_body_bb);
+        let src = unsafe {
+            self.builder
+                .build_gep(self.context.i8_type(), old_data, &[idx], "copy_src")
+                .unwrap()
+        };
+        let dst = unsafe {
+            self.builder
+                .build_gep(self.context.i8_type(), grown_data, &[idx], "copy_dst")
+                .unwrap()
+        };
+        let byte = self
+            .builder
+            .build_load(self.context.i8_type(), src, "copy_byte")
+            .unwrap();
+        self.builder.build_store(dst, byte).unwrap();
+        let next_idx = self
+            .builder
+            .build_int_add(idx, i64_type.const_int(1, false), "copy_next_idx")
+            .unwrap();
+        self.builder.build_store(idx_ptr, next_idx).unwrap();
+        self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+        self.builder.position_at_end(copy_done_bb);
+        self.builder.build_store(data_ptr_ptr, grown_data).unwrap();
+        self.builder
+            .build_store(capacity_ptr, new_capacity)
+            .unwrap();
+
+        Ok(())
     }
 
     // === Map<K,V> helpers ===
@@ -1053,36 +1254,13 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
 
                 self.builder.position_at_end(grow_bb);
-                let new_capacity = self
-                    .builder
-                    .build_int_mul(capacity, i64_type.const_int(2, false), "new_cap")
-                    .unwrap();
-                let new_size = self
-                    .builder
-                    .build_int_mul(new_capacity, eight_i64, "new_size")
-                    .unwrap();
-                let old_data = self
-                    .builder
-                    .build_load(
-                        self.context.ptr_type(AddressSpace::default()),
-                        data_ptr_ptr,
-                        "old_data",
-                    )
-                    .unwrap()
-                    .into_pointer_value();
-                let realloc = self.get_or_declare_realloc();
-                let grown_call = self
-                    .builder
-                    .build_call(realloc, &[old_data.into(), new_size.into()], "grown_data")
-                    .unwrap();
-                let grown_data = match grown_call.try_as_basic_value() {
-                    ValueKind::Basic(v) => v,
-                    _ => panic!("realloc should return a value"),
-                };
-                self.builder.build_store(data_ptr_ptr, grown_data).unwrap();
-                self.builder
-                    .build_store(capacity_ptr, new_capacity)
-                    .unwrap();
+                self.grow_list_data_with_copy(
+                    function,
+                    data_ptr_ptr,
+                    capacity_ptr,
+                    capacity,
+                    length,
+                )?;
                 self.builder.build_unconditional_branch(cont_bb).unwrap();
 
                 self.builder.position_at_end(cont_bb);
@@ -1387,36 +1565,13 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
 
                 self.builder.position_at_end(grow_bb);
-                let new_capacity = self
-                    .builder
-                    .build_int_mul(capacity, i64_type.const_int(2, false), "new_cap")
-                    .unwrap();
-                let new_size = self
-                    .builder
-                    .build_int_mul(new_capacity, eight_i64, "new_size")
-                    .unwrap();
-                let old_data = self
-                    .builder
-                    .build_load(
-                        self.context.ptr_type(AddressSpace::default()),
-                        data_ptr_ptr,
-                        "old_data",
-                    )
-                    .unwrap()
-                    .into_pointer_value();
-                let realloc = self.get_or_declare_realloc();
-                let grown_call = self
-                    .builder
-                    .build_call(realloc, &[old_data.into(), new_size.into()], "grown_data")
-                    .unwrap();
-                let grown_data = match grown_call.try_as_basic_value() {
-                    ValueKind::Basic(v) => v,
-                    _ => panic!("realloc should return a value"),
-                };
-                self.builder.build_store(data_ptr_ptr, grown_data).unwrap();
-                self.builder
-                    .build_store(capacity_ptr, new_capacity)
-                    .unwrap();
+                self.grow_list_data_with_copy(
+                    function,
+                    data_ptr_ptr,
+                    capacity_ptr,
+                    capacity,
+                    length,
+                )?;
                 self.builder.build_unconditional_branch(cont_bb).unwrap();
 
                 self.builder.position_at_end(cont_bb);

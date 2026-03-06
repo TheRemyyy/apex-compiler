@@ -47,6 +47,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### ♻️ Changed
 
+- Project object compilation for cache misses now runs in parallel (per-file LLVM context + codegen instance), then links sequentially.
+- Import checking now reuses a single `StdLib` instance and shared `Arc<HashMap<...>>` namespace map instead of rebuilding/cloning per file.
+- Import typo suggestion distance now uses a rolling two-row Levenshtein buffer (`O(m)` memory) instead of full matrix allocation (`O(n*m)`).
+- `List<T>` now supports fixed-capacity construction with a compile-time literal argument (`List<T>(N)`) using stack-backed storage.
+- List growth path now uses explicit `malloc + copy` reallocation logic, which is compatible with both heap-backed and stack-backed list buffers.
 - `apex fmt` now preserves source comments instead of refusing commented files.
 - Project builds now wire `target` from `apex.toml` into final Clang linking (`--target <triple>`).
 - Project builds can now emit shared libraries and static archives via `output_kind`.

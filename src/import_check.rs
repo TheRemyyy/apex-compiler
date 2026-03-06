@@ -3,6 +3,7 @@
 use crate::ast::*;
 use crate::stdlib::StdLib;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// Error when using function without importing it
 #[derive(Debug, Clone)]
@@ -34,8 +35,10 @@ impl ImportError {
 /// Calculate Levenshtein distance between two strings
 #[allow(clippy::needless_range_loop)]
 fn levenshtein_distance(a: &str, b: &str) -> usize {
-    let len_a = a.chars().count();
-    let len_b = b.chars().count();
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let len_a = a_chars.len();
+    let len_b = b_chars.len();
 
     if len_a == 0 {
         return len_b;
@@ -44,25 +47,19 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
         return len_a;
     }
 
-    let mut matrix = vec![vec![0; len_b + 1]; len_a + 1];
+    let mut prev: Vec<usize> = (0..=len_b).collect();
+    let mut curr: Vec<usize> = vec![0; len_b + 1];
 
-    for i in 0..=len_a {
-        matrix[i][0] = i;
-    }
-    for j in 0..=len_b {
-        matrix[0][j] = j;
-    }
-
-    for (i, ca) in a.chars().enumerate() {
-        for (j, cb) in b.chars().enumerate() {
+    for (i, ca) in a_chars.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b_chars.iter().enumerate() {
             let cost = if ca == cb { 0 } else { 1 };
-            matrix[i + 1][j + 1] = (matrix[i][j + 1] + 1)
-                .min(matrix[i + 1][j] + 1)
-                .min(matrix[i][j] + cost);
+            curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
         }
+        std::mem::swap(&mut prev, &mut curr);
     }
 
-    matrix[len_a][len_b]
+    prev[len_b]
 }
 
 /// Find the closest matching string from candidates
@@ -88,9 +85,9 @@ fn did_you_mean(name: &str, candidates: &[String]) -> Option<String> {
 }
 
 /// Tracks which functions are defined in which files/namespaces
-pub struct ImportChecker {
+pub struct ImportChecker<'a> {
     /// function_name -> namespace (e.g., "factorial" -> "utils.math")
-    function_namespaces: HashMap<String, String>,
+    function_namespaces: Arc<HashMap<String, String>>,
     /// Current file namespace
     current_namespace: String,
     /// Imported functions in current file (just the name, e.g., "factorial")
@@ -99,18 +96,19 @@ pub struct ImportChecker {
     #[allow(dead_code)]
     wildcard_imports: Vec<String>, // e.g., ["utils.math", "utils.strings"]
     /// Standard library registry
-    stdlib: StdLib,
+    stdlib: &'a StdLib,
     /// Available function names for suggestions
     available_functions: Vec<String>,
     /// Collected errors
     errors: Vec<ImportError>,
 }
 
-impl ImportChecker {
+impl<'a> ImportChecker<'a> {
     pub fn new(
-        function_namespaces: HashMap<String, String>,
+        function_namespaces: Arc<HashMap<String, String>>,
         current_namespace: String,
         imports: Vec<ImportDecl>,
+        stdlib: &'a StdLib,
     ) -> Self {
         let mut imported_functions = HashSet::new();
         let mut wildcard_imports = Vec::new();
@@ -124,14 +122,13 @@ impl ImportChecker {
                 wildcard_imports.push(ns.to_string());
 
                 // Add all functions from this namespace (user-defined)
-                for (func, func_ns) in &function_namespaces {
+                for (func, func_ns) in function_namespaces.iter() {
                     if func_ns == ns {
                         imported_functions.insert(func.clone());
                     }
                 }
 
                 // Add all stdlib functions from this namespace
-                let stdlib = StdLib::new();
                 for (func, func_ns) in stdlib.get_functions() {
                     if func_ns == ns {
                         imported_functions.insert(func.clone());
@@ -148,7 +145,6 @@ impl ImportChecker {
 
         // Collect available function names for suggestions
         let mut available_functions: Vec<String> = function_namespaces.keys().cloned().collect();
-        let stdlib = StdLib::new();
         available_functions.extend(stdlib.get_functions().keys().cloned());
 
         Self {
@@ -156,7 +152,7 @@ impl ImportChecker {
             current_namespace,
             imported_functions,
             wildcard_imports,
-            stdlib: StdLib::new(),
+            stdlib,
             available_functions,
             errors: Vec::new(),
         }

@@ -27,6 +27,7 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Instant;
 use twox_hash::XxHash64;
 
@@ -36,6 +37,7 @@ use crate::codegen::Codegen;
 use crate::import_check::ImportChecker;
 use crate::parser::Parser;
 use crate::project::{find_project_root, OutputKind, ProjectConfig};
+use crate::stdlib::StdLib;
 use crate::test_runner::{discover_tests, generate_test_runner_with_source, print_discovery};
 use crate::typeck::TypeChecker;
 
@@ -1195,14 +1197,17 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
     // Phase 2: Check imports for each file
     if do_check {
         println!("{} Checking imports...", "→".cyan());
+        let shared_function_map = Arc::new(global_function_map.clone());
+        let stdlib = StdLib::new();
 
         let import_results: Vec<Result<(), String>> = parsed_files
             .par_iter()
             .map(|unit| {
                 let mut checker = ImportChecker::new(
-                    global_function_map.clone(),
+                    Arc::clone(&shared_function_map),
                     unit.namespace.clone(),
                     unit.imports.clone(),
+                    &stdlib,
                 );
 
                 if let Err(errors) = checker.check_program(&unit.program) {
@@ -1356,14 +1361,15 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
         )?;
     } else {
         let object_build_fingerprint = compute_object_build_fingerprint(&link);
-        let mut object_paths: Vec<PathBuf> = Vec::new();
+        let mut object_paths: Vec<Option<PathBuf>> = vec![None; rewritten_files.len()];
         let mut object_cache_hits: usize = 0;
         let object_candidate_count = rewritten_files
             .iter()
             .filter(|unit| !unit.active_symbols.is_empty())
             .count();
+        let mut cache_misses: Vec<(usize, &RewrittenProjectUnit)> = Vec::new();
 
-        for unit in &rewritten_files {
+        for (index, unit) in rewritten_files.iter().enumerate() {
             if unit.active_symbols.is_empty() {
                 continue;
             }
@@ -1375,27 +1381,37 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
                 &rewrite_context_fingerprint,
                 &object_build_fingerprint,
             )? {
-                object_paths.push(cached_obj);
+                object_paths[index] = Some(cached_obj);
                 object_cache_hits += 1;
                 continue;
             }
+            cache_misses.push((index, unit));
+        }
 
-            let obj_path = object_cache_object_path(&project_root, &unit.file);
-            compile_program_ast_to_object_filtered(
-                &combined_program,
-                &unit.file,
-                &obj_path,
-                &link,
-                &unit.active_symbols,
-            )?;
-            save_object_cache_meta(
-                &project_root,
-                &unit.file,
-                &unit.source_fingerprint,
-                &rewrite_context_fingerprint,
-                &object_build_fingerprint,
-            )?;
-            object_paths.push(obj_path);
+        let compiled_results: Vec<(usize, PathBuf)> = cache_misses
+            .par_iter()
+            .map(|(index, unit)| {
+                let obj_path = object_cache_object_path(&project_root, &unit.file);
+                compile_program_ast_to_object_filtered(
+                    &combined_program,
+                    &unit.file,
+                    &obj_path,
+                    &link,
+                    &unit.active_symbols,
+                )?;
+                save_object_cache_meta(
+                    &project_root,
+                    &unit.file,
+                    &unit.source_fingerprint,
+                    &rewrite_context_fingerprint,
+                    &object_build_fingerprint,
+                )?;
+                Ok::<(usize, PathBuf), String>((*index, obj_path))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+
+        for (index, obj_path) in compiled_results {
+            object_paths[index] = Some(obj_path);
         }
 
         if object_cache_hits > 0 {
@@ -1407,7 +1423,8 @@ fn build_project(_release: bool, emit_llvm: bool, do_check: bool) -> Result<(), 
             );
         }
 
-        link_objects(&object_paths, &output_path, &link)?;
+        let link_inputs: Vec<PathBuf> = object_paths.into_iter().flatten().collect();
+        link_objects(&link_inputs, &output_path, &link)?;
     }
 
     println!(
@@ -1631,7 +1648,9 @@ fn compile_source(
         // Import check
         let namespace = extract_namespace(&program);
         let imports = extract_imports(&program);
-        let mut import_checker = ImportChecker::new(HashMap::new(), namespace, imports);
+        let stdlib = StdLib::new();
+        let mut import_checker =
+            ImportChecker::new(Arc::new(HashMap::new()), namespace, imports, &stdlib);
         if let Err(errors) = import_checker.check_program(&program) {
             eprintln!("{} Import errors:", "error".red().bold());
             for err in errors {
@@ -1996,7 +2015,9 @@ fn check_file(file: Option<&Path>) -> Result<(), String> {
     // Run import checker
     let namespace = extract_namespace(&program);
     let imports = extract_imports(&program);
-    let mut import_checker = ImportChecker::new(HashMap::new(), namespace, imports);
+    let stdlib = StdLib::new();
+    let mut import_checker =
+        ImportChecker::new(Arc::new(HashMap::new()), namespace, imports, &stdlib);
     if let Err(errors) = import_checker.check_program(&program) {
         eprintln!("{} Import errors:", "error".red().bold());
         for err in errors {
