@@ -105,3 +105,34 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run build
+      
+  benchmark:
+    name: Performance Benchmark
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/install-llvm
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: apex-compiler-linux-release
+          path: target/release
+
+      - name: Setup Environment
+        run: |
+          chmod +x target/release/apex-compiler
+          echo "${{ github.workspace }}/target/release" >> $GITHUB_PATH
+
+      - name: Run Benchmark
+        run: |
+          cd benchmark
+          python3 run.py --output-dir results
+
+      - name: Display Results
+        run: |
+          if [ -f benchmark/results/latest.md ]; then
+            cat benchmark/results/latest.md >> $GITHUB_STEP_SUMMARY
+            cat benchmark/results/latest.md
+          fi
