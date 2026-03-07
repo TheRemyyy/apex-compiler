@@ -133,11 +133,10 @@ jobs:
 
       - name: Display Results
         run: |
-          # Kontrola v benchmark/results/latest.md
           if [ -f benchmark/results/latest.md ]; then
             cat benchmark/results/latest.md >> $GITHUB_STEP_SUMMARY
             cat benchmark/results/latest.md
           else
-            echo "Soubor benchmark/results/latest.md nebyl nalezen."
-            ls -R benchmark/  # Vypíše strukturu pro debug, kdyby to zase nenašlo
+            echo "File benchmark/results/latest.md not found."
+            ls -R benchmark/
           fi
