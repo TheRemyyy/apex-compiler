@@ -137,24 +137,41 @@ runs:
           $shimBin = Join-Path $shimRoot "bin"
           New-Item -ItemType Directory -Force -Path $shimBin | Out-Null
           $shimSource = Join-Path $env:RUNNER_TEMP "llvm-config-shim.c"
-          $escapedPrefix = $llvmPrefix.Replace('\', '\\')
-          $escapedVersion = $llvmVersion.Replace('\', '\\')
           $shimCode = @(
             '#include <stdio.h>',
             '#include <string.h>',
             '#include <windows.h>',
             '',
-            '#define PREFIX "' + $escapedPrefix + '"',
-            '#define VERSION "' + $escapedVersion + '"',
+            '#define VERSION "' + $llvmVersion + '"',
             '',
-            'static void print_libnames(void)',
+            'static void get_prefix(char* out, size_t size)',
+            '{',
+            '    char path[MAX_PATH];',
+            '    char* slash;',
+            '',
+            '    if (GetModuleFileNameA(NULL, path, MAX_PATH) == 0) {',
+            '        out[0] = ''\0'';',
+            '        return;',
+            '    }',
+            '    slash = strrchr(path, ''\\'');',
+            '    if (slash) {',
+            '        *slash = ''\0'';',
+            '        slash = strrchr(path, ''\\'');',
+            '        if (slash) {',
+            '            *slash = ''\0'';',
+            '        }',
+            '    }',
+            '    snprintf(out, size, "%s", path);',
+            '}',
+            '',
+            'static void print_libnames(const char* prefix)',
             '{',
             '    char pattern[MAX_PATH];',
             '    WIN32_FIND_DATAA find_data;',
             '    HANDLE handle;',
             '    int first = 1;',
             '',
-            '    snprintf(pattern, sizeof(pattern), "%s\\\\lib\\\\*.lib", PREFIX);',
+            '    snprintf(pattern, sizeof(pattern), "%s\\\\lib\\\\*.lib", prefix);',
             '    handle = FindFirstFileA(pattern, &find_data);',
             '    if (handle == INVALID_HANDLE_VALUE) {',
             '        return;',
@@ -177,7 +194,13 @@ runs:
             'int main(int argc, char** argv)',
             '    {',
             '        int i;',
+            '        char prefix[MAX_PATH];',
             '        const char* command = NULL;',
+            '',
+            '        get_prefix(prefix, sizeof(prefix));',
+            '        if (prefix[0] == ''\0'') {',
+            '            return 1;',
+            '        }',
             '',
             '        for (i = 1; i < argc; ++i) {',
             '            if (strcmp(argv[i], "--link-static") == 0 || strcmp(argv[i], "--link-shared") == 0) {',
@@ -196,11 +219,11 @@ runs:
             '            return 0;',
             '        }',
             '        if (strcmp(command, "--libdir") == 0) {',
-            '            printf("%s\\\\lib\\n", PREFIX);',
+            '            printf("%s\\\\lib\\n", prefix);',
             '            return 0;',
             '        }',
             '        if (strcmp(command, "--cflags") == 0) {',
-            '            printf("-I%s\\\\include\\n", PREFIX);',
+            '            printf("-I%s\\\\include\\n", prefix);',
             '            return 0;',
             '        }',
             '        if (strcmp(command, "--build-mode") == 0) {',
@@ -208,7 +231,7 @@ runs:
             '            return 0;',
             '        }',
             '        if (strcmp(command, "--libnames") == 0) {',
-            '            print_libnames();',
+            '            print_libnames(prefix);',
             '            printf("\\n");',
             '            return 0;',
             '        }',
@@ -221,6 +244,9 @@ runs:
             '}'
           ) -join "`n"
           $shimCode | Set-Content -Path $shimSource -Encoding UTF8
+
+          cmd /c mklink /J "$shimRoot\lib" "$llvmLib" | Out-Null
+          cmd /c mklink /J "$shimRoot\include" (Join-Path $llvmPrefix "include") | Out-Null
 
           & $clangPath -O2 -o (Join-Path $shimBin "llvm-config.exe") $shimSource
           if ($LASTEXITCODE -ne 0) {
