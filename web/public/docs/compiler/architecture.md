@@ -37,6 +37,7 @@ This document describes the internal architecture of the Apex compiler.
 - **Object file cache** (`.apexcache/objects/*.{o|obj}` + `*.json`):
   - Stores per-file compiled objects keyed by semantic fingerprint + per-file rewrite-context fingerprint + build options (`opt_level`, `target`, compiler version, linker mode).
   - On incremental edits, unchanged files reuse cached object files and final build performs fast relink from cached + rebuilt objects.
+  - Object cache misses now emit object files directly from LLVM target machines, avoiding the old textual IR `.ll` -> `clang -c` round-trip.
 - **Link manifest cache** (`.apexcache/link/latest.json`):
   - Records the ordered object input list plus final link configuration for the last successful build.
   - If a rebuild produces zero object cache misses and the manifest still matches, Apex skips the final `lld` link invocation entirely and reuses the existing output artifact.

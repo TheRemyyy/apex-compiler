@@ -8,7 +8,7 @@ use crate::ast::{
 use inkwell::basic_block::BasicBlock;
 use inkwell::module::Linkage;
 use inkwell::targets::{
-    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
+    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
 };
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType};
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue, ValueKind};
@@ -1289,23 +1289,59 @@ impl<'ctx> Codegen<'ctx> {
         self.module.print_to_file(path).map_err(|e| e.to_string())
     }
 
-    pub fn write_object(&self, path: &Path) -> std::result::Result<(), String> {
-        Target::initialize_native(&InitializationConfig::default())
-            .map_err(|e| format!("Failed to init target: {}", e))?;
+    fn resolve_optimization_level(opt_level: Option<&str>) -> OptimizationLevel {
+        match opt_level
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .unwrap_or_default()
+            .as_str()
+        {
+            "0" => OptimizationLevel::None,
+            "1" => OptimizationLevel::Less,
+            "2" => OptimizationLevel::Default,
+            "s" | "z" | "3" | "fast" | "" => OptimizationLevel::Aggressive,
+            _ => OptimizationLevel::Aggressive,
+        }
+    }
 
-        let triple = TargetMachine::get_default_triple();
+    pub fn write_object_with_config(
+        &self,
+        path: &Path,
+        opt_level: Option<&str>,
+        target_triple: Option<&str>,
+    ) -> std::result::Result<(), String> {
+        if target_triple.is_some() {
+            Target::initialize_all(&InitializationConfig::default());
+        } else {
+            Target::initialize_native(&InitializationConfig::default())
+                .map_err(|e| format!("Failed to init target: {}", e))?;
+        }
+
+        let triple = target_triple
+            .map(TargetTriple::create)
+            .unwrap_or_else(TargetMachine::get_default_triple);
         let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
+        let cpu = if target_triple.is_some() {
+            "generic"
+        } else {
+            "native"
+        };
+        let features = "";
 
         let machine = target
             .create_target_machine(
                 &triple,
-                "native",
-                "+avx2,+fma",
-                OptimizationLevel::Aggressive,
+                cpu,
+                features,
+                Self::resolve_optimization_level(opt_level),
                 RelocMode::Default,
                 CodeModel::Default,
             )
             .ok_or("Failed to create target machine")?;
+
+        self.module.set_triple(&triple);
+        self.module
+            .set_data_layout(&machine.get_target_data().get_data_layout());
 
         machine
             .write_to_file(&self.module, FileType::Object, path)

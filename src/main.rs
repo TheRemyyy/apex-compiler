@@ -3255,7 +3255,6 @@ fn compile_program_ast_to_object_filtered(
         .compile_filtered(program, active_symbols)
         .map_err(|e| format!("{}: Codegen error: {}", "error".red().bold(), e.message))?;
 
-    let ir_path = object_path.with_extension("ll");
     if let Some(parent) = object_path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
             format!(
@@ -3266,9 +3265,16 @@ fn compile_program_ast_to_object_filtered(
             )
         })?;
     }
-    codegen.write_ir(&ir_path)?;
-    compile_ir_to_object(&ir_path, object_path, link)?;
-    let _ = fs::remove_file(&ir_path);
+    codegen
+        .write_object_with_config(object_path, link.opt_level, link.target)
+        .map_err(|e| {
+            format!(
+                "{}: Failed to emit object for '{}': {}",
+                "error".red().bold(),
+                source_path.display(),
+                e
+            )
+        })?;
     Ok(())
 }
 
@@ -3659,49 +3665,6 @@ fn compile_ir(ir_path: &Path, output_path: &Path, link: &LinkConfig<'_>) -> Resu
         "{}: Clang failed: {}",
         "error".red().bold(),
         last_stderr
-    ))
-}
-
-fn compile_ir_to_object(
-    ir_path: &Path,
-    object_path: &Path,
-    link: &LinkConfig<'_>,
-) -> Result<(), String> {
-    require_lld_linker()?;
-    let opt_flag = resolve_clang_opt_flag(link.opt_level);
-    let mut cmd = Command::new("clang");
-    cmd.arg("-c")
-        .arg(ir_path)
-        .arg("-o")
-        .arg(object_path)
-        .arg("-Wno-override-module")
-        .arg(opt_flag)
-        .arg("-fuse-ld=lld");
-
-    if let Some(target_triple) = link.target {
-        cmd.arg("--target").arg(target_triple);
-    } else {
-        cmd.arg("-march=native").arg("-mtune=native");
-    }
-
-    cmd.arg("-fomit-frame-pointer");
-
-    let output = cmd.output().map_err(|_| {
-        format!(
-            "{}: Clang not found. Install clang to compile.",
-            "error".red().bold()
-        )
-    })?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    Err(format!(
-        "{}: Clang failed while compiling object: {}",
-        "error".red().bold(),
-        stderr
     ))
 }
 
