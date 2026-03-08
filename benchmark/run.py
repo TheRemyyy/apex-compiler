@@ -29,8 +29,8 @@ BENCHMARKS: List[BenchmarkSpec] = [
         kind="compile",
     ),
     BenchmarkSpec(
-        "compile_project_mega_chromium_like",
-        "Compile stress test on generated chromium-like 1000-file mega-project per language",
+        "compile_project_synthetic_mega_graph",
+        "Compile stress test on a generated 1000-file synthetic mega-graph project per language",
         kind="compile",
     ),
     BenchmarkSpec(
@@ -48,9 +48,18 @@ BENCHMARKS: List[BenchmarkSpec] = [
         "Compile a generated mega-project, apply syntax-only edits to 10 files, then rebuild",
         kind="incremental_batch",
     ),
+    BenchmarkSpec(
+        "incremental_rebuild_synthetic_mega_graph",
+        "Compile a generated synthetic mega-graph project, apply syntax-only edits to many files, then rebuild",
+        kind="incremental_batch_synthetic_mega_graph",
+    ),
 ]
 
 LANGUAGES = ("apex", "c", "rust", "go")
+SYNTHETIC_MEGA_GRAPH_FILE_COUNT = 1400
+SYNTHETIC_MEGA_GRAPH_FUNCS_PER_FILE = 96
+SYNTHETIC_MEGA_GRAPH_MUTATE_COUNT = 40
+SYNTHETIC_MEGA_GRAPH_MAX_DEPS = 6
 
 
 def is_windows() -> bool:
@@ -446,31 +455,36 @@ def generate_incremental_rebuild_mega_project_10_files(root: Path, bench_name: s
     )
 
 
-def chromium_like_dependency_indices(index: int) -> List[int]:
+def synthetic_mega_graph_dependency_indices(index: int) -> List[int]:
     if index <= 0:
         return []
 
     candidates = [
         index - 1,
         index - 3,
+        index - 7,
+        index - 15,
         index // 2,
         index - 32,
+        index - 64,
         (index * 7) // 11,
+        (index * 5) // 8,
+        (index * 3) // 5,
     ]
     deps: List[int] = []
     for candidate in candidates:
         if 0 <= candidate < index and candidate not in deps:
             deps.append(candidate)
-        if len(deps) == 4:
+        if len(deps) == SYNTHETIC_MEGA_GRAPH_MAX_DEPS:
             break
     return deps
 
 
-def generate_compile_project_mega_chromium_like(
-    root: Path, bench_name: str
+def generate_compile_project_synthetic_mega_graph(
+    root: Path, bench_name: str, mutate_count: int = 10
 ) -> Dict[str, Dict[str, Path]]:
-    file_count = 1000
-    funcs_per_file = 64
+    file_count = SYNTHETIC_MEGA_GRAPH_FILE_COUNT
+    funcs_per_file = SYNTHETIC_MEGA_GRAPH_FUNCS_PER_FILE
     generated_root = root / "benchmark" / "generated" / bench_name
     if generated_root.exists():
         shutil.rmtree(generated_root)
@@ -503,7 +517,7 @@ def generate_compile_project_mega_chromium_like(
     for i, part in enumerate(part_names):
         apex_files.append(f"src/{part}.apex")
         apex_part_files.append(apex_src / f"{part}.apex")
-        deps = chromium_like_dependency_indices(i)
+        deps = synthetic_mega_graph_dependency_indices(i)
         lines: List[str] = []
         for j in range(funcs_per_file):
             lines.append(
@@ -512,13 +526,28 @@ def generate_compile_project_mega_chromium_like(
         lines.extend(["", f"function {part}_apply(x: Integer): Integer {{", "    mut y: Integer = x;"])
         for j in range(funcs_per_file):
             lines.append(f"    y = {part}_f{j:03d}(y);")
-        lines.extend(["    return y;", "}", "", f"function {part}_wire(x: Integer): Integer {{", f"    mut y: Integer = {part}_apply(x);"])
+        lines.extend(["    return y;", "}"])
+        lines.extend(["", f"function {part}_chain(x: Integer): Integer {{", f"    mut y: Integer = {part}_apply(x);"])
+        for j in range(0, funcs_per_file, 3):
+            lines.append(f"    y = {part}_f{j:03d}(y);")
+        lines.extend(["    return y;", "}"])
+        lines.extend(["", f"function {part}_wire(x: Integer): Integer {{", f"    mut y: Integer = {part}_chain(x);"])
         for dep in deps:
             dep_part = part_names[dep]
             lines.append(f"    y = core_fold(y, {dep_part}_apply(x), {i + dep + 1});")
         for dep in deps:
             dep_part = part_names[dep]
             lines.append(f"    y = core_fold(y, {dep_part}_wire(x), {i + dep + 33});")
+        lines.extend(["    return y;", "}"])
+        lines.extend(["", f"function {part}_fanout(x: Integer): Integer {{", f"    mut y: Integer = {part}_wire(x);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            lines.append(f"    y = core_fold(y, {dep_part}_chain(x), {i + dep + 65});")
+        lines.extend(["    return y;", "}"])
+        lines.extend(["", f"function {part}_signature(seed: Integer): Integer {{", f"    mut y: Integer = {part}_fanout(seed);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            lines.append(f"    y = core_fold(y, {dep_part}_apply(seed), {i + dep + 97});")
         lines.extend(["    return y;", "}"])
         (apex_src / f"{part}.apex").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -572,7 +601,7 @@ def generate_compile_project_mega_chromium_like(
         encoding="utf-8",
     )
     for i, part in enumerate(part_names):
-        deps = chromium_like_dependency_indices(i)
+        deps = synthetic_mega_graph_dependency_indices(i)
         (c_dir / f"{part}.h").write_text(
             "\n".join(
                 [
@@ -580,6 +609,7 @@ def generate_compile_project_mega_chromium_like(
                     "#define " + part.upper() + "_H",
                     "#include <stdint.h>",
                     f"int64_t {part}_apply(int64_t x);",
+                    f"int64_t {part}_chain(int64_t x);",
                     f"int64_t {part}_wire(int64_t x);",
                     "#endif",
                     "",
@@ -592,16 +622,33 @@ def generate_compile_project_mega_chromium_like(
         lines = ["#include <stdint.h>", '#include "core.h"', f'#include "{part}.h"']
         for dep in deps:
             lines.append(f'#include "{part_names[dep]}.h"')
+        for j in range(funcs_per_file):
+            lines.append(f"int64_t {part}_f{j:03d}(int64_t x) {{ return core_mix(x, {i + j + 1}); }}")
         lines.extend([f"int64_t {part}_apply(int64_t x) {{", "    int64_t y = x;"])
         for j in range(funcs_per_file):
-            lines.append(f"    y = core_mix(y, {i + j + 1});")
-        lines.extend(["    return y;", "}", "", f"int64_t {part}_wire(int64_t x) {{", f"    int64_t y = {part}_apply(x);"])
+            lines.append(f"    y = {part}_f{j:03d}(y);")
+        lines.extend(["    return y;", "}"])
+        lines.extend(["", f"int64_t {part}_chain(int64_t x) {{", f"    int64_t y = {part}_apply(x);"])
+        for j in range(0, funcs_per_file, 3):
+            lines.append(f"    y = {part}_f{j:03d}(y);")
+        lines.extend(["    return y;", "}"])
+        lines.extend(["", f"int64_t {part}_wire(int64_t x) {{", f"    int64_t y = {part}_chain(x);"])
         for dep in deps:
             dep_part = part_names[dep]
             lines.append(f"    y = core_fold(y, {dep_part}_apply(x), {i + dep + 1});")
         for dep in deps:
             dep_part = part_names[dep]
             lines.append(f"    y = core_fold(y, {dep_part}_wire(x), {i + dep + 33});")
+        lines.extend(["    return y;", "}"])
+        lines.extend(["", f"int64_t {part}_fanout(int64_t x) {{", f"    int64_t y = {part}_wire(x);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            lines.append(f"    y = core_fold(y, {dep_part}_chain(x), {i + dep + 65});")
+        lines.extend(["    return y;", "}"])
+        lines.extend(["", f"int64_t {part}_signature(int64_t seed) {{", f"    int64_t y = {part}_fanout(seed);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            lines.append(f"    y = core_fold(y, {dep_part}_apply(seed), {i + dep + 97});")
         lines.extend(["    return y;", "}"])
         c_part_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -643,11 +690,16 @@ def generate_compile_project_mega_chromium_like(
     for i, part in enumerate(part_names):
         rust_part_file = rust_dir / f"{part}.rs"
         rust_part_files.append(rust_part_file)
-        deps = chromium_like_dependency_indices(i)
+        deps = synthetic_mega_graph_dependency_indices(i)
         lines = ["pub fn apply(x: i64) -> i64 {", "    let mut y = x;"]
         for j in range(funcs_per_file):
             lines.append(f"    y = crate::core::mix(y, {i + j + 1});")
-        lines.extend(["    y", "}", "", "pub fn wire(x: i64) -> i64 {", "    let mut y = apply(x);"])
+        lines.extend(["    y", "}"])
+        lines.extend(["", "pub fn chain(x: i64) -> i64 {", "    let mut y = apply(x);"])
+        for j in range(0, funcs_per_file, 3):
+            lines.append(f"    y = crate::{part}::f{j:03d}(y);")
+        lines.extend(["    y", "}"])
+        lines.extend(["", "pub fn wire(x: i64) -> i64 {", "    let mut y = chain(x);"])
         for dep in deps:
             dep_part = part_names[dep]
             lines.append(f"    y = crate::core::fold(y, crate::{dep_part}::apply(x), {i + dep + 1});")
@@ -655,6 +707,18 @@ def generate_compile_project_mega_chromium_like(
             dep_part = part_names[dep]
             lines.append(f"    y = crate::core::fold(y, crate::{dep_part}::wire(x), {i + dep + 33});")
         lines.extend(["    y", "}"])
+        lines.extend(["", "pub fn fanout(x: i64) -> i64 {", "    let mut y = wire(x);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            lines.append(f"    y = crate::core::fold(y, crate::{dep_part}::chain(x), {i + dep + 65});")
+        lines.extend(["    y", "}"])
+        lines.extend(["", "pub fn signature(seed: i64) -> i64 {", "    let mut y = fanout(seed);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            lines.append(f"    y = crate::core::fold(y, crate::{dep_part}::apply(seed), {i + dep + 97});")
+        lines.extend(["    y", "}"])
+        for j in range(funcs_per_file):
+            lines.insert(j, f"pub fn f{j:03d}(x: i64) -> i64 {{ crate::core::mix(x, {i + j + 1}) }}")
         rust_part_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     go_dir = generated_root / "go"
@@ -686,11 +750,16 @@ def generate_compile_project_mega_chromium_like(
     for i, part in enumerate(part_names):
         go_part_file = go_dir / f"unit_{i:04d}.go"
         go_part_files.append(go_part_file)
-        deps = chromium_like_dependency_indices(i)
+        deps = synthetic_mega_graph_dependency_indices(i)
         lines = ["package main", "", "func " + part + "_apply(x int64) int64 {", "    y := x"]
         for j in range(funcs_per_file):
             lines.append(f"    y = coreMix(y, {i + j + 1})")
-        lines.extend(["    return y", "}", "", "func " + part + "_wire(x int64) int64 {", "    y := " + part + "_apply(x)"])
+        lines.extend(["    return y", "}"])
+        lines.extend(["", "func " + part + "_chain(x int64) int64 {", "    y := " + part + "_apply(x)"])
+        for j in range(0, funcs_per_file, 3):
+            lines.append(f"    y = {part}_f{j:03d}(y)")
+        lines.extend(["    return y", "}"])
+        lines.extend(["", "func " + part + "_wire(x int64) int64 {", "    y := " + part + "_chain(x)"])
         for dep in deps:
             dep_part = part_names[dep]
             lines.append(f"    y = coreFold(y, {dep_part}_apply(x), {i + dep + 1})")
@@ -698,12 +767,24 @@ def generate_compile_project_mega_chromium_like(
             dep_part = part_names[dep]
             lines.append(f"    y = coreFold(y, {dep_part}_wire(x), {i + dep + 33})")
         lines.extend(["    return y", "}"])
+        lines.extend(["", "func " + part + "_fanout(x int64) int64 {", "    y := " + part + "_wire(x)"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            lines.append(f"    y = coreFold(y, {dep_part}_chain(x), {i + dep + 65})")
+        lines.extend(["    return y", "}"])
+        lines.extend(["", "func " + part + "_signature(seed int64) int64 {", "    y := " + part + "_fanout(seed)"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            lines.append(f"    y = coreFold(y, {dep_part}_apply(seed), {i + dep + 97})")
+        lines.extend(["    return y", "}"])
+        for j in range(funcs_per_file):
+            lines.insert(2 + j, f"func {part}_f{j:03d}(x int64) int64 {{ return coreMix(x, {i + j + 1}) }}")
         go_part_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    apex_mutate_sources = pick_mutation_targets(apex_part_files, 10, "batch_spread")
-    c_mutate_sources = pick_mutation_targets(c_part_files, 10, "batch_spread")
-    rust_mutate_sources = pick_mutation_targets(rust_part_files, 10, "batch_spread")
-    go_mutate_sources = pick_mutation_targets(go_part_files, 10, "batch_spread")
+    apex_mutate_sources = pick_mutation_targets(apex_part_files, mutate_count, "batch_spread")
+    c_mutate_sources = pick_mutation_targets(c_part_files, mutate_count, "batch_spread")
+    rust_mutate_sources = pick_mutation_targets(rust_part_files, mutate_count, "batch_spread")
+    go_mutate_sources = pick_mutation_targets(go_part_files, mutate_count, "batch_spread")
 
     return {
         "apex": {
@@ -892,7 +973,7 @@ def build_markdown(result: Dict) -> str:
             lines.append("")
             lines.append(f"- compile mode: `{bench['compile_mode']}`")
         lines.append("")
-        if bench.get("kind") in ("incremental", "incremental_batch"):
+        if bench.get("kind") in ("incremental", "incremental_batch", "incremental_batch_synthetic_mega_graph"):
             phase_one_label = bench.get("phase_one_label", "first mean (s)")
             phase_two_label = bench.get("phase_two_label", "second mean (s)")
             ratio_label = bench.get("ratio_label", "second/first")
@@ -1120,8 +1201,8 @@ def main() -> int:
                 compile_mode = "cold"
                 base_name = spec.name[: -len("_cold")]
 
-            if base_name == "compile_project_mega_chromium_like":
-                compile_projects = generate_compile_project_mega_chromium_like(root, base_name)
+            if base_name == "compile_project_synthetic_mega_graph":
+                compile_projects = generate_compile_project_synthetic_mega_graph(root, base_name)
             else:
                 compile_projects = generate_compile_project_10_files(root, base_name)
             compile_jobs = make_compile_jobs(root, compile_projects, build_env, c_compiler)
@@ -1279,6 +1360,65 @@ def main() -> int:
             phase_one_label = "cold full build mean (s)"
             phase_two_label = "hot rebuild after 10 edits mean (s)"
             ratio_label = "hot/cold"
+        elif spec.kind == "incremental_batch_synthetic_mega_graph":
+            benchmark_compile_mode = "cold_then_hot_batch_edit"
+            for lang in LANGUAGES:
+                print(f"Synthetic mega-graph incremental compile {lang}...")
+                first_samples: List[float] = []
+                second_samples: List[float] = []
+                checksums: List[int] = []
+
+                cycles = args.warmup + args.repeats
+                for i in range(cycles):
+                    cycle_projects = generate_compile_project_synthetic_mega_graph(
+                        root, spec.name, mutate_count=SYNTHETIC_MEGA_GRAPH_MUTATE_COUNT
+                    )
+                    cycle_jobs = make_compile_jobs(root, cycle_projects, build_env, c_compiler)
+                    job = cycle_jobs[lang]
+
+                    clean_compile_artifacts(lang, job)
+                    first_elapsed = timed_compile_with_retry(lang, job)
+
+                    mutate_sources = [Path(p) for p in job.get("mutate_sources", [])]
+                    apply_incremental_source_changes(lang, mutate_sources, f"{i}")
+                    second_elapsed = timed_compile_with_retry(lang, job)
+
+                    if not Path(job["binary"]).exists():
+                        timed_compile_with_retry(lang, job, retries=2)
+                    checksum = run_checksum(job["binary"], job["cwd"])
+
+                    if i >= args.warmup:
+                        first_samples.append(first_elapsed)
+                        second_samples.append(second_elapsed)
+                        checksums.append(checksum)
+
+                if len(set(checksums)) != 1:
+                    raise RuntimeError(
+                        f"Non-deterministic checksum in synthetic mega-graph incremental {lang}/{spec.name}: {checksums}"
+                    )
+
+                checksum = checksums[0]
+                if reference_checksum is None:
+                    reference_checksum = checksum
+                elif checksum != reference_checksum:
+                    raise RuntimeError(
+                        f"Checksum mismatch for {spec.name}: {lang}={checksum}, expected={reference_checksum}"
+                    )
+
+                first_stats = compute_stats(first_samples)
+                second_stats = compute_stats(second_samples)
+                lang_data[lang] = {
+                    "checksum": checksum,
+                    "first_samples_s": first_samples,
+                    "second_samples_s": second_samples,
+                    "first_stats": first_stats,
+                    "second_stats": second_stats,
+                    "stats": second_stats,
+                    "metric": "incremental_compile_second",
+                }
+            phase_one_label = "cold full build mean (s)"
+            phase_two_label = f"hot rebuild after {SYNTHETIC_MEGA_GRAPH_MUTATE_COUNT} edits mean (s)"
+            ratio_label = "hot/cold"
         else:
             raise RuntimeError(f"Unsupported benchmark kind: {spec.kind}")
 
@@ -1294,10 +1434,10 @@ def main() -> int:
                 "name": spec.name,
                 "description": spec.description,
                 "kind": spec.kind,
-                "compile_mode": benchmark_compile_mode if spec.kind in ("compile", "incremental", "incremental_batch") else None,
-                "phase_one_label": phase_one_label if spec.kind in ("incremental", "incremental_batch") else None,
-                "phase_two_label": phase_two_label if spec.kind in ("incremental", "incremental_batch") else None,
-                "ratio_label": ratio_label if spec.kind in ("incremental", "incremental_batch") else None,
+                "compile_mode": benchmark_compile_mode if spec.kind in ("compile", "incremental", "incremental_batch", "incremental_batch_synthetic_mega_graph") else None,
+                "phase_one_label": phase_one_label if spec.kind in ("incremental", "incremental_batch", "incremental_batch_synthetic_mega_graph") else None,
+                "phase_two_label": phase_two_label if spec.kind in ("incremental", "incremental_batch", "incremental_batch_synthetic_mega_graph") else None,
+                "ratio_label": ratio_label if spec.kind in ("incremental", "incremental_batch", "incremental_batch_synthetic_mega_graph") else None,
                 "languages": lang_data,
                 "speedup_vs_apex": speedups,
             }

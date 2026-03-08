@@ -41,8 +41,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Added `incremental_rebuild_1_file` benchmark: compile once, mutate one source file, then recompile and report first/second compile timing.
   - Added `incremental_rebuild_central_file` benchmark: compile once, mutate shared core dependency file, then recompile for dependency-heavy invalidation path measurement.
   - Added `incremental_rebuild_mega_project_10_files` benchmark: compile a generated 120-file mega-project, apply syntax-only edits to 10 spread-out files, then report cold full-build vs hot rebuild timing.
-  - Added `compile_project_mega_chromium_like` benchmark: compile a generated 1000-file chromium-like project with 64 helper functions per file to compare cold/hot compile-time scaling across languages.
-  - `compile_project_mega_chromium_like` now generates a layered cross-file dependency graph instead of mostly isolated leaf files, making the compile-time workload closer to a real multi-component codebase.
+  - Added `compile_project_synthetic_mega_graph` benchmark: compile a generated 1000-file synthetic mega-graph project with 64 helper functions per file to compare cold/hot compile-time scaling across languages.
+  - Added `incremental_rebuild_synthetic_mega_graph` benchmark: cold-build the generated synthetic mega-graph project, apply syntax-only edits across 25 spread-out files, then measure the rebuild.
+  - `compile_project_synthetic_mega_graph` generates a layered cross-file dependency graph instead of mostly isolated leaf files, making the compile-time workload a stronger synthetic multi-file stress test.
+  - Benchmark/docs wording now explicitly describes the mega-graph workloads as synthetic and not representative of a real Chromium-scale codebase.
+  - `compile_project_synthetic_mega_graph` and `incremental_rebuild_synthetic_mega_graph` are now substantially heavier:
+    - 1400 generated files instead of 1000
+    - 96 helper functions per file instead of 64
+    - wider dependency fan-out and extra cross-file wiring/surface functions per file
+    - 40-file edit batches in the synthetic mega-graph rebuild benchmark instead of 25
   - `python3 benchmark/run.py` now includes both `compile_project_10_files_hot` and `compile_project_10_files_cold` plus incremental rebuild output in one report by default.
   - Benchmark runner now normalizes executable path handling for Windows (`.exe`) and supports C compiler auto-detection (`CC`/`clang`/`gcc`).
 - New language coverage examples:

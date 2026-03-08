@@ -15,10 +15,11 @@ This directory contains a structured benchmark suite that compares Apex against 
 - `prime_count`: sieve-based prime counting.
 - `matrix_mul`: dense integer matrix multiplication (flattened arrays).
 - `compile_project_10_files`: compile stress benchmark on generated 10-file projects per language.
-- `compile_project_mega_chromium_like`: compile stress benchmark on a generated chromium-like 1000-file mega-project per language.
+- `compile_project_synthetic_mega_graph`: compile stress benchmark on a generated 1400-file synthetic mega-graph project per language.
 - `incremental_rebuild_1_file`: compiles a generated 10-file project, mutates one file, then recompiles.
 - `incremental_rebuild_central_file`: same generated 10-file project, but mutates the shared central file before rebuild.
 - `incremental_rebuild_mega_project_10_files`: compiles a generated 120-file mega-project, applies syntax-only edits to 10 files, then rebuilds to expose cold vs hot behavior.
+- `incremental_rebuild_synthetic_mega_graph`: compiles a generated 1400-file synthetic mega-graph project, applies syntax-only edits to 40 spread-out files, then rebuilds.
 
 ## Directory Layout
 
@@ -68,9 +69,10 @@ python3 benchmark/run.py
 Default run behavior:
 - runtime workloads: `sum_loop`, `prime_count`, `matrix_mul`
 - compile stress in both modes: `compile_project_10_files_hot`, `compile_project_10_files_cold`
-- chromium-like compile stress in both modes: `compile_project_mega_chromium_like_hot`, `compile_project_mega_chromium_like_cold`
+- synthetic mega-graph compile stress in both modes: `compile_project_synthetic_mega_graph_hot`, `compile_project_synthetic_mega_graph_cold`
 - incremental rebuild scenarios: `incremental_rebuild_1_file`, `incremental_rebuild_central_file`
 - mega incremental rebuild scenario: `incremental_rebuild_mega_project_10_files`
+- synthetic mega-graph incremental rebuild scenario: `incremental_rebuild_synthetic_mega_graph`
 
 Useful options:
 
@@ -78,10 +80,11 @@ Useful options:
 python3 benchmark/run.py --repeats 7 --warmup 1
 python3 benchmark/run.py --bench prime_count
 python3 benchmark/run.py --bench compile_project_10_files
-python3 benchmark/run.py --bench compile_project_mega_chromium_like
+python3 benchmark/run.py --bench compile_project_synthetic_mega_graph
 python3 benchmark/run.py --bench incremental_rebuild_1_file
 python3 benchmark/run.py --bench incremental_rebuild_central_file
 python3 benchmark/run.py --bench incremental_rebuild_mega_project_10_files
+python3 benchmark/run.py --bench incremental_rebuild_synthetic_mega_graph
 python3 benchmark/run.py --bench compile_project_10_files --compile-mode cold
 python3 benchmark/run.py --no-build
 python3 benchmark/run.py --apex-opt-level 3
@@ -100,15 +103,16 @@ Both include:
 - speedups relative to Apex
 - correctness checksums
 
-For `compile_project_10_files` and `compile_project_mega_chromium_like`:
+For `compile_project_10_files` and `compile_project_synthetic_mega_graph`:
 - `--compile-mode hot` keeps compile caches/artifacts between runs (incremental-friendly).
 - `--compile-mode cold` clears artifacts between timed runs; for Apex this also removes `.apexcache`.
 
-For `compile_project_mega_chromium_like` specifically:
-- each language compiles a generated 1000-file project with 64 helper functions per file
-- files are connected by a layered cross-file dependency graph instead of all calling one shared core helper
-- each file exports a hot path plus extra cross-file wiring functions to stress declaration, symbol resolution, and code generation on a wide multi-file DAG
-- this is the compile-time counterpart to the mega incremental rebuild benchmark
+For `compile_project_synthetic_mega_graph` specifically:
+- each language compiles a generated 1400-file project with 96 helper functions per file
+- files are connected by a layered cross-file dependency graph with wider fan-out instead of all calling one shared core helper
+- each file exports a hot path plus multiple extra cross-file wiring functions to stress declaration volume, symbol resolution, invalidation, and code generation on a wide multi-file DAG
+- this is a synthetic stress benchmark, not a model of a real Chromium-scale codebase
+- this is the compile-time counterpart to the synthetic mega-graph incremental rebuild benchmark
 
 For `incremental_rebuild_1_file` and `incremental_rebuild_central_file`:
 - each measured cycle does:
@@ -122,6 +126,13 @@ For `incremental_rebuild_mega_project_10_files`:
 - the first timing is a cold full build on a fresh project
 - the second timing is a hot rebuild after syntax-only edits in 10 spread-out files
 - this is the benchmark intended to show how much Apex incremental caching shrinks rebuild cost on very large codebases
+
+For `incremental_rebuild_synthetic_mega_graph`:
+- each measured cycle generates the same synthetic 1400-file dependency graph used by the mega compile benchmark
+- the first timing is a cold full build on a fresh project
+- the second timing is a hot rebuild after syntax-only edits in 40 spread-out files
+- this is the benchmark meant to measure non-trivial rebuild work after real source changes, not a no-op hot rebuild
+- despite the scale, it is still synthetic and should not be read as representative of a real Chromium-like product build graph
 
 ## Notes
 
