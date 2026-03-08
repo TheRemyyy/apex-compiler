@@ -195,10 +195,14 @@ runs:
           ) -join "`n"
           $shimCode | Set-Content -Path $shimSource -Encoding UTF8
 
-          Add-Type -TypeDefinition (Get-Content $shimSource -Raw) `
-            -Language CSharp `
-            -OutputAssembly (Join-Path $shimBin "llvm-config.exe") `
-            -OutputType ConsoleApplication
+          $csc = (Get-Command csc.exe -ErrorAction SilentlyContinue).Source
+          if (-not $csc) {
+            throw "csc.exe not found; cannot build llvm-config shim"
+          }
+          & $csc /nologo /target:exe /out:(Join-Path $shimBin "llvm-config.exe") $shimSource
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to compile llvm-config shim with csc.exe"
+          }
 
           $llvmConfig = Join-Path $shimBin "llvm-config.exe"
           $llvmPrefix = $shimRoot
