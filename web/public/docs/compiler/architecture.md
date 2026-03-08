@@ -27,7 +27,11 @@ This document describes the internal architecture of the Apex compiler.
   - Unchanged files can now skip repeated import-check traversal on hot rebuilds.
 - **Dependency graph cache** (`.apexcache/dependency_graph/latest.json`):
   - Stores per-file semantic/API fingerprints plus direct file dependencies resolved from same-namespace access and explicit imports.
+  - Same-namespace edges are derived from AST symbol references (calls, constructions, type references, module roots) instead of treating every file in a namespace as mutually dependent.
   - Supports explicit `body-only` vs `API` change classification and reverse-dependent impact tracking between builds.
+- **Semantic summary cache** (`.apexcache/semantic_summary/latest.json`):
+  - Stores inferred function effect summaries and class mutating-method summaries from successful semantic passes.
+  - Unchanged files can seed impacted-file type/borrow checking without re-walking all unaffected bodies.
 - **Object file cache** (`.apexcache/objects/*.{o|obj}` + `*.json`):
   - Stores per-file compiled objects keyed by semantic fingerprint + per-file rewrite-context fingerprint + build options (`opt_level`, `target`, compiler version, linker mode).
   - On incremental edits, unchanged files reuse cached object files and final build performs fast relink from cached + rebuilt objects.
@@ -41,6 +45,9 @@ This document describes the internal architecture of the Apex compiler.
 - **Transitive codegen closure**:
   - Object-cache misses now rebuild against the changed file plus only its transitive file dependency closure.
   - Unrelated project files are no longer injected as API-only declarations into every object rebuild miss.
+- **Impacted semantic view**:
+  - Type checking and borrow checking now run with full bodies only for changed files and real API dependents.
+  - Unchanged unaffected files participate through API projections plus cached semantic summaries.
 - **Parallel project parse phase**:
   - Multi-file project parsing now runs in parallel workers (file read + lex + parse/cache lookup).
   - Import checks and rewrite/cache resolution run in parallel per file.

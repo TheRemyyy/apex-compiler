@@ -147,6 +147,9 @@ pub struct FuncSig {
     pub span: Span,
 }
 
+pub type FunctionEffectsSummary = HashMap<String, Vec<String>>;
+pub type ClassMethodEffectsSummary = HashMap<String, HashMap<String, Vec<String>>>;
+
 /// Class information
 #[derive(Debug, Clone)]
 pub struct ClassInfo {
@@ -291,6 +294,85 @@ impl TypeChecker {
             current_allow_any: false,
             source,
             current_generic_type_bindings: HashMap::new(),
+        }
+    }
+
+    fn apply_effect_seeds(
+        &mut self,
+        function_effects: &HashMap<String, Vec<String>>,
+        class_method_effects: &HashMap<String, HashMap<String, Vec<String>>>,
+    ) {
+        for (name, effects) in function_effects {
+            if let Some(sig) = self.functions.get_mut(name) {
+                sig.effects = effects.clone();
+            }
+        }
+        for (class_name, methods) in class_method_effects {
+            if let Some(class) = self.classes.get_mut(class_name) {
+                for (method_name, effects) in methods {
+                    if let Some(sig) = class.methods.get_mut(method_name) {
+                        sig.effects = effects.clone();
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn export_effect_summary(&self) -> (FunctionEffectsSummary, ClassMethodEffectsSummary) {
+        let function_effects = self
+            .functions
+            .iter()
+            .map(|(name, sig)| (name.clone(), sig.effects.clone()))
+            .collect();
+        let class_method_effects = self
+            .classes
+            .iter()
+            .map(|(class_name, class)| {
+                (
+                    class_name.clone(),
+                    class
+                        .methods
+                        .iter()
+                        .map(|(method_name, sig)| (method_name.clone(), sig.effects.clone()))
+                        .collect(),
+                )
+            })
+            .collect();
+        (function_effects, class_method_effects)
+    }
+
+    pub fn check_with_effect_seeds(
+        &mut self,
+        program: &Program,
+        function_effects: &FunctionEffectsSummary,
+        class_method_effects: &ClassMethodEffectsSummary,
+    ) -> Result<(), Vec<TypeError>> {
+        self.populate_import_aliases(program);
+        self.collect_declarations(program);
+        self.apply_effect_seeds(function_effects, class_method_effects);
+        for (name, iface) in self.interfaces.clone() {
+            for parent in iface.extends {
+                if !self.interfaces.contains_key(&parent) {
+                    self.error(
+                        format!(
+                            "Interface '{}' extends unknown interface '{}'",
+                            name, parent
+                        ),
+                        iface.span.clone(),
+                    );
+                }
+            }
+        }
+        self.infer_effects(program);
+
+        for decl in &program.declarations {
+            self.check_decl_with_prefix(&decl.node, decl.span.clone(), None);
+        }
+
+        if self.errors.is_empty() {
+            Ok(())
+        } else {
+            Err(std::mem::take(&mut self.errors))
         }
     }
 

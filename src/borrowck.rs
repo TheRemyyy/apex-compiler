@@ -124,6 +124,63 @@ impl BorrowChecker {
         }
     }
 
+    fn apply_mutating_method_seeds(
+        &mut self,
+        class_mutating_methods: &HashMap<String, HashSet<String>>,
+    ) {
+        for (class_name, methods) in class_mutating_methods {
+            if let Some(class) = self.classes.get_mut(class_name) {
+                for (method_name, sig) in &mut class.methods {
+                    sig.receiver_mode = if methods.contains(method_name) {
+                        ParamMode::BorrowMut
+                    } else {
+                        ParamMode::Borrow
+                    };
+                }
+            }
+        }
+    }
+
+    pub fn export_class_mutating_method_summary(&self) -> HashMap<String, HashSet<String>> {
+        self.classes
+            .iter()
+            .map(|(class_name, class)| {
+                (
+                    class_name.clone(),
+                    class
+                        .methods
+                        .iter()
+                        .filter_map(|(method_name, sig)| {
+                            (sig.receiver_mode == ParamMode::BorrowMut)
+                                .then_some(method_name.clone())
+                        })
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    pub fn check_with_mutating_method_seeds(
+        &mut self,
+        program: &Program,
+        class_mutating_methods: &HashMap<String, HashSet<String>>,
+    ) -> Result<(), Vec<BorrowError>> {
+        for decl in &program.declarations {
+            self.collect_sig(&decl.node);
+        }
+        self.apply_mutating_method_seeds(class_mutating_methods);
+
+        for decl in &program.declarations {
+            self.check_decl(&decl.node, decl.span.clone());
+        }
+
+        if self.errors.is_empty() {
+            Ok(())
+        } else {
+            Err(std::mem::take(&mut self.errors))
+        }
+    }
+
     /// Run borrow checking on a program
     pub fn check(&mut self, program: &Program) -> Result<(), Vec<BorrowError>> {
         // First pass: collect signatures

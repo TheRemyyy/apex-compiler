@@ -93,10 +93,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - early up-to-date skip via project fingerprint cache
   - parser-level per-file AST cache reuse for unchanged files in changed builds
   - persistent file dependency graph cache for explicit `body-only` vs `API` impact classification and reverse-dependent tracking
+  - same-namespace dependency edges now come from AST symbol references instead of blanket namespace-wide file fanout
   - import-check success cache reuse keyed by semantic fingerprint + import/rewrite context
+  - semantic summary cache for inferred function effects and mutating-method receiver behavior reused from unchanged files
   - semantic fingerprint cache to ignore comment-only / whitespace-only edits
   - rewrite-level per-file AST cache reuse keyed by per-file import/namespace context instead of whole-project context
   - specific imports now track owner-file API fingerprints instead of invalidating on unrelated API changes elsewhere in the same namespace
+  - type/borrow checking now runs on an impacted semantic view (changed files + true API dependents with full bodies, API projections elsewhere)
   - object-cache miss codegen now uses transitive file dependency closure instead of injecting API stubs from the entire project
   - object-level per-file cache reuse for unchanged files plus relink-only final stage
   - parallel multi-file parse pipeline for lower front-end wall time on larger projects

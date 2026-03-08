@@ -31,7 +31,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use twox_hash::XxHash64;
 
-use crate::ast::{Block, Decl, ImportDecl, Program, Spanned};
+use crate::ast::{Block, Decl, Expr, ImportDecl, Pattern, Program, Spanned, Stmt};
 use crate::borrowck::BorrowChecker;
 use crate::codegen::Codegen;
 use crate::import_check::ImportChecker;
@@ -39,7 +39,7 @@ use crate::parser::Parser;
 use crate::project::{find_project_root, OutputKind, ProjectConfig};
 use crate::stdlib::stdlib_registry;
 use crate::test_runner::{discover_tests, generate_test_runner_with_source, print_discovery};
-use crate::typeck::TypeChecker;
+use crate::typeck::{ClassMethodEffectsSummary, FunctionEffectsSummary, TypeChecker};
 
 #[derive(ClapParser)]
 #[command(name = "apex")]
@@ -427,6 +427,7 @@ struct ParsedProjectUnit {
     function_names: Vec<String>,
     class_names: Vec<String>,
     module_names: Vec<String>,
+    referenced_symbols: Vec<String>,
     from_parse_cache: bool,
 }
 
@@ -453,6 +454,24 @@ struct DependencyGraphFileEntry {
     semantic_fingerprint: String,
     api_fingerprint: String,
     direct_dependencies: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SemanticSummaryCache {
+    schema: String,
+    compiler_version: String,
+    files: Vec<SemanticSummaryFileEntry>,
+    function_effects: HashMap<String, Vec<String>>,
+    class_method_effects: HashMap<String, HashMap<String, Vec<String>>>,
+    class_mutating_methods: HashMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SemanticSummaryFileEntry {
+    file: PathBuf,
+    semantic_fingerprint: String,
+    function_names: Vec<String>,
+    class_names: Vec<String>,
 }
 
 fn parsed_file_cache_path(project_root: &Path, file: &Path) -> PathBuf {
@@ -577,6 +596,27 @@ fn codegen_program_for_unit(
     program
 }
 
+fn semantic_program_for_files(
+    rewritten_files: &[RewrittenProjectUnit],
+    full_files: &HashSet<PathBuf>,
+) -> Program {
+    let mut program = Program {
+        package: None,
+        declarations: Vec::new(),
+    };
+
+    for unit in rewritten_files {
+        let source_program = if full_files.contains(&unit.file) {
+            unit.program.clone()
+        } else {
+            api_projection_program(&unit.program)
+        };
+        program.declarations.extend(source_program.declarations);
+    }
+
+    program
+}
+
 fn load_parsed_file_cache(
     project_root: &Path,
     file: &Path,
@@ -649,6 +689,7 @@ fn save_parsed_file_cache(
 
 const IMPORT_CHECK_CACHE_SCHEMA: &str = "v1";
 const DEPENDENCY_GRAPH_CACHE_SCHEMA: &str = "v1";
+const SEMANTIC_SUMMARY_CACHE_SCHEMA: &str = "v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ImportCheckCacheEntry {
@@ -801,6 +842,75 @@ fn save_dependency_graph_cache(
     fs::write(&path, json).map_err(|e| {
         format!(
             "{}: Failed to write dependency graph cache '{}': {}",
+            "error".red().bold(),
+            path.display(),
+            e
+        )
+    })
+}
+
+fn semantic_summary_cache_path(project_root: &Path) -> PathBuf {
+    project_root
+        .join(".apexcache")
+        .join("semantic_summary")
+        .join("latest.json")
+}
+
+fn load_semantic_summary_cache(
+    project_root: &Path,
+) -> Result<Option<SemanticSummaryCache>, String> {
+    let path = semantic_summary_cache_path(project_root);
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let raw = fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "{}: Failed to read semantic summary cache '{}': {}",
+            "error".red().bold(),
+            path.display(),
+            e
+        )
+    })?;
+    let cache: SemanticSummaryCache = match serde_json::from_str(&raw) {
+        Ok(cache) => cache,
+        Err(_) => return Ok(None),
+    };
+    if cache.schema != SEMANTIC_SUMMARY_CACHE_SCHEMA
+        || cache.compiler_version != env!("CARGO_PKG_VERSION")
+    {
+        return Ok(None);
+    }
+    Ok(Some(cache))
+}
+
+fn save_semantic_summary_cache(
+    project_root: &Path,
+    cache: &SemanticSummaryCache,
+) -> Result<(), String> {
+    let path = semantic_summary_cache_path(project_root);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "{}: Failed to create semantic summary cache directory '{}': {}",
+                "error".red().bold(),
+                parent.display(),
+                e
+            )
+        })?;
+    }
+
+    let json = serde_json::to_string(cache).map_err(|e| {
+        format!(
+            "{}: Failed to serialize semantic summary cache '{}': {}",
+            "error".red().bold(),
+            path.display(),
+            e
+        )
+    })?;
+    fs::write(&path, json).map_err(|e| {
+        format!(
+            "{}: Failed to write semantic summary cache '{}': {}",
             "error".red().bold(),
             path.display(),
             e
@@ -1007,6 +1117,9 @@ struct RewriteFingerprintContext<'a> {
 
 struct DependencyResolutionContext<'a> {
     namespace_files_map: &'a HashMap<String, Vec<PathBuf>>,
+    namespace_function_files: &'a HashMap<String, HashMap<String, PathBuf>>,
+    namespace_class_files: &'a HashMap<String, HashMap<String, PathBuf>>,
+    namespace_module_files: &'a HashMap<String, HashMap<String, PathBuf>>,
     global_function_map: &'a HashMap<String, String>,
     global_function_file_map: &'a HashMap<String, PathBuf>,
     global_class_map: &'a HashMap<String, String>,
@@ -1067,8 +1180,34 @@ fn build_file_dependency_graph(
     for unit in parsed_files {
         let mut deps = HashSet::new();
 
-        if let Some(files) = ctx.namespace_files_map.get(&unit.namespace) {
-            deps.extend(files.iter().filter(|file| *file != &unit.file).cloned());
+        for symbol in &unit.referenced_symbols {
+            if let Some(owner_file) = ctx
+                .namespace_function_files
+                .get(&unit.namespace)
+                .and_then(|map| map.get(symbol))
+            {
+                if owner_file != &unit.file {
+                    deps.insert(owner_file.clone());
+                }
+            }
+            if let Some(owner_file) = ctx
+                .namespace_class_files
+                .get(&unit.namespace)
+                .and_then(|map| map.get(symbol))
+            {
+                if owner_file != &unit.file {
+                    deps.insert(owner_file.clone());
+                }
+            }
+            if let Some(owner_file) = ctx
+                .namespace_module_files
+                .get(&unit.namespace)
+                .and_then(|map| map.get(symbol))
+            {
+                if owner_file != &unit.file {
+                    deps.insert(owner_file.clone());
+                }
+            }
         }
 
         for import in &unit.imports {
@@ -1162,6 +1301,96 @@ fn dependency_graph_cache_from_state(
         compiler_version: env!("CARGO_PKG_VERSION").to_string(),
         files,
     }
+}
+
+fn semantic_summary_cache_from_state(
+    parsed_files: &[ParsedProjectUnit],
+    function_effects: HashMap<String, Vec<String>>,
+    class_method_effects: HashMap<String, HashMap<String, Vec<String>>>,
+    class_mutating_methods: HashMap<String, HashSet<String>>,
+) -> SemanticSummaryCache {
+    let mut files: Vec<SemanticSummaryFileEntry> = parsed_files
+        .iter()
+        .map(|unit| SemanticSummaryFileEntry {
+            file: unit.file.clone(),
+            semantic_fingerprint: unit.semantic_fingerprint.clone(),
+            function_names: unit.function_names.clone(),
+            class_names: unit.class_names.clone(),
+        })
+        .collect();
+    files.sort_by(|a, b| a.file.cmp(&b.file));
+
+    let class_mutating_methods = class_mutating_methods
+        .into_iter()
+        .map(|(class_name, methods)| {
+            let mut methods = methods.into_iter().collect::<Vec<_>>();
+            methods.sort();
+            (class_name, methods)
+        })
+        .collect();
+
+    SemanticSummaryCache {
+        schema: SEMANTIC_SUMMARY_CACHE_SCHEMA.to_string(),
+        compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+        files,
+        function_effects,
+        class_method_effects,
+        class_mutating_methods,
+    }
+}
+
+fn semantic_seed_data_from_cache(
+    cache: &SemanticSummaryCache,
+    current_fingerprints: &HashMap<PathBuf, String>,
+    full_files: &HashSet<PathBuf>,
+) -> (
+    FunctionEffectsSummary,
+    ClassMethodEffectsSummary,
+    HashMap<String, HashSet<String>>,
+) {
+    let file_entries: HashMap<&PathBuf, &SemanticSummaryFileEntry> = cache
+        .files
+        .iter()
+        .map(|entry| (&entry.file, entry))
+        .collect();
+
+    let valid_seed_entries: Vec<&SemanticSummaryFileEntry> = current_fingerprints
+        .iter()
+        .filter(|(file, current_fp)| {
+            !full_files.contains(*file)
+                && file_entries
+                    .get(*file)
+                    .is_some_and(|entry| entry.semantic_fingerprint == **current_fp)
+        })
+        .filter_map(|(file, _)| file_entries.get(file).copied())
+        .collect();
+
+    let mut function_effects = HashMap::new();
+    let mut class_method_effects = HashMap::new();
+    let mut class_mutating_methods = HashMap::new();
+
+    for entry in valid_seed_entries {
+        for function_name in &entry.function_names {
+            if let Some(effects) = cache.function_effects.get(function_name) {
+                function_effects.insert(function_name.clone(), effects.clone());
+            }
+        }
+        for class_name in &entry.class_names {
+            if let Some(methods) = cache.class_method_effects.get(class_name) {
+                class_method_effects.insert(class_name.clone(), methods.clone());
+            }
+            if let Some(methods) = cache.class_mutating_methods.get(class_name) {
+                class_mutating_methods
+                    .insert(class_name.clone(), methods.iter().cloned().collect());
+            }
+        }
+    }
+
+    (
+        function_effects,
+        class_method_effects,
+        class_mutating_methods,
+    )
 }
 
 fn compute_rewrite_context_fingerprint_for_unit(
@@ -1590,6 +1819,7 @@ fn parse_project_unit(project_root: &Path, file: &Path) -> Result<ParsedProjectU
     let mut function_names = Vec::new();
     let mut class_names = Vec::new();
     let mut module_names = Vec::new();
+    let mut referenced_symbols = HashSet::new();
 
     fn collect_function_names(decl: &Decl, module_prefix: Option<String>, out: &mut Vec<String>) {
         match decl {
@@ -1614,6 +1844,289 @@ fn parse_project_unit(project_root: &Path, file: &Path) -> Result<ParsedProjectU
         }
     }
 
+    fn flatten_field_chain(expr: &Expr) -> Option<Vec<String>> {
+        match expr {
+            Expr::Ident(name) => Some(vec![name.clone()]),
+            Expr::Field { object, field } => {
+                let mut parts = flatten_field_chain(&object.node)?;
+                parts.push(field.clone());
+                Some(parts)
+            }
+            _ => None,
+        }
+    }
+
+    fn collect_type_refs(ty: &ast::Type, out: &mut HashSet<String>) {
+        match ty {
+            ast::Type::Named(name) => {
+                out.insert(name.clone());
+            }
+            ast::Type::Generic(name, args) => {
+                out.insert(name.clone());
+                for arg in args {
+                    collect_type_refs(arg, out);
+                }
+            }
+            ast::Type::Function(params, ret) => {
+                for param in params {
+                    collect_type_refs(param, out);
+                }
+                collect_type_refs(ret, out);
+            }
+            ast::Type::Option(inner)
+            | ast::Type::List(inner)
+            | ast::Type::Set(inner)
+            | ast::Type::Ref(inner)
+            | ast::Type::MutRef(inner)
+            | ast::Type::Box(inner)
+            | ast::Type::Rc(inner)
+            | ast::Type::Arc(inner)
+            | ast::Type::Ptr(inner)
+            | ast::Type::Task(inner)
+            | ast::Type::Range(inner) => collect_type_refs(inner, out),
+            ast::Type::Result(ok, err) | ast::Type::Map(ok, err) => {
+                collect_type_refs(ok, out);
+                collect_type_refs(err, out);
+            }
+            ast::Type::Integer
+            | ast::Type::Float
+            | ast::Type::Boolean
+            | ast::Type::String
+            | ast::Type::Char
+            | ast::Type::None => {}
+        }
+    }
+
+    fn collect_expr_refs(expr: &Expr, out: &mut HashSet<String>) {
+        match expr {
+            Expr::Literal(_) | Expr::This => {}
+            Expr::Ident(_) => {}
+            Expr::Binary { left, right, .. } => {
+                collect_expr_refs(&left.node, out);
+                collect_expr_refs(&right.node, out);
+            }
+            Expr::Unary { expr, .. }
+            | Expr::Try(expr)
+            | Expr::Borrow(expr)
+            | Expr::MutBorrow(expr)
+            | Expr::Deref(expr)
+            | Expr::Await(expr) => collect_expr_refs(&expr.node, out),
+            Expr::Call {
+                callee,
+                args,
+                type_args,
+            } => {
+                if let Expr::Ident(name) = &callee.node {
+                    out.insert(name.clone());
+                } else if let Some(parts) = flatten_field_chain(&callee.node) {
+                    if let Some(root) = parts.first() {
+                        out.insert(root.clone());
+                    }
+                }
+                collect_expr_refs(&callee.node, out);
+                for arg in args {
+                    collect_expr_refs(&arg.node, out);
+                }
+                for ty in type_args {
+                    collect_type_refs(ty, out);
+                }
+            }
+            Expr::Field { object, .. } => {
+                if let Some(parts) = flatten_field_chain(expr) {
+                    if let Some(root) = parts.first() {
+                        out.insert(root.clone());
+                    }
+                }
+                collect_expr_refs(&object.node, out);
+            }
+            Expr::Index { object, index } => {
+                collect_expr_refs(&object.node, out);
+                collect_expr_refs(&index.node, out);
+            }
+            Expr::Construct { ty, args } => {
+                out.insert(ty.clone());
+                for arg in args {
+                    collect_expr_refs(&arg.node, out);
+                }
+            }
+            Expr::Lambda { params, body } => {
+                for param in params {
+                    collect_type_refs(&param.ty, out);
+                }
+                collect_expr_refs(&body.node, out);
+            }
+            Expr::Match { expr, arms } => {
+                collect_expr_refs(&expr.node, out);
+                for arm in arms {
+                    collect_pattern_refs(&arm.pattern, out);
+                    collect_block_refs(&arm.body, out);
+                }
+            }
+            Expr::StringInterp(parts) => {
+                for part in parts {
+                    if let ast::StringPart::Expr(expr) = part {
+                        collect_expr_refs(&expr.node, out);
+                    }
+                }
+            }
+            Expr::AsyncBlock(body) | Expr::Block(body) => collect_block_refs(body, out),
+            Expr::Require { condition, message } => {
+                collect_expr_refs(&condition.node, out);
+                if let Some(message) = message {
+                    collect_expr_refs(&message.node, out);
+                }
+            }
+            Expr::Range { start, end, .. } => {
+                if let Some(start) = start {
+                    collect_expr_refs(&start.node, out);
+                }
+                if let Some(end) = end {
+                    collect_expr_refs(&end.node, out);
+                }
+            }
+            Expr::IfExpr {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                collect_expr_refs(&condition.node, out);
+                collect_block_refs(then_branch, out);
+                if let Some(else_branch) = else_branch {
+                    collect_block_refs(else_branch, out);
+                }
+            }
+        }
+    }
+
+    fn collect_pattern_refs(pattern: &Pattern, out: &mut HashSet<String>) {
+        if let Pattern::Variant(name, _) = pattern {
+            out.insert(name.clone());
+        }
+    }
+
+    fn collect_stmt_refs(stmt: &Stmt, out: &mut HashSet<String>) {
+        match stmt {
+            Stmt::Let { ty, value, .. } => {
+                collect_type_refs(ty, out);
+                collect_expr_refs(&value.node, out);
+            }
+            Stmt::Assign { target, value } => {
+                collect_expr_refs(&target.node, out);
+                collect_expr_refs(&value.node, out);
+            }
+            Stmt::Expr(expr) => collect_expr_refs(&expr.node, out),
+            Stmt::Return(expr) => {
+                if let Some(expr) = expr {
+                    collect_expr_refs(&expr.node, out);
+                }
+            }
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                collect_expr_refs(&condition.node, out);
+                collect_block_refs(then_block, out);
+                if let Some(else_block) = else_block {
+                    collect_block_refs(else_block, out);
+                }
+            }
+            Stmt::While { condition, body } => {
+                collect_expr_refs(&condition.node, out);
+                collect_block_refs(body, out);
+            }
+            Stmt::For {
+                var_type,
+                iterable,
+                body,
+                ..
+            } => {
+                if let Some(var_type) = var_type {
+                    collect_type_refs(var_type, out);
+                }
+                collect_expr_refs(&iterable.node, out);
+                collect_block_refs(body, out);
+            }
+            Stmt::Match { expr, arms } => {
+                collect_expr_refs(&expr.node, out);
+                for arm in arms {
+                    collect_pattern_refs(&arm.pattern, out);
+                    collect_block_refs(&arm.body, out);
+                }
+            }
+            Stmt::Break | Stmt::Continue => {}
+        }
+    }
+
+    fn collect_block_refs(block: &Block, out: &mut HashSet<String>) {
+        for stmt in block {
+            collect_stmt_refs(&stmt.node, out);
+        }
+    }
+
+    fn collect_decl_refs(decl: &Decl, out: &mut HashSet<String>) {
+        match decl {
+            Decl::Function(func) => {
+                for param in &func.params {
+                    collect_type_refs(&param.ty, out);
+                }
+                collect_type_refs(&func.return_type, out);
+                collect_block_refs(&func.body, out);
+            }
+            Decl::Class(class) => {
+                if let Some(parent) = &class.extends {
+                    out.insert(parent.clone());
+                }
+                out.extend(class.implements.iter().cloned());
+                for field in &class.fields {
+                    collect_type_refs(&field.ty, out);
+                }
+                if let Some(ctor) = &class.constructor {
+                    for param in &ctor.params {
+                        collect_type_refs(&param.ty, out);
+                    }
+                    collect_block_refs(&ctor.body, out);
+                }
+                if let Some(dtor) = &class.destructor {
+                    collect_block_refs(&dtor.body, out);
+                }
+                for method in &class.methods {
+                    for param in &method.params {
+                        collect_type_refs(&param.ty, out);
+                    }
+                    collect_type_refs(&method.return_type, out);
+                    collect_block_refs(&method.body, out);
+                }
+            }
+            Decl::Enum(en) => {
+                for variant in &en.variants {
+                    for field in &variant.fields {
+                        collect_type_refs(&field.ty, out);
+                    }
+                }
+            }
+            Decl::Interface(interface) => {
+                out.extend(interface.extends.iter().cloned());
+                for method in &interface.methods {
+                    for param in &method.params {
+                        collect_type_refs(&param.ty, out);
+                    }
+                    collect_type_refs(&method.return_type, out);
+                    if let Some(body) = &method.default_impl {
+                        collect_block_refs(body, out);
+                    }
+                }
+            }
+            Decl::Module(module) => {
+                out.insert(module.name.clone());
+                for inner in &module.declarations {
+                    collect_decl_refs(&inner.node, out);
+                }
+            }
+            Decl::Import(_) => {}
+        }
+    }
+
     for decl in &program.declarations {
         match &decl.node {
             Decl::Function(_) => collect_function_names(&decl.node, None, &mut function_names),
@@ -1624,6 +2137,7 @@ fn parse_project_unit(project_root: &Path, file: &Path) -> Result<ParsedProjectU
             Decl::Class(class) => class_names.push(class.name.clone()),
             _ => {}
         }
+        collect_decl_refs(&decl.node, &mut referenced_symbols);
     }
 
     Ok(ParsedProjectUnit {
@@ -1636,6 +2150,7 @@ fn parse_project_unit(project_root: &Path, file: &Path) -> Result<ParsedProjectU
         function_names,
         class_names,
         module_names,
+        referenced_symbols: referenced_symbols.into_iter().collect(),
         from_parse_cache,
     })
 }
@@ -1904,11 +2419,32 @@ fn build_project(
 
     let previous_dependency_graph = load_dependency_graph_cache(&project_root)?;
     let mut namespace_files_map: HashMap<String, Vec<PathBuf>> = HashMap::new();
+    let mut namespace_function_files: HashMap<String, HashMap<String, PathBuf>> = HashMap::new();
+    let mut namespace_class_files: HashMap<String, HashMap<String, PathBuf>> = HashMap::new();
+    let mut namespace_module_files: HashMap<String, HashMap<String, PathBuf>> = HashMap::new();
     for unit in &parsed_files {
         namespace_files_map
             .entry(unit.namespace.clone())
             .or_default()
             .push(unit.file.clone());
+        let function_entry = namespace_function_files
+            .entry(unit.namespace.clone())
+            .or_default();
+        for name in &unit.function_names {
+            function_entry.insert(name.clone(), unit.file.clone());
+        }
+        let class_entry = namespace_class_files
+            .entry(unit.namespace.clone())
+            .or_default();
+        for name in &unit.class_names {
+            class_entry.insert(name.clone(), unit.file.clone());
+        }
+        let module_entry = namespace_module_files
+            .entry(unit.namespace.clone())
+            .or_default();
+        for name in &unit.module_names {
+            module_entry.insert(name.clone(), unit.file.clone());
+        }
     }
     for files in namespace_files_map.values_mut() {
         files.sort();
@@ -1916,6 +2452,9 @@ fn build_project(
 
     let dependency_resolution_ctx = DependencyResolutionContext {
         namespace_files_map: &namespace_files_map,
+        namespace_function_files: &namespace_function_files,
+        namespace_class_files: &namespace_class_files,
+        namespace_module_files: &namespace_module_files,
         global_function_map: &global_function_map,
         global_function_file_map: &global_function_file_map,
         global_class_map: &global_class_map,
@@ -1929,14 +2468,17 @@ fn build_project(
     let current_dependency_graph_cache =
         dependency_graph_cache_from_state(&parsed_files, &file_dependency_graph);
 
+    let previous_semantic_summary = load_semantic_summary_cache(&project_root)?;
+    let mut body_only_changed = HashSet::new();
+    let mut api_changed = HashSet::new();
+    let mut dependent_api_impact = HashSet::new();
+
     if let Some(previous) = &previous_dependency_graph {
         let previous_files: HashMap<&PathBuf, &DependencyGraphFileEntry> = previous
             .files
             .iter()
             .map(|entry| (&entry.file, entry))
             .collect();
-        let mut body_only_changed = HashSet::new();
-        let mut api_changed = HashSet::new();
 
         for unit in &parsed_files {
             match previous_files.get(&unit.file) {
@@ -1950,7 +2492,7 @@ fn build_project(
             }
         }
 
-        let dependent_api_impact = if api_changed.is_empty() {
+        dependent_api_impact = if api_changed.is_empty() {
             HashSet::new()
         } else {
             let mut impacted = transitive_dependents(&reverse_file_dependency_graph, &api_changed);
@@ -2234,8 +2776,51 @@ fn build_project(
     }
 
     if do_check {
+        let mut semantic_full_files: HashSet<PathBuf> =
+            parsed_files.iter().map(|u| u.file.clone()).collect();
+        if previous_dependency_graph.is_some() && previous_semantic_summary.is_some() {
+            semantic_full_files = body_only_changed
+                .union(&api_changed)
+                .cloned()
+                .collect::<HashSet<_>>();
+            semantic_full_files.extend(dependent_api_impact.iter().cloned());
+            if semantic_full_files.is_empty() {
+                semantic_full_files.extend(parsed_files.iter().map(|u| u.file.clone()));
+            }
+        }
+
+        let semantic_program = semantic_program_for_files(&rewritten_files, &semantic_full_files);
+        let current_semantic_fingerprints: HashMap<PathBuf, String> = parsed_files
+            .iter()
+            .map(|unit| (unit.file.clone(), unit.semantic_fingerprint.clone()))
+            .collect();
+        let (seeded_function_effects, seeded_class_method_effects, seeded_class_mutating_methods) =
+            previous_semantic_summary
+                .as_ref()
+                .map(|cache| {
+                    semantic_seed_data_from_cache(
+                        cache,
+                        &current_semantic_fingerprints,
+                        &semantic_full_files,
+                    )
+                })
+                .unwrap_or_else(|| (HashMap::new(), HashMap::new(), HashMap::new()));
+
+        if semantic_full_files.len() < parsed_files.len() {
+            println!(
+                "{} Semantic delta: checking {}/{} files with full bodies",
+                "→".cyan(),
+                semantic_full_files.len(),
+                parsed_files.len()
+            );
+        }
+
         let mut type_checker = TypeChecker::new(String::new());
-        if let Err(errors) = type_checker.check(&combined_program) {
+        if let Err(errors) = type_checker.check_with_effect_seeds(
+            &semantic_program,
+            &seeded_function_effects,
+            &seeded_class_method_effects,
+        ) {
             let mut rendered = String::new();
             for error in errors {
                 rendered.push_str(&format!("\x1b[1;31merror\x1b[0m: {}\n", error.message));
@@ -2244,7 +2829,9 @@ fn build_project(
         }
 
         let mut borrow_checker = BorrowChecker::new();
-        if let Err(errors) = borrow_checker.check(&combined_program) {
+        if let Err(errors) = borrow_checker
+            .check_with_mutating_method_seeds(&semantic_program, &seeded_class_mutating_methods)
+        {
             let mut rendered = String::new();
             for error in errors {
                 rendered.push_str(&format!(
@@ -2254,6 +2841,17 @@ fn build_project(
             }
             return Err(rendered);
         }
+        let (function_effects, class_method_effects) = type_checker.export_effect_summary();
+
+        save_semantic_summary_cache(
+            &project_root,
+            &semantic_summary_cache_from_state(
+                &parsed_files,
+                function_effects,
+                class_method_effects,
+                borrow_checker.export_class_mutating_method_summary(),
+            ),
+        )?;
     }
 
     if check_only {
@@ -3700,6 +4298,7 @@ function add(x: Float): Float {
             function_names: Vec::new(),
             class_names: Vec::new(),
             module_names: Vec::new(),
+            referenced_symbols: Vec::new(),
             from_parse_cache: false,
         }
     }
@@ -3857,8 +4456,20 @@ function add(x: Float): Float {
         let global_class_file_map = HashMap::new();
         let global_module_map = HashMap::new();
         let global_module_file_map = HashMap::new();
+        let namespace_function_files = HashMap::from([(
+            "lib".to_string(),
+            HashMap::from([
+                ("foo".to_string(), PathBuf::from("src/lib_foo.apex")),
+                ("bar".to_string(), PathBuf::from("src/lib_bar.apex")),
+            ]),
+        )]);
+        let namespace_class_files = HashMap::new();
+        let namespace_module_files = HashMap::new();
         let ctx = DependencyResolutionContext {
             namespace_files_map: &namespace_files_map,
+            namespace_function_files: &namespace_function_files,
+            namespace_class_files: &namespace_class_files,
+            namespace_module_files: &namespace_module_files,
             global_function_map: &global_function_map,
             global_function_file_map: &global_function_file_map,
             global_class_map: &global_class_map,
@@ -3872,6 +4483,59 @@ function add(x: Float): Float {
             graph.get(&app.file).cloned().unwrap_or_default(),
             HashSet::from([PathBuf::from("src/lib_foo.apex")])
         );
+    }
+
+    #[test]
+    fn dependency_graph_tracks_same_namespace_symbol_references() {
+        let mut app = make_unit("src/app.apex", "app", &[]);
+        app.referenced_symbols = vec!["helper".to_string()];
+        let mut helper = make_unit("src/helper.apex", "app", &[]);
+        helper.function_names = vec!["helper".to_string()];
+        let parsed_files = vec![app.clone(), helper.clone()];
+        let namespace_files_map = HashMap::from([(
+            "app".to_string(),
+            vec![
+                PathBuf::from("src/app.apex"),
+                PathBuf::from("src/helper.apex"),
+            ],
+        )]);
+        let namespace_function_files = HashMap::from([(
+            "app".to_string(),
+            HashMap::from([("helper".to_string(), PathBuf::from("src/helper.apex"))]),
+        )]);
+        let namespace_class_files = HashMap::new();
+        let namespace_module_files = HashMap::new();
+        let global_function_map = HashMap::from([("helper".to_string(), "app".to_string())]);
+        let global_function_file_map =
+            HashMap::from([("helper".to_string(), PathBuf::from("src/helper.apex"))]);
+        let global_class_map = HashMap::new();
+        let global_class_file_map = HashMap::new();
+        let global_module_map = HashMap::new();
+        let global_module_file_map = HashMap::new();
+        let ctx = DependencyResolutionContext {
+            namespace_files_map: &namespace_files_map,
+            namespace_function_files: &namespace_function_files,
+            namespace_class_files: &namespace_class_files,
+            namespace_module_files: &namespace_module_files,
+            global_function_map: &global_function_map,
+            global_function_file_map: &global_function_file_map,
+            global_class_map: &global_class_map,
+            global_class_file_map: &global_class_file_map,
+            global_module_map: &global_module_map,
+            global_module_file_map: &global_module_file_map,
+        };
+
+        let graph = build_file_dependency_graph(&parsed_files, &ctx);
+
+        assert_eq!(
+            graph.get(&app.file).cloned().unwrap_or_default(),
+            HashSet::from([PathBuf::from("src/helper.apex")])
+        );
+        assert!(graph
+            .get(&helper.file)
+            .cloned()
+            .unwrap_or_default()
+            .is_empty());
     }
 
     #[test]
