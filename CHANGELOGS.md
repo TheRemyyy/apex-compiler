@@ -92,14 +92,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Project builds now use `.apexcache` with:
   - early up-to-date skip via project fingerprint cache
   - parser-level per-file AST cache reuse for unchanged files in changed builds
+  - import-check success cache reuse keyed by semantic fingerprint + import/rewrite context
   - semantic fingerprint cache to ignore comment-only / whitespace-only edits
   - rewrite-level per-file AST cache reuse keyed by per-file import/namespace context instead of whole-project context
+  - specific imports now track owner-file API fingerprints instead of invalidating on unrelated API changes elsewhere in the same namespace
   - object-level per-file cache reuse for unchanged files plus relink-only final stage
   - parallel multi-file parse pipeline for lower front-end wall time on larger projects
   - parallel import-check and rewrite/cache resolution pass
 - CI workflow now builds Linux release compiler once and reuses the artifact for CLI smoke and examples jobs, avoiding duplicate release rebuilds.
 - CI examples validation now invokes `target/release/apex-compiler` directly instead of `cargo run --release -- ...`.
 - CI LLVM install steps on Ubuntu are now centralized into a reusable composite action (`.github/actions/install-llvm`) to remove duplicated workflow logic.
+- CI/release Ubuntu LLVM setup now installs `lld-21` explicitly and exports `ld.lld`/`lld` into `PATH`, matching Apex's no-fallback linker requirement.
 - CI job graph is now `build -> (checks, smoke, examples)` while `web` runs independently in parallel.
 - Release workflow now publishes both macOS architectures (`aarch64-apple-darwin`, `x86_64-apple-darwin`).
 - Windows release workflow LLVM setup now uses Chocolatey (`choco install llvm`) instead of downloading a hardcoded GitHub release tarball URL.

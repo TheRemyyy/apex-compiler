@@ -22,6 +22,9 @@ This document describes the internal architecture of the Apex compiler.
 - **Rewritten file cache** (`.apexcache/rewritten/*.json`):
   - Stores namespace-rewritten AST fragments keyed by semantic fingerprint + per-file rewrite-context fingerprint.
   - On incremental edits, files whose semantics and relevant namespace/import context did not change bypass rewrite and are stitched directly into combined AST.
+- **Import-check cache** (`.apexcache/import_check/*.json`):
+  - Stores successful import-check results keyed by semantic fingerprint + per-file import/rewrite context fingerprint.
+  - Unchanged files can now skip repeated import-check traversal on hot rebuilds.
 - **Object file cache** (`.apexcache/objects/*.{o|obj}` + `*.json`):
   - Stores per-file compiled objects keyed by semantic fingerprint + per-file rewrite-context fingerprint + build options (`opt_level`, `target`, compiler version, linker mode).
   - On incremental edits, unchanged files reuse cached object files and final build performs fast relink from cached + rebuilt objects.
@@ -30,6 +33,7 @@ This document describes the internal architecture of the Apex compiler.
   - Comment-only / whitespace-only edits can now stop after parse/cache validation and return `Up to date ... (semantic cache)` without object rebuild or relink.
 - **Per-file rewrite invalidation**:
   - Rewrite/object cache invalidation now hashes only the current file's namespace/import context and relevant imported namespace symbol maps.
+  - Specific imports (`import lib.foo;`) additionally track owner-file API fingerprints, so unrelated API changes in the same namespace no longer fan out to those files.
   - Unrelated namespace changes no longer force global rewrite-cache/object-cache misses across the entire project.
 - **Parallel project parse phase**:
   - Multi-file project parsing now runs in parallel workers (file read + lex + parse/cache lookup).

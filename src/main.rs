@@ -265,7 +265,9 @@ fn project_cache_file(project_root: &Path) -> PathBuf {
 }
 
 fn semantic_project_cache_file(project_root: &Path) -> PathBuf {
-    project_root.join(".apexcache").join("semantic_build_fingerprint")
+    project_root
+        .join(".apexcache")
+        .join("semantic_build_fingerprint")
 }
 
 fn stable_hasher() -> XxHash64 {
@@ -519,7 +521,11 @@ fn api_projection_decl(decl: &Spanned<Decl>) -> Spanned<Decl> {
 fn api_projection_program(program: &Program) -> Program {
     Program {
         package: program.package.clone(),
-        declarations: program.declarations.iter().map(api_projection_decl).collect(),
+        declarations: program
+            .declarations
+            .iter()
+            .map(api_projection_decl)
+            .collect(),
     }
 }
 
@@ -529,7 +535,10 @@ fn api_program_fingerprint(program: &Program) -> String {
     source_fingerprint(&canonical)
 }
 
-fn codegen_program_for_unit(rewritten_files: &[RewrittenProjectUnit], active_file: &Path) -> Program {
+fn codegen_program_for_unit(
+    rewritten_files: &[RewrittenProjectUnit],
+    active_file: &Path,
+) -> Program {
     let mut program = Program {
         package: None,
         declarations: Vec::new(),
@@ -610,6 +619,97 @@ fn save_parsed_file_cache(
     fs::write(&path, json).map_err(|e| {
         format!(
             "{}: Failed to write parse cache '{}': {}",
+            "error".red().bold(),
+            path.display(),
+            e
+        )
+    })
+}
+
+const IMPORT_CHECK_CACHE_SCHEMA: &str = "v1";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ImportCheckCacheEntry {
+    schema: String,
+    compiler_version: String,
+    semantic_fingerprint: String,
+    rewrite_context_fingerprint: String,
+}
+
+fn import_check_cache_path(project_root: &Path, file: &Path) -> PathBuf {
+    let mut hasher = stable_hasher();
+    file.hash(&mut hasher);
+    project_root
+        .join(".apexcache")
+        .join("import_check")
+        .join(format!("{:016x}.json", hasher.finish()))
+}
+
+fn load_import_check_cache_hit(
+    project_root: &Path,
+    file: &Path,
+    semantic_fingerprint: &str,
+    rewrite_context_fingerprint: &str,
+) -> Result<bool, String> {
+    let path = import_check_cache_path(project_root, file);
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let raw = fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "{}: Failed to read import-check cache '{}': {}",
+            "error".red().bold(),
+            path.display(),
+            e
+        )
+    })?;
+    let entry: ImportCheckCacheEntry = match serde_json::from_str(&raw) {
+        Ok(entry) => entry,
+        Err(_) => return Ok(false),
+    };
+
+    Ok(entry.schema == IMPORT_CHECK_CACHE_SCHEMA
+        && entry.compiler_version == env!("CARGO_PKG_VERSION")
+        && entry.semantic_fingerprint == semantic_fingerprint
+        && entry.rewrite_context_fingerprint == rewrite_context_fingerprint)
+}
+
+fn save_import_check_cache_hit(
+    project_root: &Path,
+    file: &Path,
+    semantic_fingerprint: &str,
+    rewrite_context_fingerprint: &str,
+) -> Result<(), String> {
+    let path = import_check_cache_path(project_root, file);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "{}: Failed to create import-check cache directory '{}': {}",
+                "error".red().bold(),
+                parent.display(),
+                e
+            )
+        })?;
+    }
+
+    let entry = ImportCheckCacheEntry {
+        schema: IMPORT_CHECK_CACHE_SCHEMA.to_string(),
+        compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+        semantic_fingerprint: semantic_fingerprint.to_string(),
+        rewrite_context_fingerprint: rewrite_context_fingerprint.to_string(),
+    };
+    let json = serde_json::to_string(&entry).map_err(|e| {
+        format!(
+            "{}: Failed to serialize import-check cache '{}': {}",
+            "error".red().bold(),
+            path.display(),
+            e
+        )
+    })?;
+    fs::write(&path, json).map_err(|e| {
+        format!(
+            "{}: Failed to write import-check cache '{}': {}",
             "error".red().bold(),
             path.display(),
             e
@@ -715,7 +815,9 @@ fn hash_filtered_global_map(
     }
 }
 
-fn compute_namespace_api_fingerprints(parsed_files: &[ParsedProjectUnit]) -> HashMap<String, String> {
+fn compute_namespace_api_fingerprints(
+    parsed_files: &[ParsedProjectUnit],
+) -> HashMap<String, String> {
     let mut grouped: HashMap<String, Vec<(&PathBuf, &str)>> = HashMap::new();
     for unit in parsed_files {
         grouped
@@ -754,46 +856,136 @@ fn hash_namespace_api_fingerprints(
     }
 }
 
+fn hash_file_api_fingerprint(
+    file_api_fingerprints: &HashMap<PathBuf, String>,
+    file: &Path,
+    hasher: &mut impl Hasher,
+) {
+    if let Some(fingerprint) = file_api_fingerprints.get(file) {
+        file.hash(hasher);
+        fingerprint.hash(hasher);
+    }
+}
+
+fn import_path_owner_file<'a>(
+    path: &str,
+    global_function_map: &HashMap<String, String>,
+    global_function_file_map: &'a HashMap<String, PathBuf>,
+    global_class_map: &HashMap<String, String>,
+    global_class_file_map: &'a HashMap<String, PathBuf>,
+    global_module_map: &HashMap<String, String>,
+    global_module_file_map: &'a HashMap<String, PathBuf>,
+) -> Option<&'a PathBuf> {
+    let (namespace, symbol) = path.rsplit_once('.')?;
+
+    if global_function_map
+        .get(symbol)
+        .is_some_and(|owner_ns| owner_ns == namespace)
+    {
+        return global_function_file_map.get(symbol);
+    }
+    if global_class_map
+        .get(symbol)
+        .is_some_and(|owner_ns| owner_ns == namespace)
+    {
+        return global_class_file_map.get(symbol);
+    }
+    if global_module_map
+        .get(symbol)
+        .is_some_and(|owner_ns| owner_ns == namespace)
+    {
+        return global_module_file_map.get(symbol);
+    }
+
+    None
+}
+
+struct RewriteFingerprintContext<'a> {
+    namespace_functions: &'a HashMap<String, HashSet<String>>,
+    global_function_map: &'a HashMap<String, String>,
+    global_function_file_map: &'a HashMap<String, PathBuf>,
+    namespace_classes: &'a HashMap<String, HashSet<String>>,
+    global_class_map: &'a HashMap<String, String>,
+    global_class_file_map: &'a HashMap<String, PathBuf>,
+    namespace_modules: &'a HashMap<String, HashSet<String>>,
+    global_module_map: &'a HashMap<String, String>,
+    global_module_file_map: &'a HashMap<String, PathBuf>,
+    namespace_api_fingerprints: &'a HashMap<String, String>,
+    file_api_fingerprints: &'a HashMap<PathBuf, String>,
+}
+
 fn compute_rewrite_context_fingerprint_for_unit(
     unit: &ParsedProjectUnit,
     entry_namespace: &str,
-    namespace_functions: &HashMap<String, HashSet<String>>,
-    global_function_map: &HashMap<String, String>,
-    namespace_classes: &HashMap<String, HashSet<String>>,
-    global_class_map: &HashMap<String, String>,
-    namespace_modules: &HashMap<String, HashSet<String>>,
-    global_module_map: &HashMap<String, String>,
-    namespace_api_fingerprints: &HashMap<String, String>,
+    ctx: &RewriteFingerprintContext<'_>,
 ) -> String {
     let mut relevant_namespaces: HashSet<String> =
         namespace_prefixes(&unit.namespace).into_iter().collect();
     relevant_namespaces.insert(unit.namespace.clone());
 
-    for import in &unit.imports {
-        let imported_namespace = if import.path.ends_with(".*") {
-            import.path.trim_end_matches(".*")
-        } else if import.path.contains('.') {
-            import.path.rsplit_once('.').map(|(ns, _)| ns).unwrap_or("")
-        } else {
-            import.path.as_str()
-        };
-
-        for prefix in namespace_prefixes(imported_namespace) {
-            relevant_namespaces.insert(prefix);
-        }
-    }
-
     let mut hasher = stable_hasher();
     entry_namespace.hash(&mut hasher);
     unit.namespace.hash(&mut hasher);
     hash_imports(&unit.imports, &mut hasher);
-    hash_filtered_namespace_map(namespace_functions, &relevant_namespaces, &mut hasher);
-    hash_filtered_global_map(global_function_map, &relevant_namespaces, &mut hasher);
-    hash_filtered_namespace_map(namespace_classes, &relevant_namespaces, &mut hasher);
-    hash_filtered_global_map(global_class_map, &relevant_namespaces, &mut hasher);
-    hash_filtered_namespace_map(namespace_modules, &relevant_namespaces, &mut hasher);
-    hash_filtered_global_map(global_module_map, &relevant_namespaces, &mut hasher);
-    hash_namespace_api_fingerprints(namespace_api_fingerprints, &relevant_namespaces, &mut hasher);
+
+    for import in &unit.imports {
+        if import.path.ends_with(".*") {
+            let namespace = import.path.trim_end_matches(".*");
+            relevant_namespaces.insert(namespace.to_string());
+            for prefix in namespace_prefixes(namespace) {
+                relevant_namespaces.insert(prefix);
+            }
+            continue;
+        }
+
+        if ctx.namespace_api_fingerprints.contains_key(&import.path) {
+            relevant_namespaces.insert(import.path.clone());
+            for prefix in namespace_prefixes(&import.path) {
+                relevant_namespaces.insert(prefix);
+            }
+            continue;
+        }
+
+        if let Some(owner_file) = import_path_owner_file(
+            &import.path,
+            ctx.global_function_map,
+            ctx.global_function_file_map,
+            ctx.global_class_map,
+            ctx.global_class_file_map,
+            ctx.global_module_map,
+            ctx.global_module_file_map,
+        ) {
+            hash_file_api_fingerprint(ctx.file_api_fingerprints, owner_file, &mut hasher);
+            continue;
+        }
+
+        let imported_namespace = if import.path.contains('.') {
+            import.path.rsplit_once('.').map(|(ns, _)| ns).unwrap_or("")
+        } else {
+            import.path.as_str()
+        };
+        if ctx
+            .namespace_api_fingerprints
+            .contains_key(imported_namespace)
+        {
+            relevant_namespaces.insert(imported_namespace.to_string());
+            for prefix in namespace_prefixes(imported_namespace) {
+                relevant_namespaces.insert(prefix);
+            }
+        }
+    }
+
+    hash_filtered_namespace_map(ctx.namespace_functions, &relevant_namespaces, &mut hasher);
+    hash_filtered_global_map(ctx.global_function_map, &relevant_namespaces, &mut hasher);
+    hash_filtered_namespace_map(ctx.namespace_classes, &relevant_namespaces, &mut hasher);
+    hash_filtered_global_map(ctx.global_class_map, &relevant_namespaces, &mut hasher);
+    hash_filtered_namespace_map(ctx.namespace_modules, &relevant_namespaces, &mut hasher);
+    hash_filtered_global_map(ctx.global_module_map, &relevant_namespaces, &mut hasher);
+    hash_namespace_api_fingerprints(
+        ctx.namespace_api_fingerprints,
+        &relevant_namespaces,
+        &mut hasher,
+    );
     format!("{:016x}", hasher.finish())
 }
 
@@ -1372,8 +1564,11 @@ fn build_project(
     let files = config.get_source_files(&project_root);
     let mut parsed_files: Vec<ParsedProjectUnit> = Vec::new();
     let mut global_function_map: HashMap<String, String> = HashMap::new(); // func_name -> namespace
+    let mut global_function_file_map: HashMap<String, PathBuf> = HashMap::new(); // func_name -> owner file
     let mut global_class_map: HashMap<String, String> = HashMap::new(); // class_name -> namespace
+    let mut global_class_file_map: HashMap<String, PathBuf> = HashMap::new(); // class_name -> owner file
     let mut global_module_map: HashMap<String, String> = HashMap::new(); // module_name -> namespace
+    let mut global_module_file_map: HashMap<String, PathBuf> = HashMap::new(); // module_name -> owner file
     let mut namespace_class_map: HashMap<String, HashSet<String>> = HashMap::new();
     let mut namespace_module_map: HashMap<String, HashSet<String>> = HashMap::new();
     let mut function_collisions: Vec<(String, String, String)> = Vec::new();
@@ -1411,6 +1606,7 @@ fn build_project(
                 }
             } else {
                 global_function_map.insert(func_name.clone(), unit.namespace.clone());
+                global_function_file_map.insert(func_name.clone(), unit.file.clone());
             }
         }
         for class_name in &unit.class_names {
@@ -1425,6 +1621,7 @@ fn build_project(
                 }
             } else {
                 global_class_map.insert(class_name.clone(), unit.namespace.clone());
+                global_class_file_map.insert(class_name.clone(), unit.file.clone());
             }
         }
         for module_name in &unit.module_names {
@@ -1439,6 +1636,7 @@ fn build_project(
                 }
             } else {
                 global_module_map.insert(module_name.clone(), unit.namespace.clone());
+                global_module_file_map.insert(module_name.clone(), unit.file.clone());
             }
         }
 
@@ -1458,7 +1656,9 @@ fn build_project(
         compute_semantic_project_fingerprint(&config, &parsed_files, emit_llvm, do_check);
     if !check_only {
         if let Some(cached) = load_semantic_cached_fingerprint(&project_root) {
-            if cached == semantic_fingerprint && project_build_artifact_exists(&output_path, emit_llvm) {
+            if cached == semantic_fingerprint
+                && project_build_artifact_exists(&output_path, emit_llvm)
+            {
                 println!(
                     "{} {} ({})",
                     "Up to date".green().bold(),
@@ -1520,14 +1720,67 @@ fn build_project(
         );
     }
 
+    let entry_path = config.get_entry_path(&project_root);
+    let mut namespace_functions: HashMap<String, HashSet<String>> = HashMap::new();
+    for unit in &parsed_files {
+        let entry = namespace_functions
+            .entry(unit.namespace.clone())
+            .or_default();
+        for decl in &unit.program.declarations {
+            if let Decl::Function(func) = &decl.node {
+                entry.insert(func.name.clone());
+            }
+        }
+    }
+
+    let entry_namespace = parsed_files
+        .iter()
+        .find(|unit| unit.file == entry_path)
+        .map(|unit| unit.namespace.clone())
+        .unwrap_or_else(|| "global".to_string());
+    let namespace_api_fingerprints = compute_namespace_api_fingerprints(&parsed_files);
+    let file_api_fingerprints: HashMap<PathBuf, String> = parsed_files
+        .iter()
+        .map(|unit| (unit.file.clone(), unit.api_fingerprint.clone()))
+        .collect();
+    let rewrite_fingerprint_ctx = RewriteFingerprintContext {
+        namespace_functions: &namespace_functions,
+        global_function_map: &global_function_map,
+        global_function_file_map: &global_function_file_map,
+        namespace_classes: &namespace_class_map,
+        global_class_map: &global_class_map,
+        global_class_file_map: &global_class_file_map,
+        namespace_modules: &namespace_module_map,
+        global_module_map: &global_module_map,
+        global_module_file_map: &global_module_file_map,
+        namespace_api_fingerprints: &namespace_api_fingerprints,
+        file_api_fingerprints: &file_api_fingerprints,
+    };
+
     // Phase 2: Check imports for each file
     if do_check {
         println!("{} Checking imports...", "→".cyan());
         let shared_function_map = Arc::new(global_function_map.clone());
+        let import_check_cache_hits = std::sync::atomic::AtomicUsize::new(0);
 
         let import_results: Vec<Result<(), String>> = parsed_files
             .par_iter()
             .map(|unit| {
+                let rewrite_context_fingerprint = compute_rewrite_context_fingerprint_for_unit(
+                    unit,
+                    &entry_namespace,
+                    &rewrite_fingerprint_ctx,
+                );
+                if load_import_check_cache_hit(
+                    &project_root,
+                    &unit.file,
+                    &unit.semantic_fingerprint,
+                    &rewrite_context_fingerprint,
+                )? {
+                    import_check_cache_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    return Ok(());
+                }
+
                 let mut checker = ImportChecker::new(
                     Arc::clone(&shared_function_map),
                     unit.namespace.clone(),
@@ -1548,6 +1801,12 @@ fn build_project(
                     }
                     return Err(rendered);
                 }
+                save_import_check_cache_hit(
+                    &project_root,
+                    &unit.file,
+                    &unit.semantic_fingerprint,
+                    &rewrite_context_fingerprint,
+                )?;
                 Ok(())
             })
             .collect();
@@ -1558,27 +1817,17 @@ fn build_project(
                 return Err("Import check failed".to_string());
             }
         }
-    }
-
-    let entry_path = config.get_entry_path(&project_root);
-    let mut namespace_functions: HashMap<String, HashSet<String>> = HashMap::new();
-    for unit in &parsed_files {
-        let entry = namespace_functions
-            .entry(unit.namespace.clone())
-            .or_default();
-        for decl in &unit.program.declarations {
-            if let Decl::Function(func) = &decl.node {
-                entry.insert(func.name.clone());
-            }
+        let import_check_cache_hits =
+            import_check_cache_hits.load(std::sync::atomic::Ordering::Relaxed);
+        if import_check_cache_hits > 0 {
+            println!(
+                "{} Reused import-check cache for {}/{} files",
+                "→".cyan(),
+                import_check_cache_hits,
+                parsed_files.len()
+            );
         }
     }
-
-    let entry_namespace = parsed_files
-        .iter()
-        .find(|unit| unit.file == entry_path)
-        .map(|unit| unit.namespace.clone())
-        .unwrap_or_else(|| "global".to_string());
-    let namespace_api_fingerprints = compute_namespace_api_fingerprints(&parsed_files);
 
     // Phase 3: Build combined AST with deterministic namespace mangling.
     let rewritten_results: Vec<Result<RewrittenProjectUnit, String>> = parsed_files
@@ -1587,13 +1836,7 @@ fn build_project(
             let rewrite_context_fingerprint = compute_rewrite_context_fingerprint_for_unit(
                 unit,
                 &entry_namespace,
-                &namespace_functions,
-                &global_function_map,
-                &namespace_class_map,
-                &global_class_map,
-                &namespace_module_map,
-                &global_module_map,
-                &namespace_api_fingerprints,
+                &rewrite_fingerprint_ctx,
             );
             if let Some(cached) = load_rewritten_file_cache(
                 &project_root,
@@ -3007,9 +3250,14 @@ fn bindgen_header(header: &Path, output: Option<&Path>) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{api_program_fingerprint, semantic_program_fingerprint};
-    use crate::ast::Program;
+    use super::{
+        api_program_fingerprint, compute_rewrite_context_fingerprint_for_unit,
+        semantic_program_fingerprint, ParsedProjectUnit, RewriteFingerprintContext,
+    };
+    use crate::ast::{ImportDecl, Program};
     use crate::parser::Parser;
+    use std::collections::{HashMap, HashSet};
+    use std::path::PathBuf;
 
     fn parse_program(source: &str) -> Program {
         let tokens = crate::lexer::tokenize(source).expect("tokenize");
@@ -3080,7 +3328,10 @@ function add(x: Integer): Integer {
         let pa = parse_program(a);
         let pb = parse_program(b);
         assert_eq!(api_program_fingerprint(&pa), api_program_fingerprint(&pb));
-        assert_ne!(semantic_program_fingerprint(&pa), semantic_program_fingerprint(&pb));
+        assert_ne!(
+            semantic_program_fingerprint(&pa),
+            semantic_program_fingerprint(&pb)
+        );
     }
 
     #[test]
@@ -3099,5 +3350,153 @@ function add(x: Float): Float {
         let pa = parse_program(a);
         let pb = parse_program(b);
         assert_ne!(api_program_fingerprint(&pa), api_program_fingerprint(&pb));
+    }
+
+    fn make_unit(file: &str, namespace: &str, imports: &[&str]) -> ParsedProjectUnit {
+        ParsedProjectUnit {
+            file: PathBuf::from(file),
+            namespace: namespace.to_string(),
+            program: Program {
+                package: Some(namespace.to_string()),
+                declarations: Vec::new(),
+            },
+            imports: imports
+                .iter()
+                .map(|path| ImportDecl {
+                    path: (*path).to_string(),
+                    alias: None,
+                })
+                .collect(),
+            api_fingerprint: "api".to_string(),
+            semantic_fingerprint: "sem".to_string(),
+            function_names: Vec::new(),
+            class_names: Vec::new(),
+            module_names: Vec::new(),
+            from_parse_cache: false,
+        }
+    }
+
+    #[test]
+    fn rewrite_context_for_specific_import_ignores_unrelated_namespace_api_changes() {
+        let unit = make_unit("src/main.apex", "app", &["lib.foo"]);
+
+        let namespace_functions = HashMap::from([(
+            "lib".to_string(),
+            HashSet::from(["foo".to_string(), "bar".to_string()]),
+        )]);
+        let global_function_map = HashMap::from([
+            ("foo".to_string(), "lib".to_string()),
+            ("bar".to_string(), "lib".to_string()),
+        ]);
+        let global_function_file_map = HashMap::from([
+            ("foo".to_string(), PathBuf::from("src/lib_foo.apex")),
+            ("bar".to_string(), PathBuf::from("src/lib_bar.apex")),
+        ]);
+        let namespace_classes = HashMap::new();
+        let global_class_map = HashMap::new();
+        let global_class_file_map = HashMap::new();
+        let namespace_modules = HashMap::new();
+        let global_module_map = HashMap::new();
+        let global_module_file_map = HashMap::new();
+        let namespace_api_fingerprints = HashMap::from([("lib".to_string(), "ns-v1".to_string())]);
+        let file_api_fingerprints = HashMap::from([
+            (PathBuf::from("src/lib_foo.apex"), "file-foo-v1".to_string()),
+            (PathBuf::from("src/lib_bar.apex"), "file-bar-v1".to_string()),
+        ]);
+        let ctx_a = RewriteFingerprintContext {
+            namespace_functions: &namespace_functions,
+            global_function_map: &global_function_map,
+            global_function_file_map: &global_function_file_map,
+            namespace_classes: &namespace_classes,
+            global_class_map: &global_class_map,
+            global_class_file_map: &global_class_file_map,
+            namespace_modules: &namespace_modules,
+            global_module_map: &global_module_map,
+            global_module_file_map: &global_module_file_map,
+            namespace_api_fingerprints: &namespace_api_fingerprints,
+            file_api_fingerprints: &file_api_fingerprints,
+        };
+
+        let fp_a = compute_rewrite_context_fingerprint_for_unit(&unit, "app", &ctx_a);
+        let namespace_api_fingerprints_b =
+            HashMap::from([("lib".to_string(), "ns-v2".to_string())]);
+        let file_api_fingerprints_b = HashMap::from([
+            (PathBuf::from("src/lib_foo.apex"), "file-foo-v1".to_string()),
+            (PathBuf::from("src/lib_bar.apex"), "file-bar-v2".to_string()),
+        ]);
+        let ctx_b = RewriteFingerprintContext {
+            namespace_functions: &namespace_functions,
+            global_function_map: &global_function_map,
+            global_function_file_map: &global_function_file_map,
+            namespace_classes: &namespace_classes,
+            global_class_map: &global_class_map,
+            global_class_file_map: &global_class_file_map,
+            namespace_modules: &namespace_modules,
+            global_module_map: &global_module_map,
+            global_module_file_map: &global_module_file_map,
+            namespace_api_fingerprints: &namespace_api_fingerprints_b,
+            file_api_fingerprints: &file_api_fingerprints_b,
+        };
+        let fp_b = compute_rewrite_context_fingerprint_for_unit(&unit, "app", &ctx_b);
+
+        assert_eq!(fp_a, fp_b);
+    }
+
+    #[test]
+    fn rewrite_context_for_wildcard_import_tracks_namespace_api_changes() {
+        let unit = make_unit("src/main.apex", "app", &["lib.*"]);
+
+        let namespace_functions = HashMap::from([(
+            "lib".to_string(),
+            HashSet::from(["foo".to_string(), "bar".to_string()]),
+        )]);
+        let global_function_map = HashMap::from([
+            ("foo".to_string(), "lib".to_string()),
+            ("bar".to_string(), "lib".to_string()),
+        ]);
+        let global_function_file_map = HashMap::from([
+            ("foo".to_string(), PathBuf::from("src/lib_foo.apex")),
+            ("bar".to_string(), PathBuf::from("src/lib_bar.apex")),
+        ]);
+        let namespace_classes = HashMap::new();
+        let global_class_map = HashMap::new();
+        let global_class_file_map = HashMap::new();
+        let namespace_modules = HashMap::new();
+        let global_module_map = HashMap::new();
+        let global_module_file_map = HashMap::new();
+        let namespace_api_fingerprints_a =
+            HashMap::from([("lib".to_string(), "ns-v1".to_string())]);
+        let ctx_a = RewriteFingerprintContext {
+            namespace_functions: &namespace_functions,
+            global_function_map: &global_function_map,
+            global_function_file_map: &global_function_file_map,
+            namespace_classes: &namespace_classes,
+            global_class_map: &global_class_map,
+            global_class_file_map: &global_class_file_map,
+            namespace_modules: &namespace_modules,
+            global_module_map: &global_module_map,
+            global_module_file_map: &global_module_file_map,
+            namespace_api_fingerprints: &namespace_api_fingerprints_a,
+            file_api_fingerprints: &HashMap::new(),
+        };
+        let fp_a = compute_rewrite_context_fingerprint_for_unit(&unit, "app", &ctx_a);
+        let namespace_api_fingerprints_b =
+            HashMap::from([("lib".to_string(), "ns-v2".to_string())]);
+        let ctx_b = RewriteFingerprintContext {
+            namespace_functions: &namespace_functions,
+            global_function_map: &global_function_map,
+            global_function_file_map: &global_function_file_map,
+            namespace_classes: &namespace_classes,
+            global_class_map: &global_class_map,
+            global_class_file_map: &global_class_file_map,
+            namespace_modules: &namespace_modules,
+            global_module_map: &global_module_map,
+            global_module_file_map: &global_module_file_map,
+            namespace_api_fingerprints: &namespace_api_fingerprints_b,
+            file_api_fingerprints: &HashMap::new(),
+        };
+        let fp_b = compute_rewrite_context_fingerprint_for_unit(&unit, "app", &ctx_b);
+
+        assert_ne!(fp_a, fp_b);
     }
 }
