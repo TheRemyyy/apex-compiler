@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed string and char escape decoding in Apex source:
   - escape sequences like `\n`, `\t`, `\"`, `\\`, and escaped char literals now decode correctly at runtime
   - escaped interpolation braces (`\{` and `\}`) now remain literal text instead of incorrectly triggering string interpolation
+- Fixed `apex test` ignore-reason rendering so backslashes and control characters are preserved correctly in generated runner output.
+- Fixed `apex test --list` ignore-reason rendering so control characters no longer break discovery layout.
 - Expanded CLI smoke coverage to assert the real `examples/24_test_attributes.apex` runner output and ignored-test totals.
 
 ## [1.3.5] - Bug Fixes - 2026-03-08

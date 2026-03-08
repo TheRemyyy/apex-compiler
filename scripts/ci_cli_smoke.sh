@@ -26,6 +26,7 @@ PROJECT_DIR="${TMP_DIR}/sample_project"
 UGLY_FILE="${TMP_DIR}/ugly.apex"
 LINT_FILE="${TMP_DIR}/linty.apex"
 TEST_FILE="${TMP_DIR}/sample_test.apex"
+IGNORE_ESC_FILE="${TMP_DIR}/ignore_escape_test.apex"
 ESCAPE_FILE="${TMP_DIR}/escapes.apex"
 ESCAPE_OUT="${TMP_DIR}/escapes_bin"
 ESCAPE_STDOUT="${TMP_DIR}/escapes.stdout"
@@ -124,6 +125,19 @@ EOF_TEST
 "${COMPILER}" test --path "${REPO_ROOT}/examples/24_test_attributes.apex" >"${BORROW_ERR_OUT}" 2>&1
 grep -q "Total:   10" "${BORROW_ERR_OUT}"
 grep -q "Ignored: 2" "${BORROW_ERR_OUT}"
+
+cat <<'EOF_IGNORE_ESC' > "${IGNORE_ESC_FILE}"
+@Test
+@Ignore("c:\\tmp\\foo\nline2")
+function skipped(): None {
+    fail("should not run");
+    return None;
+}
+EOF_IGNORE_ESC
+"${COMPILER}" test --path "${IGNORE_ESC_FILE}" >"${BORROW_ERR_OUT}" 2>&1
+grep -Fq 'Reason: c:\tmp\foo\nline2' "${BORROW_ERR_OUT}"
+"${COMPILER}" test --list --path "${IGNORE_ESC_FILE}" >"${BORROW_ERR_OUT}" 2>&1
+grep -Fq '(ignored: c:\\tmp\\foo\nline2)' "${BORROW_ERR_OUT}"
 
 cat <<'EOF_ESCAPE' > "${ESCAPE_FILE}"
 import std.io.*;

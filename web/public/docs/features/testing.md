@@ -156,6 +156,8 @@ Notes:
 - Bare `@Ignore` and `@Ignore("reason")` are both skipped correctly by `apex test`.
 - Final summary `Total` counts all discovered tests, including ignored ones.
 - String escapes inside tests follow normal Apex string semantics, so `\n`, `\t`, `\"`, `\\`, `\{`, and `\}` are decoded before execution.
+- Ignore reasons containing backslashes or control characters are rendered safely by the generated runner instead of being reinterpreted as escape sequences.
+- `apex test --list` also escapes control characters inside ignore reasons so discovery output stays single-line per test.
 
 ## Complete Example
 

@@ -165,6 +165,35 @@ fn get_ignore_reason(attributes: &[Attribute]) -> Option<String> {
     None
 }
 
+fn escape_apex_string_literal(value: &str) -> String {
+    let mut escaped = String::new();
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\\\n"),
+            '\r' => escaped.push_str("\\\\r"),
+            '\t' => escaped.push_str("\\\\t"),
+            other => escaped.push(other),
+        }
+    }
+    escaped
+}
+
+fn escape_display_text(value: &str) -> String {
+    let mut escaped = String::new();
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            other => escaped.push(other),
+        }
+    }
+    escaped
+}
+
 /// Generate test runner code for compilation
 #[allow(dead_code)]
 pub fn generate_test_runner(discovery: &TestDiscovery) -> String {
@@ -370,8 +399,8 @@ fn filter_out_main_function(source: &str) -> String {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{
-        discover_tests, ensure_test_runner_imports, generate_test_runner,
-        generate_test_runner_with_source, TestDiscovery,
+        discover_tests, ensure_test_runner_imports, escape_display_text,
+        generate_test_runner, generate_test_runner_with_source, TestDiscovery,
     };
     use crate::{lexer::tokenize, parser::Parser};
 
@@ -548,6 +577,26 @@ function skipped(): None {
             2
         );
     }
+
+    #[test]
+    fn generated_runner_escapes_ignore_reason_control_chars() {
+        let source = "@Test\n@Ignore(\"c:\\\\tmp\\\\foo\\nline2\")\nfunction skipped(): None { return None; }\n";
+        let tokens = tokenize(source).expect("tokenize");
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse_program().expect("parse");
+        let discovery = discover_tests(&program);
+
+        let generated = generate_test_runner_with_source(&discovery, source);
+        assert!(generated.contains("Reason: c:\\\\tmp\\\\foo\\\\nline2"));
+    }
+
+    #[test]
+    fn discovery_print_escapes_ignore_reason_control_chars() {
+        assert_eq!(
+            escape_display_text("c:\\tmp\\foo\nline2\tz"),
+            "c:\\\\tmp\\\\foo\\nline2\\tz"
+        );
+    }
 }
 
 /// Generate runner code with mutable counters
@@ -587,7 +636,7 @@ fn generate_suite_runner_with_mut(code: &mut String, suite: &TestSuite) {
             {
                 code.push_str(&format!(
                     "    println(\"      Reason: {}\");\n",
-                    reason.replace("\"", "\\\"")
+                    escape_apex_string_literal(reason)
                 ));
             }
         } else {
@@ -653,7 +702,7 @@ fn generate_suite_runner(code: &mut String, suite: &TestSuite) {
             {
                 code.push_str(&format!(
                     "    println(\"      Reason: {}\");\n",
-                    reason.replace("\"", "\\\"")
+                    escape_apex_string_literal(reason)
                 ));
             }
         } else {
@@ -712,7 +761,7 @@ pub fn print_discovery(discovery: &TestDiscovery) {
                     .ignore_reason
                     .as_ref()
                     .filter(|reason| !reason.is_empty())
-                    .map(|reason| format!("(ignored: {})", reason))
+                    .map(|reason| format!("(ignored: {})", escape_display_text(reason)))
                     .unwrap_or_else(|| "(ignored)".to_string());
                 println!(
                     "  {} {} - {}",
