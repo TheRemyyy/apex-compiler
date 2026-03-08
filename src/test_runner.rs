@@ -17,6 +17,7 @@ use colored::*;
 pub struct Test {
     pub name: String,
     pub function: FunctionDecl,
+    pub ignored: bool,
     pub ignore_reason: Option<String>,
 }
 
@@ -97,17 +98,18 @@ pub fn discover_tests(program: &Program) -> TestDiscovery {
 
             // Check for @Test attribute
             if has_attribute(&func.attributes, Attribute::Test) {
+                let ignored = has_ignore_attribute(&func.attributes);
                 let ignore_reason = get_ignore_reason(&func.attributes);
-                let is_ignored = ignore_reason.is_some();
 
                 suite_tests.push(Test {
                     name: func.name.clone(),
                     function: func.clone(),
+                    ignored,
                     ignore_reason,
                 });
 
                 total_tests += 1;
-                if is_ignored {
+                if ignored {
                     ignored_tests += 1;
                 }
             }
@@ -145,6 +147,12 @@ fn has_attribute(attributes: &[Attribute], target: Attribute) -> bool {
                 | (Attribute::AfterAll, Attribute::AfterAll)
         )
     })
+}
+
+fn has_ignore_attribute(attributes: &[Attribute]) -> bool {
+    attributes
+        .iter()
+        .any(|attr| matches!(attr, Attribute::Ignore(_)))
 }
 
 /// Get ignore reason if test is marked with @Ignore
@@ -362,9 +370,10 @@ fn filter_out_main_function(source: &str) -> String {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{
-        ensure_test_runner_imports, generate_test_runner, generate_test_runner_with_source,
-        TestDiscovery,
+        discover_tests, ensure_test_runner_imports, generate_test_runner,
+        generate_test_runner_with_source, TestDiscovery,
     };
+    use crate::{lexer::tokenize, parser::Parser};
 
     #[test]
     fn injects_stdio_import_when_missing() {
@@ -473,6 +482,72 @@ function helper(): None { return None; }
         assert!(!generated.contains("public async function main(): Integer"));
         assert!(generated.contains("function helper(): None"));
     }
+
+    #[test]
+    fn discover_tests_marks_ignore_without_reason_as_ignored() {
+        let source = r#"
+@Test
+@Ignore
+function skipped(): None {
+    return None;
+}
+"#;
+        let tokens = tokenize(source).expect("tokenize");
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse_program().expect("parse");
+
+        let discovery = discover_tests(&program);
+        assert_eq!(discovery.ignored_tests, 1);
+        assert!(discovery.suites[0].tests[0].ignored);
+        assert_eq!(discovery.suites[0].tests[0].ignore_reason, None);
+    }
+
+    #[test]
+    fn generated_runner_skips_ignore_without_reason() {
+        let source = r#"
+@Test
+@Ignore
+function skipped(): None {
+    fail("should not run");
+    return None;
+}
+"#;
+        let tokens = tokenize(source).expect("tokenize");
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse_program().expect("parse");
+        let discovery = discover_tests(&program);
+
+        let generated = generate_test_runner_with_source(&discovery, source);
+        assert!(generated.contains("println(\"[IGNORE] skipped\");"));
+        assert!(!generated.contains("Running: skipped..."));
+        assert!(!generated.contains("Reason:"));
+    }
+
+    #[test]
+    fn generated_runner_counts_ignored_tests_in_total() {
+        let source = r#"
+@Test
+function runs(): None {
+    return None;
+}
+
+@Test
+@Ignore
+function skipped(): None {
+    return None;
+}
+"#;
+        let tokens = tokenize(source).expect("tokenize");
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse_program().expect("parse");
+        let discovery = discover_tests(&program);
+
+        let generated = generate_test_runner_with_source(&discovery, source);
+        assert_eq!(
+            generated.matches("tests_total = tests_total + 1;").count(),
+            2
+        );
+    }
 }
 
 /// Generate runner code with mutable counters
@@ -490,6 +565,8 @@ fn generate_suite_runner_with_mut(code: &mut String, suite: &TestSuite) {
 
     // Each test
     for test in &suite.tests {
+        code.push_str("    tests_total = tests_total + 1;\n");
+
         // BeforeEach
         if let Some(ref before_each_fn) = suite.before_each {
             code.push_str(&format!("    // @Before: {}\n", before_each_fn.name));
@@ -499,11 +576,15 @@ fn generate_suite_runner_with_mut(code: &mut String, suite: &TestSuite) {
         // Test itself
         code.push_str(&format!("    // @Test: {}\n", test.name));
 
-        if let Some(ref reason) = test.ignore_reason {
+        if test.ignored {
             // Report ignore inline
             code.push_str("    tests_ignored = tests_ignored + 1;\n");
             code.push_str(&format!("    println(\"[IGNORE] {}\");\n", test.name));
-            if !reason.is_empty() {
+            if let Some(reason) = test
+                .ignore_reason
+                .as_ref()
+                .filter(|reason| !reason.is_empty())
+            {
                 code.push_str(&format!(
                     "    println(\"      Reason: {}\");\n",
                     reason.replace("\"", "\\\"")
@@ -511,7 +592,6 @@ fn generate_suite_runner_with_mut(code: &mut String, suite: &TestSuite) {
             }
         } else {
             // Run the test
-            code.push_str("    tests_total = tests_total + 1;\n");
             code.push_str(&format!("    print(\"Running: {}... \");\n", test.name));
             code.push_str(&format!("    {}();\n", test.name));
             code.push_str("    tests_passed = tests_passed + 1;\n");
@@ -551,6 +631,8 @@ fn generate_suite_runner(code: &mut String, suite: &TestSuite) {
 
     // Each test
     for test in &suite.tests {
+        code.push_str("    tests_total = tests_total + 1;\n");
+
         // BeforeEach
         if let Some(ref before_each_fn) = suite.before_each {
             code.push_str(&format!("    // @Before: {}\n", before_each_fn.name));
@@ -560,11 +642,15 @@ fn generate_suite_runner(code: &mut String, suite: &TestSuite) {
         // Test itself
         code.push_str(&format!("    // @Test: {}\n", test.name));
 
-        if let Some(ref reason) = test.ignore_reason {
+        if test.ignored {
             // Report ignore inline
             code.push_str("    tests_ignored = tests_ignored + 1;\n");
             code.push_str(&format!("    println(\"[IGNORE] {}\");\n", test.name));
-            if !reason.is_empty() {
+            if let Some(reason) = test
+                .ignore_reason
+                .as_ref()
+                .filter(|reason| !reason.is_empty())
+            {
                 code.push_str(&format!(
                     "    println(\"      Reason: {}\");\n",
                     reason.replace("\"", "\\\"")
@@ -572,7 +658,6 @@ fn generate_suite_runner(code: &mut String, suite: &TestSuite) {
             }
         } else {
             // Run the test
-            code.push_str("    tests_total = tests_total + 1;\n");
             code.push_str(&format!("    print(\"Running: {}... \");\n", test.name));
             code.push_str(&format!("    {}();\n", test.name));
             code.push_str("    tests_passed = tests_passed + 1;\n");
@@ -622,12 +707,18 @@ pub fn print_discovery(discovery: &TestDiscovery) {
         }
 
         for test in &suite.tests {
-            if let Some(ref reason) = test.ignore_reason {
+            if test.ignored {
+                let status = test
+                    .ignore_reason
+                    .as_ref()
+                    .filter(|reason| !reason.is_empty())
+                    .map(|reason| format!("(ignored: {})", reason))
+                    .unwrap_or_else(|| "(ignored)".to_string());
                 println!(
                     "  {} {} - {}",
                     "@Test".cyan(),
                     test.name.yellow(),
-                    format!("(ignored: {})", reason).yellow()
+                    status.yellow()
                 );
             } else {
                 println!("  {} {}", "@Test".cyan(), test.name.green());

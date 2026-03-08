@@ -118,6 +118,9 @@ EOF_TEST
 
 "${COMPILER}" test --list --path "${TEST_FILE}" >/dev/null
 "${COMPILER}" test --path "${TEST_FILE}" >/dev/null
+"${COMPILER}" test --path "${REPO_ROOT}/examples/24_test_attributes.apex" >"${BORROW_ERR_OUT}" 2>&1
+grep -q "Total:   10" "${BORROW_ERR_OUT}"
+grep -q "Ignored: 2" "${BORROW_ERR_OUT}"
 
 cat <<'EOF_HEADER' > "${HEADER_FILE}"
 int add(int a, int b);

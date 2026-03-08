@@ -4526,7 +4526,7 @@ fn run_tests(
         let filtered_total_tests: usize = filtered_suites.iter().map(|s| s.tests.len()).sum();
         let filtered_ignored_tests: usize = filtered_suites
             .iter()
-            .map(|s| s.tests.iter().filter(|t| t.ignore_reason.is_some()).count())
+            .map(|s| s.tests.iter().filter(|t| t.ignored).count())
             .sum();
 
         let filtered_discovery = test_runner::TestDiscovery {

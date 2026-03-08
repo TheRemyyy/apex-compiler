@@ -4,6 +4,15 @@ All notable changes to the Apex Programming Language Compiler will be documented
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### 🐛 Fixed
+
+- Fixed `apex test` handling for `@Ignore` without a reason:
+  - tests marked with bare `@Ignore` are now skipped correctly instead of being executed
+  - ignored tests are now counted in the final `Total` summary as well as `Ignored`
+- Expanded CLI smoke coverage to assert the real `examples/24_test_attributes.apex` runner output and ignored-test totals.
+
 ## [1.3.5] - Bug Fixes - 2026-03-08
 
 ### ✨ Added
