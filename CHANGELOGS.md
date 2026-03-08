@@ -107,6 +107,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - full combined rewritten AST is now materialized only for `emit_llvm`; normal object-link builds stay on narrower per-file program assembly
   - object-level per-file cache reuse for unchanged files plus relink-only final stage
   - final link is now skipped entirely when all object files are cache hits and the ordered link manifest matches the previous successful link
+  - final executable/shared linking now feeds object inputs to `clang` through a response file instead of expanding huge object lists directly on the command line
+  - codegen now skips the explicit-generic-call specialization rewrite entirely for programs that contain no explicit generic invocations
   - parallel multi-file parse pipeline for lower front-end wall time on larger projects
   - parallel import-check and rewrite/cache resolution pass
 - CI workflow now builds Linux release compiler once and reuses the artifact for CLI smoke and examples jobs, avoiding duplicate release rebuilds.

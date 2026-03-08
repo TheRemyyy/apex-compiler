@@ -1195,6 +1195,179 @@ impl<'ctx> Codegen<'ctx> {
         })
     }
 
+    fn expr_has_explicit_generic_calls(expr: &Expr) -> bool {
+        match expr {
+            Expr::Call {
+                callee,
+                args,
+                type_args,
+            } => {
+                !type_args.is_empty()
+                    || Self::expr_has_explicit_generic_calls(&callee.node)
+                    || args
+                        .iter()
+                        .any(|arg| Self::expr_has_explicit_generic_calls(&arg.node))
+            }
+            Expr::Binary { left, right, .. } => {
+                Self::expr_has_explicit_generic_calls(&left.node)
+                    || Self::expr_has_explicit_generic_calls(&right.node)
+            }
+            Expr::Unary { expr, .. }
+            | Expr::Try(expr)
+            | Expr::Borrow(expr)
+            | Expr::MutBorrow(expr)
+            | Expr::Deref(expr)
+            | Expr::Await(expr) => Self::expr_has_explicit_generic_calls(&expr.node),
+            Expr::Field { object, .. } => Self::expr_has_explicit_generic_calls(&object.node),
+            Expr::Index { object, index } => {
+                Self::expr_has_explicit_generic_calls(&object.node)
+                    || Self::expr_has_explicit_generic_calls(&index.node)
+            }
+            Expr::Construct { args, .. } => args
+                .iter()
+                .any(|arg| Self::expr_has_explicit_generic_calls(&arg.node)),
+            Expr::Lambda { body, .. } => Self::expr_has_explicit_generic_calls(&body.node),
+            Expr::Match { expr, arms } => {
+                Self::expr_has_explicit_generic_calls(&expr.node)
+                    || arms.iter().any(|arm| {
+                        arm.body
+                            .iter()
+                            .any(|stmt| Self::stmt_has_explicit_generic_calls(&stmt.node))
+                    })
+            }
+            Expr::StringInterp(parts) => parts.iter().any(|part| match part {
+                StringPart::Literal(_) => false,
+                StringPart::Expr(expr) => Self::expr_has_explicit_generic_calls(&expr.node),
+            }),
+            Expr::AsyncBlock(block) | Expr::Block(block) => block
+                .iter()
+                .any(|stmt| Self::stmt_has_explicit_generic_calls(&stmt.node)),
+            Expr::Require { condition, message } => {
+                Self::expr_has_explicit_generic_calls(&condition.node)
+                    || message
+                        .as_ref()
+                        .is_some_and(|msg| Self::expr_has_explicit_generic_calls(&msg.node))
+            }
+            Expr::Range { start, end, .. } => {
+                start
+                    .as_ref()
+                    .is_some_and(|expr| Self::expr_has_explicit_generic_calls(&expr.node))
+                    || end
+                        .as_ref()
+                        .is_some_and(|expr| Self::expr_has_explicit_generic_calls(&expr.node))
+            }
+            Expr::IfExpr {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                Self::expr_has_explicit_generic_calls(&condition.node)
+                    || then_branch
+                        .iter()
+                        .any(|stmt| Self::stmt_has_explicit_generic_calls(&stmt.node))
+                    || else_branch.as_ref().is_some_and(|block| {
+                        block
+                            .iter()
+                            .any(|stmt| Self::stmt_has_explicit_generic_calls(&stmt.node))
+                    })
+            }
+            Expr::Literal(_) | Expr::Ident(_) | Expr::This => false,
+        }
+    }
+
+    fn stmt_has_explicit_generic_calls(stmt: &Stmt) -> bool {
+        match stmt {
+            Stmt::Let { value, .. } => Self::expr_has_explicit_generic_calls(&value.node),
+            Stmt::Assign { target, value } => {
+                Self::expr_has_explicit_generic_calls(&target.node)
+                    || Self::expr_has_explicit_generic_calls(&value.node)
+            }
+            Stmt::Expr(expr) => Self::expr_has_explicit_generic_calls(&expr.node),
+            Stmt::Return(expr) => expr
+                .as_ref()
+                .is_some_and(|expr| Self::expr_has_explicit_generic_calls(&expr.node)),
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                Self::expr_has_explicit_generic_calls(&condition.node)
+                    || then_block
+                        .iter()
+                        .any(|stmt| Self::stmt_has_explicit_generic_calls(&stmt.node))
+                    || else_block.as_ref().is_some_and(|block| {
+                        block
+                            .iter()
+                            .any(|stmt| Self::stmt_has_explicit_generic_calls(&stmt.node))
+                    })
+            }
+            Stmt::While { condition, body } => {
+                Self::expr_has_explicit_generic_calls(&condition.node)
+                    || body
+                        .iter()
+                        .any(|stmt| Self::stmt_has_explicit_generic_calls(&stmt.node))
+            }
+            Stmt::For { iterable, body, .. } => {
+                Self::expr_has_explicit_generic_calls(&iterable.node)
+                    || body
+                        .iter()
+                        .any(|stmt| Self::stmt_has_explicit_generic_calls(&stmt.node))
+            }
+            Stmt::Match { expr, arms } => {
+                Self::expr_has_explicit_generic_calls(&expr.node)
+                    || arms.iter().any(|arm| {
+                        arm.body
+                            .iter()
+                            .any(|stmt| Self::stmt_has_explicit_generic_calls(&stmt.node))
+                    })
+            }
+            Stmt::Break | Stmt::Continue => false,
+        }
+    }
+
+    fn decl_has_explicit_generic_calls(decl: &Decl) -> bool {
+        match decl {
+            Decl::Function(func) => func
+                .body
+                .iter()
+                .any(|stmt| Self::stmt_has_explicit_generic_calls(&stmt.node)),
+            Decl::Class(class) => {
+                class.constructor.as_ref().is_some_and(|ctor| {
+                    ctor.body
+                        .iter()
+                        .any(|stmt| Self::stmt_has_explicit_generic_calls(&stmt.node))
+                }) || class.destructor.as_ref().is_some_and(|dtor| {
+                    dtor.body
+                        .iter()
+                        .any(|stmt| Self::stmt_has_explicit_generic_calls(&stmt.node))
+                }) || class.methods.iter().any(|method| {
+                    method
+                        .body
+                        .iter()
+                        .any(|stmt| Self::stmt_has_explicit_generic_calls(&stmt.node))
+                })
+            }
+            Decl::Module(module) => module
+                .declarations
+                .iter()
+                .any(|decl| Self::decl_has_explicit_generic_calls(&decl.node)),
+            Decl::Interface(interface) => interface.methods.iter().any(|method| {
+                method.default_impl.as_ref().is_some_and(|body| {
+                    body.iter()
+                        .any(|stmt| Self::stmt_has_explicit_generic_calls(&stmt.node))
+                })
+            }),
+            Decl::Enum(_) | Decl::Import(_) => false,
+        }
+    }
+
+    fn program_has_explicit_generic_calls(program: &Program) -> bool {
+        program
+            .declarations
+            .iter()
+            .any(|decl| Self::decl_has_explicit_generic_calls(&decl.node))
+    }
+
     fn specialize_explicit_generic_calls(program: &Program) -> Result<Program> {
         let mut templates: HashMap<String, GenericTemplate> = HashMap::new();
         for decl in &program.declarations {
@@ -1304,8 +1477,13 @@ impl<'ctx> Codegen<'ctx> {
         program: &Program,
         active_symbols: Option<&HashSet<String>>,
     ) -> Result<()> {
-        let specialized_program = Self::specialize_explicit_generic_calls(program)?;
-        let program = &specialized_program;
+        let specialized_program;
+        let program = if Self::program_has_explicit_generic_calls(program) {
+            specialized_program = Self::specialize_explicit_generic_calls(program)?;
+            &specialized_program
+        } else {
+            program
+        };
 
         self.import_aliases.clear();
         for decl in &program.declarations {

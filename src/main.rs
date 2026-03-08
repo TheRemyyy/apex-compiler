@@ -3548,6 +3548,28 @@ fn require_lld_linker() -> Result<(), String> {
     ))
 }
 
+fn escape_response_file_arg(arg: &str) -> String {
+    let escaped = arg.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{}\"", escaped)
+}
+
+fn write_link_response_file(path: &Path, objects: &[PathBuf]) -> Result<(), String> {
+    let mut contents = String::new();
+    for object in objects {
+        contents.push_str(&escape_response_file_arg(&object.display().to_string()));
+        contents.push('\n');
+    }
+
+    fs::write(path, contents).map_err(|e| {
+        format!(
+            "{}: Failed to write link response file '{}': {}",
+            "error".red().bold(),
+            path.display(),
+            e
+        )
+    })
+}
+
 /// Compile LLVM IR using clang
 fn compile_ir(ir_path: &Path, output_path: &Path, link: &LinkConfig<'_>) -> Result<(), String> {
     require_lld_linker()?;
@@ -3705,8 +3727,10 @@ fn link_objects(
             Ok(())
         }
         OutputKind::Bin | OutputKind::Shared => {
+            let response_path = output_path.with_extension("link.rsp");
+            write_link_response_file(&response_path, objects)?;
             let mut cmd = Command::new("clang");
-            cmd.args(objects)
+            cmd.arg(format!("@{}", response_path.display()))
                 .arg("-o")
                 .arg(output_path)
                 .arg(opt_flag)
@@ -3745,6 +3769,7 @@ fn link_objects(
                     "error".red().bold()
                 )
             })?;
+            let _ = fs::remove_file(&response_path);
             if output.status.success() {
                 Ok(())
             } else {
@@ -4377,10 +4402,11 @@ fn bindgen_header(header: &Path, output: Option<&Path>) -> Result<(), String> {
 mod tests {
     use super::{
         api_program_fingerprint, build_file_dependency_graph, build_reverse_dependency_graph,
-        compute_link_fingerprint, compute_rewrite_context_fingerprint_for_unit, parse_project_unit,
-        semantic_program_fingerprint, should_skip_final_link, transitive_dependents,
-        DependencyResolutionContext, LinkConfig, LinkManifestCache, OutputKind, ParsedProjectUnit,
-        RewriteFingerprintContext, LINK_MANIFEST_CACHE_SCHEMA,
+        compute_link_fingerprint, compute_rewrite_context_fingerprint_for_unit,
+        escape_response_file_arg, parse_project_unit, semantic_program_fingerprint,
+        should_skip_final_link, transitive_dependents, DependencyResolutionContext, LinkConfig,
+        LinkManifestCache, OutputKind, ParsedProjectUnit, RewriteFingerprintContext,
+        LINK_MANIFEST_CACHE_SCHEMA,
     };
     use crate::ast::{ImportDecl, Program};
     use crate::parser::Parser;
@@ -4850,5 +4876,13 @@ function add(x: Float): Float {
         assert_eq!(first.semantic_fingerprint, second.semantic_fingerprint);
 
         let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn response_file_args_escape_quotes_and_backslashes() {
+        assert_eq!(
+            escape_response_file_arg("C:\\tmp\\a \"b\".o"),
+            "\"C:\\\\tmp\\\\a \\\"b\\\".o\""
+        );
     }
 }

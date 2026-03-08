@@ -41,6 +41,7 @@ This document describes the internal architecture of the Apex compiler.
 - **Link manifest cache** (`.apexcache/link/latest.json`):
   - Records the ordered object input list plus final link configuration for the last successful build.
   - If a rebuild produces zero object cache misses and the manifest still matches, Apex skips the final `lld` link invocation entirely and reuses the existing output artifact.
+  - When linking does run, Apex now passes large object input sets through a response file to keep `clang`/`lld` startup overhead bounded on large projects.
 - **Semantic build fingerprint cache** (`.apexcache/semantic_build_fingerprint`):
   - Hashes canonicalized AST content instead of raw file text.
   - Comment-only / whitespace-only edits can now stop after parse/cache validation and return `Up to date ... (semantic cache)` without object rebuild or relink.
@@ -54,6 +55,9 @@ This document describes the internal architecture of the Apex compiler.
 - **Reused API projection programs**:
   - Each rewritten file now precomputes and keeps its API-only projection once.
   - Semantic delta checking and object-cache miss codegen reuse that projected AST instead of regenerating body-stripped declarations repeatedly.
+- **Codegen generic-specialization fast path**:
+  - Object and full-program codegen now first checks whether the AST actually contains explicit generic call sites.
+  - If none exist, Apex skips the generic-specialization rewrite pass entirely instead of cloning and rewalking the whole codegen input.
 - **Impacted semantic view**:
   - Type checking and borrow checking now run with full bodies only for changed files and real API dependents.
   - Unchanged unaffected files participate through API projections plus cached semantic summaries.
