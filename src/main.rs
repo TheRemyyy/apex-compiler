@@ -3753,6 +3753,7 @@ fn require_lld_linker() -> Result<(), String> {
     ))
 }
 
+#[cfg(all(unix, not(target_os = "macos")))]
 fn should_force_no_pie(link: &LinkConfig<'_>) -> bool {
     if link.output_kind != OutputKind::Bin {
         return false;

@@ -6,34 +6,14 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Build (${{ matrix.label }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: linux-x64
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact_name: apex-compiler-linux-x64
-            binary_path: target/x86_64-unknown-linux-gnu/release/apex-compiler
-          - label: macos-arm64
-            os: macos-latest
-            target: aarch64-apple-darwin
-            artifact_name: apex-compiler-macos-arm64
-            binary_path: target/aarch64-apple-darwin/release/apex-compiler
-          - label: windows-x64
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact_name: apex-compiler-windows-x64
-            binary_path: target/x86_64-pc-windows-msvc/release/apex-compiler.exe
-
+  build-linux:
+    name: Build (linux-x64)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: x86_64-unknown-linux-gnu
       - uses: ./.github/actions/install-llvm
       - uses: actions/cache@v4
         with:
@@ -41,9 +21,58 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-x86_64-unknown-linux-gnu-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build release
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+        env:
+          LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apex-compiler-linux-x64
+          path: target/x86_64-unknown-linux-gnu/release/apex-compiler
+
+  build-macos:
+    name: Build (macos-arm64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: ./.github/actions/install-llvm
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-aarch64-apple-darwin-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build release
+        run: cargo build --release --target aarch64-apple-darwin
+        env:
+          LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apex-compiler-macos-arm64
+          path: target/aarch64-apple-darwin/release/apex-compiler
+
+  build-windows:
+    name: Build (windows-x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: ./.github/actions/install-llvm
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-x86_64-pc-windows-msvc-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Install Windows build dependencies
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           vcpkg install libxml2:x64-windows-static
@@ -51,29 +80,75 @@ jobs:
           Copy-Item "$LibPath\libxml2.lib" "$LibPath\libxml2s.lib" -Force
           echo "LIBXML2_LIB_PATH=$LibPath" >> $env:GITHUB_ENV
       - name: Build release
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target x86_64-pc-windows-msvc
         env:
           LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
-          RUSTFLAGS: ${{ runner.os == 'Windows' && format('-C link-arg=/LIBPATH:{0}', env.LIBXML2_LIB_PATH) || '' }}
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+          LLVM_CONFIG_PATH: ${{ env.LLVM_CONFIG_PATH }}
+          RUSTFLAGS: ${{ format('-C link-arg=/LIBPATH:{0}', env.LIBXML2_LIB_PATH) }}
+      - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.binary_path }}
+          name: apex-compiler-windows-x64
+          path: target/x86_64-pc-windows-msvc/release/apex-compiler.exe
 
-  checks:
-    name: Rust Checks (${{ matrix.label }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: linux-x64
-            os: ubuntu-latest
-          - label: macos-arm64
-            os: macos-latest
-          - label: windows-x64
-            os: windows-latest
+  checks-linux:
+    name: Rust Checks (linux-x64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/install-llvm
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-checks-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - run: cargo check --locked --all-targets --all-features --verbose
+        env:
+          LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
+      - run: cargo test --locked --verbose
+        env:
+          LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
+      - run: cargo test --locked --release --all-targets --verbose
+        env:
+          LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
+      - run: cargo fmt -- --check
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+        env:
+          LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
+
+  checks-macos:
+    name: Rust Checks (macos-arm64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/install-llvm
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-checks-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - run: cargo check --locked --all-targets --all-features --verbose
+        env:
+          LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
+      - run: cargo test --locked --verbose
+        env:
+          LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
+      - run: cargo test --locked --release --all-targets --verbose
+        env:
+          LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
+      - run: cargo fmt -- --check
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+        env:
+          LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
+
+  checks-windows:
+    name: Rust Checks (windows-x64)
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -86,7 +161,6 @@ jobs:
             target
           key: ${{ runner.os }}-checks-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Install Windows build dependencies
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           vcpkg install libxml2:x64-windows-static
@@ -96,100 +170,109 @@ jobs:
       - run: cargo check --locked --all-targets --all-features --verbose
         env:
           LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
-          RUSTFLAGS: ${{ runner.os == 'Windows' && format('-C link-arg=/LIBPATH:{0}', env.LIBXML2_LIB_PATH) || '' }}
+          LLVM_CONFIG_PATH: ${{ env.LLVM_CONFIG_PATH }}
+          RUSTFLAGS: ${{ format('-C link-arg=/LIBPATH:{0}', env.LIBXML2_LIB_PATH) }}
       - run: cargo test --locked --verbose
         env:
           LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
-          RUSTFLAGS: ${{ runner.os == 'Windows' && format('-C link-arg=/LIBPATH:{0}', env.LIBXML2_LIB_PATH) || '' }}
+          LLVM_CONFIG_PATH: ${{ env.LLVM_CONFIG_PATH }}
+          RUSTFLAGS: ${{ format('-C link-arg=/LIBPATH:{0}', env.LIBXML2_LIB_PATH) }}
       - run: cargo test --locked --release --all-targets --verbose
         env:
           LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
-          RUSTFLAGS: ${{ runner.os == 'Windows' && format('-C link-arg=/LIBPATH:{0}', env.LIBXML2_LIB_PATH) || '' }}
+          LLVM_CONFIG_PATH: ${{ env.LLVM_CONFIG_PATH }}
+          RUSTFLAGS: ${{ format('-C link-arg=/LIBPATH:{0}', env.LIBXML2_LIB_PATH) }}
       - run: cargo fmt -- --check
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
         env:
           LLVM_SYS_211_PREFIX: ${{ env.LLVM_SYS_211_PREFIX }}
-          RUSTFLAGS: ${{ runner.os == 'Windows' && format('-C link-arg=/LIBPATH:{0}', env.LIBXML2_LIB_PATH) || '' }}
+          LLVM_CONFIG_PATH: ${{ env.LLVM_CONFIG_PATH }}
+          RUSTFLAGS: ${{ format('-C link-arg=/LIBPATH:{0}', env.LIBXML2_LIB_PATH) }}
 
-  smoke:
-    name: CLI Smoke (${{ matrix.label }})
-    runs-on: ${{ matrix.os }}
-    needs: build
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: linux-x64
-            os: ubuntu-latest
-            artifact_name: apex-compiler-linux-x64
-            compiler_path: target/release/apex-compiler
-          - label: macos-arm64
-            os: macos-latest
-            artifact_name: apex-compiler-macos-arm64
-            compiler_path: target/release/apex-compiler
+  smoke-linux:
+    name: CLI Smoke (linux-x64)
+    runs-on: ubuntu-latest
+    needs: build-linux
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/install-llvm
       - uses: actions/download-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
+          name: apex-compiler-linux-x64
           path: target/release
-      - run: chmod +x ${{ matrix.compiler_path }}
+      - run: chmod +x target/release/apex-compiler
       - run: bash scripts/ci_cli_smoke.sh
         env:
           CI_SKIP_COMPILER_BUILD: "1"
-          APEX_COMPILER_PATH: ${{ github.workspace }}/${{ matrix.compiler_path }}
+          APEX_COMPILER_PATH: ${{ github.workspace }}/target/release/apex-compiler
 
-  examples:
-    name: Examples (${{ matrix.label }})
-    runs-on: ${{ matrix.os }}
-    needs: build
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: linux-x64
-            os: ubuntu-latest
-            artifact_name: apex-compiler-linux-x64
-            compiler_path: target/release/apex-compiler
-            prepare_cmd: chmod +x target/release/apex-compiler
-            run_cmd: bash scripts/test_examples_linux.sh
-          - label: macos-arm64
-            os: macos-latest
-            artifact_name: apex-compiler-macos-arm64
-            compiler_path: target/release/apex-compiler
-            prepare_cmd: chmod +x target/release/apex-compiler
-            run_cmd: bash scripts/test_examples_macos.sh
-          - label: windows-x64
-            os: windows-latest
-            artifact_name: apex-compiler-windows-x64
-            compiler_path: target/release/apex-compiler.exe
-            prepare_cmd: ''
-            run_cmd: scripts\\test_examples.bat
+  smoke-macos:
+    name: CLI Smoke (macos-arm64)
+    runs-on: macos-latest
+    needs: build-macos
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/install-llvm
       - uses: actions/download-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
+          name: apex-compiler-macos-arm64
           path: target/release
-      - name: Prepare compiler
-        if: matrix.prepare_cmd != ''
-        run: ${{ matrix.prepare_cmd }}
-      - name: Run examples (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: ${{ matrix.run_cmd }}
+      - run: chmod +x target/release/apex-compiler
+      - run: bash scripts/ci_cli_smoke.sh
         env:
           CI_SKIP_COMPILER_BUILD: "1"
-          APEX_COMPILER_PATH: ${{ github.workspace }}/${{ matrix.compiler_path }}
-      - name: Run examples (Windows)
-        if: runner.os == 'Windows'
+          APEX_COMPILER_PATH: ${{ github.workspace }}/target/release/apex-compiler
+
+  examples-linux:
+    name: Examples (linux-x64)
+    runs-on: ubuntu-latest
+    needs: build-linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/install-llvm
+      - uses: actions/download-artifact@v4
+        with:
+          name: apex-compiler-linux-x64
+          path: target/release
+      - run: chmod +x target/release/apex-compiler
+      - run: bash scripts/test_examples_linux.sh
+        env:
+          CI_SKIP_COMPILER_BUILD: "1"
+          APEX_COMPILER_PATH: ${{ github.workspace }}/target/release/apex-compiler
+
+  examples-macos:
+    name: Examples (macos-arm64)
+    runs-on: macos-latest
+    needs: build-macos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/install-llvm
+      - uses: actions/download-artifact@v4
+        with:
+          name: apex-compiler-macos-arm64
+          path: target/release
+      - run: chmod +x target/release/apex-compiler
+      - run: bash scripts/test_examples_macos.sh
+        env:
+          CI_SKIP_COMPILER_BUILD: "1"
+          APEX_COMPILER_PATH: ${{ github.workspace }}/target/release/apex-compiler
+
+  examples-windows:
+    name: Examples (windows-x64)
+    runs-on: windows-latest
+    needs: build-windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/install-llvm
+      - uses: actions/download-artifact@v4
+        with:
+          name: apex-compiler-windows-x64
+          path: target/release
+      - run: scripts\test_examples.bat
         shell: cmd
-        run: ${{ matrix.run_cmd }}
         env:
           CI_SKIP_COMPILER_BUILD: "1"
-          APEX_COMPILER_PATH: ${{ github.workspace }}/${{ matrix.compiler_path }}
+          APEX_COMPILER_PATH: ${{ github.workspace }}\target\release\apex-compiler.exe
 
   web:
     name: Web
@@ -212,7 +295,7 @@ jobs:
   benchmark:
     name: Performance Benchmark (linux-x64)
     runs-on: ubuntu-latest
-    needs: build
+    needs: build-linux
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/install-llvm

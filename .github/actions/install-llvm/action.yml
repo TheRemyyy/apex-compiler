@@ -36,7 +36,8 @@ runs:
         if (-not $llvmConfig) {
           $candidates = @(
             "C:\Program Files\LLVM\bin\llvm-config.exe",
-            "$env:ChocolateyInstall\lib\llvm\tools\llvm\bin\llvm-config.exe"
+            "$env:ChocolateyInstall\lib\llvm\tools\llvm\bin\llvm-config.exe",
+            "$env:ChocolateyInstall\bin\llvm-config.exe"
           )
           foreach ($candidate in $candidates) {
             if (Test-Path $candidate) {
@@ -46,6 +47,36 @@ runs:
           }
         }
         if (-not $llvmConfig) {
+          $searchRoots = @(
+            "C:\Program Files",
+            "C:\Program Files (x86)",
+            "$env:ChocolateyInstall\lib",
+            "$env:ChocolateyInstall\bin"
+          ) | Where-Object { $_ -and (Test-Path $_) }
+          foreach ($root in $searchRoots) {
+            $found = Get-ChildItem -Path $root -Filter llvm-config.exe -Recurse -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName -First 1
+            if ($found) {
+              $llvmConfig = $found
+              break
+            }
+          }
+        }
+        if (-not $llvmConfig) {
+          $llvmDirCandidates = @(
+            "C:\Program Files\LLVM",
+            "$env:ChocolateyInstall\lib\llvm\tools\llvm"
+          ) | Where-Object { $_ -and (Test-Path $_) }
+          if ($llvmDirCandidates.Count -gt 0) {
+            $llvmPrefix = $llvmDirCandidates[0]
+            $llvmBin = Join-Path $llvmPrefix "bin"
+            if (Test-Path $llvmBin) {
+              $llvmPrefixUnix = $llvmPrefix -replace '\\','/'
+              echo "LLVM_SYS_211_PREFIX=$llvmPrefixUnix" >> $env:GITHUB_ENV
+              echo "$llvmBin" >> $env:GITHUB_PATH
+              Write-Host "Configured LLVM without llvm-config from prefix: $llvmPrefix"
+              exit 0
+            }
+          }
           throw "llvm-config.exe not found after LLVM install"
         }
 
