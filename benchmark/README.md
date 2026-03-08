@@ -20,6 +20,7 @@ This directory contains a structured benchmark suite that compares Apex against 
 - `incremental_rebuild_central_file`: same generated 10-file project, but mutates the shared central file before rebuild.
 - `incremental_rebuild_mega_project_10_files`: compiles a generated 120-file mega-project, applies syntax-only edits to 10 files, then rebuilds to expose cold vs hot behavior.
 - `incremental_rebuild_synthetic_mega_graph`: compiles a generated 1400-file synthetic mega-graph project, applies syntax-only edits to 40 spread-out files, then rebuilds.
+- `incremental_rebuild_synthetic_mega_graph_mixed_invalidation`: compiles a generated 1400-file synthetic mega-graph project, then rebuilds after mixed leaf edits plus API-surface invalidation across selected groups.
 
 ## Directory Layout
 
@@ -73,6 +74,7 @@ Default run behavior:
 - incremental rebuild scenarios: `incremental_rebuild_1_file`, `incremental_rebuild_central_file`
 - mega incremental rebuild scenario: `incremental_rebuild_mega_project_10_files`
 - synthetic mega-graph incremental rebuild scenario: `incremental_rebuild_synthetic_mega_graph`
+- synthetic mega-graph mixed invalidation scenario: `incremental_rebuild_synthetic_mega_graph_mixed_invalidation`
 
 Useful options:
 
@@ -85,6 +87,7 @@ python3 benchmark/run.py --bench incremental_rebuild_1_file
 python3 benchmark/run.py --bench incremental_rebuild_central_file
 python3 benchmark/run.py --bench incremental_rebuild_mega_project_10_files
 python3 benchmark/run.py --bench incremental_rebuild_synthetic_mega_graph
+python3 benchmark/run.py --bench incremental_rebuild_synthetic_mega_graph_mixed_invalidation
 python3 benchmark/run.py --bench compile_project_10_files --compile-mode cold
 python3 benchmark/run.py --no-build
 python3 benchmark/run.py --apex-opt-level 3
@@ -110,6 +113,7 @@ For `compile_project_10_files` and `compile_project_synthetic_mega_graph`:
 For `compile_project_synthetic_mega_graph` specifically:
 - each language compiles a generated 1400-file project with 96 helper functions per file
 - files are connected by a layered cross-file dependency graph with wider fan-out instead of all calling one shared core helper
+- the graph also includes group-level bridge modules that sit on active build paths, so invalidation tests can rewrite shared API surface and dependent callers instead of only touching leaf files
 - each file exports a hot path plus multiple extra cross-file wiring functions to stress declaration volume, symbol resolution, invalidation, and code generation on a wide multi-file DAG
 - this is a synthetic stress benchmark, not a model of a real Chromium-scale codebase
 - this is the compile-time counterpart to the synthetic mega-graph incremental rebuild benchmark
@@ -133,6 +137,14 @@ For `incremental_rebuild_synthetic_mega_graph`:
 - the second timing is a hot rebuild after syntax-only edits in 40 spread-out files
 - this is the benchmark meant to measure non-trivial rebuild work after real source changes, not a no-op hot rebuild
 - despite the scale, it is still synthetic and should not be read as representative of a real Chromium-like product build graph
+
+For `incremental_rebuild_synthetic_mega_graph_mixed_invalidation`:
+- each measured cycle generates the same synthetic 1400-file dependency graph and cold-builds it from scratch
+- the rebuild phase applies two edit classes together:
+- syntax-only edits across 24 spread-out leaf files
+- API-surface changes across 8 group bridge modules, plus caller rewrites in every file that depends on those groups
+- this is the benchmark intended to approximate a more realistic "dirty set" than pure no-op or comment-only rebuilds
+- it is still synthetic, but it exercises parser, declaration, type/symbol, and dependency invalidation paths together
 
 ## Notes
 

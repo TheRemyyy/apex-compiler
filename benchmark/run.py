@@ -30,7 +30,7 @@ BENCHMARKS: List[BenchmarkSpec] = [
     ),
     BenchmarkSpec(
         "compile_project_synthetic_mega_graph",
-        "Compile stress test on a generated 1000-file synthetic mega-graph project per language",
+        "Compile stress test on a generated 1400-file synthetic mega-graph project per language",
         kind="compile",
     ),
     BenchmarkSpec(
@@ -53,6 +53,11 @@ BENCHMARKS: List[BenchmarkSpec] = [
         "Compile a generated synthetic mega-graph project, apply syntax-only edits to many files, then rebuild",
         kind="incremental_batch_synthetic_mega_graph",
     ),
+    BenchmarkSpec(
+        "incremental_rebuild_synthetic_mega_graph_mixed_invalidation",
+        "Compile a generated synthetic mega-graph project, then rebuild after mixed leaf edits and API-surface invalidation",
+        kind="incremental_mixed_synthetic_mega_graph",
+    ),
 ]
 
 LANGUAGES = ("apex", "c", "rust", "go")
@@ -60,6 +65,9 @@ SYNTHETIC_MEGA_GRAPH_FILE_COUNT = 1400
 SYNTHETIC_MEGA_GRAPH_FUNCS_PER_FILE = 96
 SYNTHETIC_MEGA_GRAPH_MUTATE_COUNT = 40
 SYNTHETIC_MEGA_GRAPH_MAX_DEPS = 6
+SYNTHETIC_MEGA_GRAPH_GROUP_SIZE = 50
+SYNTHETIC_MEGA_GRAPH_MIXED_LEAF_EDITS = 24
+SYNTHETIC_MEGA_GRAPH_MIXED_GROUP_EDITS = 8
 
 
 def is_windows() -> bool:
@@ -485,18 +493,36 @@ def generate_compile_project_synthetic_mega_graph(
 ) -> Dict[str, Dict[str, Path]]:
     file_count = SYNTHETIC_MEGA_GRAPH_FILE_COUNT
     funcs_per_file = SYNTHETIC_MEGA_GRAPH_FUNCS_PER_FILE
+    group_size = SYNTHETIC_MEGA_GRAPH_GROUP_SIZE
     generated_root = root / "benchmark" / "generated" / bench_name
     if generated_root.exists():
         shutil.rmtree(generated_root)
     generated_root.mkdir(parents=True, exist_ok=True)
 
     part_names = [f"part_{i:04d}" for i in range(file_count)]
+    group_count = (file_count + group_size - 1) // group_size
+    group_names = [f"group_{i:02d}" for i in range(group_count)]
 
     apex_dir = generated_root / "apex"
     apex_src = apex_dir / "src"
     apex_src.mkdir(parents=True, exist_ok=True)
-    apex_files = []
+    c_dir = generated_root / "c"
+    c_dir.mkdir(parents=True, exist_ok=True)
+    rust_dir = generated_root / "rust"
+    rust_dir.mkdir(parents=True, exist_ok=True)
+    go_dir = generated_root / "go"
+    go_dir.mkdir(parents=True, exist_ok=True)
+
+    apex_files = ["src/core.apex"]
     apex_part_files: List[Path] = []
+    c_part_files: List[Path] = []
+    rust_part_files: List[Path] = []
+    go_part_files: List[Path] = []
+    apex_group_plans: List[Dict] = []
+    c_group_plans: List[Dict] = []
+    rust_group_plans: List[Dict] = []
+    go_group_plans: List[Dict] = []
+
     apex_core = apex_src / "core.apex"
     apex_core.write_text(
         "\n".join(
@@ -513,64 +539,6 @@ def generate_compile_project_synthetic_mega_graph(
         ),
         encoding="utf-8",
     )
-    apex_files.append("src/core.apex")
-    for i, part in enumerate(part_names):
-        apex_files.append(f"src/{part}.apex")
-        apex_part_files.append(apex_src / f"{part}.apex")
-        deps = synthetic_mega_graph_dependency_indices(i)
-        lines: List[str] = []
-        for j in range(funcs_per_file):
-            lines.append(
-                f"function {part}_f{j:03d}(x: Integer): Integer {{ return core_mix(x, {i + j + 1}); }}"
-            )
-        lines.extend(["", f"function {part}_apply(x: Integer): Integer {{", "    mut y: Integer = x;"])
-        for j in range(funcs_per_file):
-            lines.append(f"    y = {part}_f{j:03d}(y);")
-        lines.extend(["    return y;", "}"])
-        lines.extend(["", f"function {part}_chain(x: Integer): Integer {{", f"    mut y: Integer = {part}_apply(x);"])
-        for j in range(0, funcs_per_file, 3):
-            lines.append(f"    y = {part}_f{j:03d}(y);")
-        lines.extend(["    return y;", "}"])
-        lines.extend(["", f"function {part}_wire(x: Integer): Integer {{", f"    mut y: Integer = {part}_chain(x);"])
-        for dep in deps:
-            dep_part = part_names[dep]
-            lines.append(f"    y = core_fold(y, {dep_part}_apply(x), {i + dep + 1});")
-        for dep in deps:
-            dep_part = part_names[dep]
-            lines.append(f"    y = core_fold(y, {dep_part}_wire(x), {i + dep + 33});")
-        lines.extend(["    return y;", "}"])
-        lines.extend(["", f"function {part}_fanout(x: Integer): Integer {{", f"    mut y: Integer = {part}_wire(x);"])
-        for dep in deps:
-            dep_part = part_names[dep]
-            lines.append(f"    y = core_fold(y, {dep_part}_chain(x), {i + dep + 65});")
-        lines.extend(["    return y;", "}"])
-        lines.extend(["", f"function {part}_signature(seed: Integer): Integer {{", f"    mut y: Integer = {part}_fanout(seed);"])
-        for dep in deps:
-            dep_part = part_names[dep]
-            lines.append(f"    y = core_fold(y, {dep_part}_apply(seed), {i + dep + 97});")
-        lines.extend(["    return y;", "}"])
-        (apex_src / f"{part}.apex").write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    main_lines: List[str] = ["import std.io.*;", "", "function main(): None {", "    mut acc: Integer = 0;"]
-    for part in part_names:
-        main_lines.append(f"    acc = {part}_apply(acc);")
-    main_lines.extend(['    println(to_string(acc));', "    return None;", "}"])
-    (apex_src / "main.apex").write_text("\n".join(main_lines) + "\n", encoding="utf-8")
-    apex_files.append("src/main.apex")
-
-    toml_lines = [
-        f'name = "{bench_name}"',
-        'version = "0.1.0"',
-        'entry = "src/main.apex"',
-        "files = [",
-    ]
-    toml_lines.extend([f'    "{f}",' for f in apex_files])
-    toml_lines.extend(["]", f'output = "{bench_name}"', 'opt_level = "3"'])
-    (apex_dir / "apex.toml").write_text("\n".join(toml_lines) + "\n", encoding="utf-8")
-
-    c_dir = generated_root / "c"
-    c_dir.mkdir(parents=True, exist_ok=True)
-    c_part_files: List[Path] = []
     (c_dir / "core.h").write_text(
         "\n".join(
             [
@@ -600,78 +568,6 @@ def generate_compile_project_synthetic_mega_graph(
         ),
         encoding="utf-8",
     )
-    for i, part in enumerate(part_names):
-        deps = synthetic_mega_graph_dependency_indices(i)
-        (c_dir / f"{part}.h").write_text(
-            "\n".join(
-                [
-                    "#ifndef " + part.upper() + "_H",
-                    "#define " + part.upper() + "_H",
-                    "#include <stdint.h>",
-                    f"int64_t {part}_apply(int64_t x);",
-                    f"int64_t {part}_chain(int64_t x);",
-                    f"int64_t {part}_wire(int64_t x);",
-                    "#endif",
-                    "",
-                ]
-            ),
-            encoding="utf-8",
-        )
-        c_part_file = c_dir / f"{part}.c"
-        c_part_files.append(c_part_file)
-        lines = ["#include <stdint.h>", '#include "core.h"', f'#include "{part}.h"']
-        for dep in deps:
-            lines.append(f'#include "{part_names[dep]}.h"')
-        for j in range(funcs_per_file):
-            lines.append(f"int64_t {part}_f{j:03d}(int64_t x) {{ return core_mix(x, {i + j + 1}); }}")
-        lines.extend([f"int64_t {part}_apply(int64_t x) {{", "    int64_t y = x;"])
-        for j in range(funcs_per_file):
-            lines.append(f"    y = {part}_f{j:03d}(y);")
-        lines.extend(["    return y;", "}"])
-        lines.extend(["", f"int64_t {part}_chain(int64_t x) {{", f"    int64_t y = {part}_apply(x);"])
-        for j in range(0, funcs_per_file, 3):
-            lines.append(f"    y = {part}_f{j:03d}(y);")
-        lines.extend(["    return y;", "}"])
-        lines.extend(["", f"int64_t {part}_wire(int64_t x) {{", f"    int64_t y = {part}_chain(x);"])
-        for dep in deps:
-            dep_part = part_names[dep]
-            lines.append(f"    y = core_fold(y, {dep_part}_apply(x), {i + dep + 1});")
-        for dep in deps:
-            dep_part = part_names[dep]
-            lines.append(f"    y = core_fold(y, {dep_part}_wire(x), {i + dep + 33});")
-        lines.extend(["    return y;", "}"])
-        lines.extend(["", f"int64_t {part}_fanout(int64_t x) {{", f"    int64_t y = {part}_wire(x);"])
-        for dep in deps:
-            dep_part = part_names[dep]
-            lines.append(f"    y = core_fold(y, {dep_part}_chain(x), {i + dep + 65});")
-        lines.extend(["    return y;", "}"])
-        lines.extend(["", f"int64_t {part}_signature(int64_t seed) {{", f"    int64_t y = {part}_fanout(seed);"])
-        for dep in deps:
-            dep_part = part_names[dep]
-            lines.append(f"    y = core_fold(y, {dep_part}_apply(seed), {i + dep + 97});")
-        lines.extend(["    return y;", "}"])
-        c_part_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    main_c = ["#include <stdint.h>", "#include <stdio.h>"]
-    for part in part_names:
-        main_c.append(f"int64_t {part}_apply(int64_t x);")
-    main_c.extend(["int main(void) {", "    int64_t acc = 0;"])
-    for part in part_names:
-        main_c.append(f"    acc = {part}_apply(acc);")
-    main_c.extend(['    printf("%lld\\n", (long long)acc);', "    return 0;", "}"])
-    (c_dir / "main.c").write_text("\n".join(main_c) + "\n", encoding="utf-8")
-
-    rust_dir = generated_root / "rust"
-    rust_dir.mkdir(parents=True, exist_ok=True)
-    rust_part_files: List[Path] = []
-    rust_main = ["mod core;"]
-    for part in part_names:
-        rust_main.append(f"mod {part};")
-    rust_main.extend(["", "fn main() {", "    let mut acc: i64 = 0;"])
-    for part in part_names:
-        rust_main.append(f"    acc = {part}::apply(acc);")
-    rust_main.extend(['    println!("{acc}");', "}"])
-    (rust_dir / "main.rs").write_text("\n".join(rust_main) + "\n", encoding="utf-8")
     (rust_dir / "core.rs").write_text(
         "\n".join(
             [
@@ -687,49 +583,7 @@ def generate_compile_project_synthetic_mega_graph(
         ),
         encoding="utf-8",
     )
-    for i, part in enumerate(part_names):
-        rust_part_file = rust_dir / f"{part}.rs"
-        rust_part_files.append(rust_part_file)
-        deps = synthetic_mega_graph_dependency_indices(i)
-        lines = ["pub fn apply(x: i64) -> i64 {", "    let mut y = x;"]
-        for j in range(funcs_per_file):
-            lines.append(f"    y = crate::core::mix(y, {i + j + 1});")
-        lines.extend(["    y", "}"])
-        lines.extend(["", "pub fn chain(x: i64) -> i64 {", "    let mut y = apply(x);"])
-        for j in range(0, funcs_per_file, 3):
-            lines.append(f"    y = crate::{part}::f{j:03d}(y);")
-        lines.extend(["    y", "}"])
-        lines.extend(["", "pub fn wire(x: i64) -> i64 {", "    let mut y = chain(x);"])
-        for dep in deps:
-            dep_part = part_names[dep]
-            lines.append(f"    y = crate::core::fold(y, crate::{dep_part}::apply(x), {i + dep + 1});")
-        for dep in deps:
-            dep_part = part_names[dep]
-            lines.append(f"    y = crate::core::fold(y, crate::{dep_part}::wire(x), {i + dep + 33});")
-        lines.extend(["    y", "}"])
-        lines.extend(["", "pub fn fanout(x: i64) -> i64 {", "    let mut y = wire(x);"])
-        for dep in deps:
-            dep_part = part_names[dep]
-            lines.append(f"    y = crate::core::fold(y, crate::{dep_part}::chain(x), {i + dep + 65});")
-        lines.extend(["    y", "}"])
-        lines.extend(["", "pub fn signature(seed: i64) -> i64 {", "    let mut y = fanout(seed);"])
-        for dep in deps:
-            dep_part = part_names[dep]
-            lines.append(f"    y = crate::core::fold(y, crate::{dep_part}::apply(seed), {i + dep + 97});")
-        lines.extend(["    y", "}"])
-        for j in range(funcs_per_file):
-            lines.insert(j, f"pub fn f{j:03d}(x: i64) -> i64 {{ crate::core::mix(x, {i + j + 1}) }}")
-        rust_part_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    go_dir = generated_root / "go"
-    go_dir.mkdir(parents=True, exist_ok=True)
-    go_part_files: List[Path] = []
     (go_dir / "go.mod").write_text("module compile10\n\ngo 1.22\n", encoding="utf-8")
-    go_main = ['package main', "", 'import "fmt"', "", "func main() {", "    var acc int64 = 0"]
-    for part in part_names:
-        go_main.append(f"    acc = {part}_apply(acc)")
-    go_main.extend(["    fmt.Println(acc)", "}"])
-    (go_dir / "main.go").write_text("\n".join(go_main) + "\n", encoding="utf-8")
     (go_dir / "core.go").write_text(
         "\n".join(
             [
@@ -747,44 +601,321 @@ def generate_compile_project_synthetic_mega_graph(
         ),
         encoding="utf-8",
     )
+
+    for group_idx, group_name in enumerate(group_names):
+        group_salt = 1000 + group_idx * 37
+
+        apex_group_file = apex_src / f"{group_name}.apex"
+        apex_group_file.write_text(
+            "\n".join(
+                [
+                    f"// MUTATION_SURFACE_{group_name.upper()}",
+                    f"function {group_name}_bridge(x: Integer, salt: Integer): Integer {{",
+                    f"    return core_fold(x, salt, {group_salt});",
+                    "}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        apex_files.append(f"src/{group_name}.apex")
+
+        c_group_header = c_dir / f"{group_name}.h"
+        c_group_header.write_text(
+            "\n".join(
+                [
+                    f"#ifndef {group_name.upper()}_H",
+                    f"#define {group_name.upper()}_H",
+                    "#include <stdint.h>",
+                    f"int64_t {group_name}_bridge(int64_t x, int64_t salt);",
+                    "#endif",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        c_group_file = c_dir / f"{group_name}.c"
+        c_group_file.write_text(
+            "\n".join(
+                [
+                    "#include <stdint.h>",
+                    '#include "core.h"',
+                    f'#include "{group_name}.h"',
+                    f"// MUTATION_SURFACE_{group_name.upper()}",
+                    f"int64_t {group_name}_bridge(int64_t x, int64_t salt) {{",
+                    f"    return core_fold(x, salt, {group_salt});",
+                    "}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        rust_group_file = rust_dir / f"{group_name}.rs"
+        rust_group_file.write_text(
+            "\n".join(
+                [
+                    f"// MUTATION_SURFACE_{group_name.upper()}",
+                    f"pub fn {group_name}_bridge(x: i64, salt: i64) -> i64 {{",
+                    f"    crate::core::fold(x, salt, {group_salt})",
+                    "}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        go_group_file = go_dir / f"{group_name}.go"
+        go_group_file.write_text(
+            "\n".join(
+                [
+                    "package main",
+                    "",
+                    f"// MUTATION_SURFACE_{group_name.upper()}",
+                    f"func {group_name}_bridge(x int64, salt int64) int64 {{",
+                    f"    return coreFold(x, salt, {group_salt})",
+                    "}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        apex_group_plans.append(
+            {"group_name": group_name, "group_index": group_idx, "call_salt": group_salt, "surface_files": [apex_group_file], "caller_files": []}
+        )
+        c_group_plans.append(
+            {"group_name": group_name, "group_index": group_idx, "call_salt": group_salt, "surface_files": [c_group_header, c_group_file], "caller_files": []}
+        )
+        rust_group_plans.append(
+            {"group_name": group_name, "group_index": group_idx, "call_salt": group_salt, "surface_files": [rust_group_file], "caller_files": []}
+        )
+        go_group_plans.append(
+            {"group_name": group_name, "group_index": group_idx, "call_salt": group_salt, "surface_files": [go_group_file], "caller_files": []}
+        )
+
     for i, part in enumerate(part_names):
+        deps = synthetic_mega_graph_dependency_indices(i)
+        group_idx = i // group_size
+        group_name = group_names[group_idx]
+        group_salt = 1000 + group_idx * 37
+
+        apex_files.append(f"src/{part}.apex")
+        apex_part_file = apex_src / f"{part}.apex"
+        apex_part_files.append(apex_part_file)
+        apex_group_plans[group_idx]["caller_files"].append(apex_part_file)
+        apex_lines: List[str] = []
+        for j in range(funcs_per_file):
+            apex_lines.append(
+                f"function {part}_f{j:03d}(x: Integer): Integer {{ return core_mix(x, {i + j + 1}); }}"
+            )
+        apex_lines.extend(["", f"function {part}_apply(x: Integer): Integer {{", "    mut y: Integer = x;"])
+        for j in range(funcs_per_file):
+            apex_lines.append(f"    y = {part}_f{j:03d}(y);")
+        apex_lines.append(f"    y = {group_name}_bridge(y, {group_salt}); // MUTATION_CALL_{group_name.upper()}")
+        apex_lines.extend(["    return y;", "}"])
+        apex_lines.extend(["", f"function {part}_chain(x: Integer): Integer {{", f"    mut y: Integer = {part}_apply(x);"])
+        for j in range(0, funcs_per_file, 3):
+            apex_lines.append(f"    y = {part}_f{j:03d}(y);")
+        apex_lines.extend(["    return y;", "}"])
+        apex_lines.extend(["", f"function {part}_wire(x: Integer): Integer {{", f"    mut y: Integer = {part}_chain(x);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            apex_lines.append(f"    y = core_fold(y, {dep_part}_apply(x), {i + dep + 1});")
+        for dep in deps:
+            dep_part = part_names[dep]
+            apex_lines.append(f"    y = core_fold(y, {dep_part}_wire(x), {i + dep + 33});")
+        apex_lines.extend(["    return y;", "}"])
+        apex_lines.extend(["", f"function {part}_fanout(x: Integer): Integer {{", f"    mut y: Integer = {part}_wire(x);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            apex_lines.append(f"    y = core_fold(y, {dep_part}_chain(x), {i + dep + 65});")
+        apex_lines.extend(["    return y;", "}"])
+        apex_lines.extend(["", f"function {part}_signature(seed: Integer): Integer {{", f"    mut y: Integer = {part}_fanout(seed);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            apex_lines.append(f"    y = core_fold(y, {dep_part}_apply(seed), {i + dep + 97});")
+        apex_lines.extend(["    return y;", "}"])
+        apex_part_file.write_text("\n".join(apex_lines) + "\n", encoding="utf-8")
+
+        c_part_file = c_dir / f"{part}.c"
+        c_part_files.append(c_part_file)
+        c_group_plans[group_idx]["caller_files"].append(c_part_file)
+        (c_dir / f"{part}.h").write_text(
+            "\n".join(
+                [
+                    f"#ifndef {part.upper()}_H",
+                    f"#define {part.upper()}_H",
+                    "#include <stdint.h>",
+                    f"int64_t {part}_apply(int64_t x);",
+                    f"int64_t {part}_chain(int64_t x);",
+                    f"int64_t {part}_wire(int64_t x);",
+                    "#endif",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        c_lines = ["#include <stdint.h>", '#include "core.h"', f'#include "{part}.h"', f'#include "{group_name}.h"']
+        for dep in deps:
+            c_lines.append(f'#include "{part_names[dep]}.h"')
+        for j in range(funcs_per_file):
+            c_lines.append(f"int64_t {part}_f{j:03d}(int64_t x) {{ return core_mix(x, {i + j + 1}); }}")
+        c_lines.extend([f"int64_t {part}_apply(int64_t x) {{", "    int64_t y = x;"])
+        for j in range(funcs_per_file):
+            c_lines.append(f"    y = {part}_f{j:03d}(y);")
+        c_lines.append(f"    y = {group_name}_bridge(y, {group_salt}); // MUTATION_CALL_{group_name.upper()}")
+        c_lines.extend(["    return y;", "}"])
+        c_lines.extend(["", f"int64_t {part}_chain(int64_t x) {{", f"    int64_t y = {part}_apply(x);"])
+        for j in range(0, funcs_per_file, 3):
+            c_lines.append(f"    y = {part}_f{j:03d}(y);")
+        c_lines.extend(["    return y;", "}"])
+        c_lines.extend(["", f"int64_t {part}_wire(int64_t x) {{", f"    int64_t y = {part}_chain(x);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            c_lines.append(f"    y = core_fold(y, {dep_part}_apply(x), {i + dep + 1});")
+        for dep in deps:
+            dep_part = part_names[dep]
+            c_lines.append(f"    y = core_fold(y, {dep_part}_wire(x), {i + dep + 33});")
+        c_lines.extend(["    return y;", "}"])
+        c_lines.extend(["", f"int64_t {part}_fanout(int64_t x) {{", f"    int64_t y = {part}_wire(x);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            c_lines.append(f"    y = core_fold(y, {dep_part}_chain(x), {i + dep + 65});")
+        c_lines.extend(["    return y;", "}"])
+        c_lines.extend(["", f"int64_t {part}_signature(int64_t seed) {{", f"    int64_t y = {part}_fanout(seed);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            c_lines.append(f"    y = core_fold(y, {dep_part}_apply(seed), {i + dep + 97});")
+        c_lines.extend(["    return y;", "}"])
+        c_part_file.write_text("\n".join(c_lines) + "\n", encoding="utf-8")
+
+        rust_part_file = rust_dir / f"{part}.rs"
+        rust_part_files.append(rust_part_file)
+        rust_group_plans[group_idx]["caller_files"].append(rust_part_file)
+        rust_lines: List[str] = [
+            *[
+                f"pub fn f{j:03d}(x: i64) -> i64 {{ crate::core::mix(x, {i + j + 1}) }}"
+                for j in range(funcs_per_file)
+            ],
+            "",
+            "pub fn apply(x: i64) -> i64 {",
+            "    let mut y = x;",
+        ]
+        for j in range(funcs_per_file):
+            rust_lines.append(f"    y = f{j:03d}(y);")
+        rust_lines.append(f"    y = crate::{group_name}::{group_name}_bridge(y, {group_salt}); // MUTATION_CALL_{group_name.upper()}")
+        rust_lines.extend(["    y", "}"])
+        rust_lines.extend(["", "pub fn chain(x: i64) -> i64 {", "    let mut y = apply(x);"])
+        for j in range(0, funcs_per_file, 3):
+            rust_lines.append(f"    y = f{j:03d}(y);")
+        rust_lines.extend(["    y", "}"])
+        rust_lines.extend(["", "pub fn wire(x: i64) -> i64 {", "    let mut y = chain(x);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            rust_lines.append(f"    y = crate::core::fold(y, crate::{dep_part}::apply(x), {i + dep + 1});")
+        for dep in deps:
+            dep_part = part_names[dep]
+            rust_lines.append(f"    y = crate::core::fold(y, crate::{dep_part}::wire(x), {i + dep + 33});")
+        rust_lines.extend(["    y", "}"])
+        rust_lines.extend(["", "pub fn fanout(x: i64) -> i64 {", "    let mut y = wire(x);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            rust_lines.append(f"    y = crate::core::fold(y, crate::{dep_part}::chain(x), {i + dep + 65});")
+        rust_lines.extend(["    y", "}"])
+        rust_lines.extend(["", "pub fn signature(seed: i64) -> i64 {", "    let mut y = fanout(seed);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            rust_lines.append(f"    y = crate::core::fold(y, crate::{dep_part}::apply(seed), {i + dep + 97});")
+        rust_lines.extend(["    y", "}"])
+        rust_part_file.write_text("\n".join(rust_lines) + "\n", encoding="utf-8")
+
         go_part_file = go_dir / f"unit_{i:04d}.go"
         go_part_files.append(go_part_file)
-        deps = synthetic_mega_graph_dependency_indices(i)
-        lines = ["package main", "", "func " + part + "_apply(x int64) int64 {", "    y := x"]
+        go_group_plans[group_idx]["caller_files"].append(go_part_file)
+        go_lines = ["package main", ""]
         for j in range(funcs_per_file):
-            lines.append(f"    y = coreMix(y, {i + j + 1})")
-        lines.extend(["    return y", "}"])
-        lines.extend(["", "func " + part + "_chain(x int64) int64 {", "    y := " + part + "_apply(x)"])
+            go_lines.append(f"func {part}_f{j:03d}(x int64) int64 {{ return coreMix(x, {i + j + 1}) }}")
+        go_lines.extend(["", f"func {part}_apply(x int64) int64 {{", "    y := x"])
+        for j in range(funcs_per_file):
+            go_lines.append(f"    y = {part}_f{j:03d}(y)")
+        go_lines.append(f"    y = {group_name}_bridge(y, {group_salt}) // MUTATION_CALL_{group_name.upper()}")
+        go_lines.extend(["    return y", "}"])
+        go_lines.extend(["", f"func {part}_chain(x int64) int64 {{", f"    y := {part}_apply(x)"])
         for j in range(0, funcs_per_file, 3):
-            lines.append(f"    y = {part}_f{j:03d}(y)")
-        lines.extend(["    return y", "}"])
-        lines.extend(["", "func " + part + "_wire(x int64) int64 {", "    y := " + part + "_chain(x)"])
+            go_lines.append(f"    y = {part}_f{j:03d}(y)")
+        go_lines.extend(["    return y", "}"])
+        go_lines.extend(["", f"func {part}_wire(x int64) int64 {{", f"    y := {part}_chain(x)"])
         for dep in deps:
             dep_part = part_names[dep]
-            lines.append(f"    y = coreFold(y, {dep_part}_apply(x), {i + dep + 1})")
+            go_lines.append(f"    y = coreFold(y, {dep_part}_apply(x), {i + dep + 1})")
         for dep in deps:
             dep_part = part_names[dep]
-            lines.append(f"    y = coreFold(y, {dep_part}_wire(x), {i + dep + 33})")
-        lines.extend(["    return y", "}"])
-        lines.extend(["", "func " + part + "_fanout(x int64) int64 {", "    y := " + part + "_wire(x)"])
+            go_lines.append(f"    y = coreFold(y, {dep_part}_wire(x), {i + dep + 33})")
+        go_lines.extend(["    return y", "}"])
+        go_lines.extend(["", f"func {part}_fanout(x int64) int64 {{", f"    y := {part}_wire(x)"])
         for dep in deps:
             dep_part = part_names[dep]
-            lines.append(f"    y = coreFold(y, {dep_part}_chain(x), {i + dep + 65})")
-        lines.extend(["    return y", "}"])
-        lines.extend(["", "func " + part + "_signature(seed int64) int64 {", "    y := " + part + "_fanout(seed)"])
+            go_lines.append(f"    y = coreFold(y, {dep_part}_chain(x), {i + dep + 65})")
+        go_lines.extend(["    return y", "}"])
+        go_lines.extend(["", f"func {part}_signature(seed int64) int64 {{", f"    y := {part}_fanout(seed)"])
         for dep in deps:
             dep_part = part_names[dep]
-            lines.append(f"    y = coreFold(y, {dep_part}_apply(seed), {i + dep + 97})")
-        lines.extend(["    return y", "}"])
-        for j in range(funcs_per_file):
-            lines.insert(2 + j, f"func {part}_f{j:03d}(x int64) int64 {{ return coreMix(x, {i + j + 1}) }}")
-        go_part_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            go_lines.append(f"    y = coreFold(y, {dep_part}_apply(seed), {i + dep + 97})")
+        go_lines.extend(["    return y", "}"])
+        go_part_file.write_text("\n".join(go_lines) + "\n", encoding="utf-8")
+
+    main_lines: List[str] = ["import std.io.*;", "", "function main(): None {", "    mut acc: Integer = 0;"]
+    for part in part_names:
+        main_lines.append(f"    acc = {part}_apply(acc);")
+    main_lines.extend(['    println(to_string(acc));', "    return None;", "}"])
+    (apex_src / "main.apex").write_text("\n".join(main_lines) + "\n", encoding="utf-8")
+    apex_files.append("src/main.apex")
+    toml_lines = [f'name = "{bench_name}"', 'version = "0.1.0"', 'entry = "src/main.apex"', "files = ["]
+    toml_lines.extend([f'    "{f}",' for f in apex_files])
+    toml_lines.extend(["]", f'output = "{bench_name}"', 'opt_level = "3"'])
+    (apex_dir / "apex.toml").write_text("\n".join(toml_lines) + "\n", encoding="utf-8")
+
+    main_c = ["#include <stdint.h>", "#include <stdio.h>"]
+    for part in part_names:
+        main_c.append(f"int64_t {part}_apply(int64_t x);")
+    main_c.extend(["int main(void) {", "    int64_t acc = 0;"])
+    for part in part_names:
+        main_c.append(f"    acc = {part}_apply(acc);")
+    main_c.extend(['    printf("%lld\\n", (long long)acc);', "    return 0;", "}"])
+    (c_dir / "main.c").write_text("\n".join(main_c) + "\n", encoding="utf-8")
+
+    rust_main = ["mod core;"]
+    for group_name in group_names:
+        rust_main.append(f"mod {group_name};")
+    for part in part_names:
+        rust_main.append(f"mod {part};")
+    rust_main.extend(["", "fn main() {", "    let mut acc: i64 = 0;"])
+    for part in part_names:
+        rust_main.append(f"    acc = {part}::apply(acc);")
+    rust_main.extend(['    println!("{acc}");', "}"])
+    (rust_dir / "main.rs").write_text("\n".join(rust_main) + "\n", encoding="utf-8")
+
+    go_main = ['package main', "", 'import "fmt"', "", "func main() {", "    var acc int64 = 0"]
+    for part in part_names:
+        go_main.append(f"    acc = {part}_apply(acc)")
+    go_main.extend(["    fmt.Println(acc)", "}"])
+    (go_dir / "main.go").write_text("\n".join(go_main) + "\n", encoding="utf-8")
 
     apex_mutate_sources = pick_mutation_targets(apex_part_files, mutate_count, "batch_spread")
     c_mutate_sources = pick_mutation_targets(c_part_files, mutate_count, "batch_spread")
     rust_mutate_sources = pick_mutation_targets(rust_part_files, mutate_count, "batch_spread")
     go_mutate_sources = pick_mutation_targets(go_part_files, mutate_count, "batch_spread")
+
+    def spread_group_plans(plans: List[Dict], count: int) -> List[Dict]:
+        if not plans:
+            return []
+        count = max(1, min(count, len(plans)))
+        if count == 1:
+            return [plans[-1]]
+        last_index = len(plans) - 1
+        indices = {round((last_index * i) / (count - 1)) for i in range(count)}
+        return [plans[i] for i in sorted(indices)]
 
     return {
         "apex": {
@@ -792,24 +923,32 @@ def generate_compile_project_synthetic_mega_graph(
             "binary": apex_dir / bench_name,
             "mutate_source": apex_mutate_sources[0],
             "mutate_sources": apex_mutate_sources,
+            "mixed_leaf_sources": pick_mutation_targets(apex_part_files, SYNTHETIC_MEGA_GRAPH_MIXED_LEAF_EDITS, "batch_spread"),
+            "mixed_groups": spread_group_plans(apex_group_plans, SYNTHETIC_MEGA_GRAPH_MIXED_GROUP_EDITS),
         },
         "c": {
             "project_dir": c_dir,
             "binary": c_dir / f"{bench_name}_c",
             "mutate_source": c_mutate_sources[0],
             "mutate_sources": c_mutate_sources,
+            "mixed_leaf_sources": pick_mutation_targets(c_part_files, SYNTHETIC_MEGA_GRAPH_MIXED_LEAF_EDITS, "batch_spread"),
+            "mixed_groups": spread_group_plans(c_group_plans, SYNTHETIC_MEGA_GRAPH_MIXED_GROUP_EDITS),
         },
         "rust": {
             "project_dir": rust_dir,
             "binary": rust_dir / f"{bench_name}_rust",
             "mutate_source": rust_mutate_sources[0],
             "mutate_sources": rust_mutate_sources,
+            "mixed_leaf_sources": pick_mutation_targets(rust_part_files, SYNTHETIC_MEGA_GRAPH_MIXED_LEAF_EDITS, "batch_spread"),
+            "mixed_groups": spread_group_plans(rust_group_plans, SYNTHETIC_MEGA_GRAPH_MIXED_GROUP_EDITS),
         },
         "go": {
             "project_dir": go_dir,
             "binary": go_dir / f"{bench_name}_go",
             "mutate_source": go_mutate_sources[0],
             "mutate_sources": go_mutate_sources,
+            "mixed_leaf_sources": pick_mutation_targets(go_part_files, SYNTHETIC_MEGA_GRAPH_MIXED_LEAF_EDITS, "batch_spread"),
+            "mixed_groups": spread_group_plans(go_group_plans, SYNTHETIC_MEGA_GRAPH_MIXED_GROUP_EDITS),
         },
     }
 
@@ -829,6 +968,8 @@ def make_compile_jobs(
             "binary": exe_path(compile_projects["apex"]["binary"]),
             "mutate_source": compile_projects["apex"]["mutate_source"],
             "mutate_sources": compile_projects["apex"].get("mutate_sources", []),
+            "mixed_leaf_sources": compile_projects["apex"].get("mixed_leaf_sources", []),
+            "mixed_groups": compile_projects["apex"].get("mixed_groups", []),
         },
         "c": {
             "cmd": [
@@ -848,6 +989,8 @@ def make_compile_jobs(
             "binary": exe_path(compile_projects["c"]["binary"]),
             "mutate_source": compile_projects["c"]["mutate_source"],
             "mutate_sources": compile_projects["c"].get("mutate_sources", []),
+            "mixed_leaf_sources": compile_projects["c"].get("mixed_leaf_sources", []),
+            "mixed_groups": compile_projects["c"].get("mixed_groups", []),
         },
         "rust": {
             "cmd": [
@@ -865,6 +1008,8 @@ def make_compile_jobs(
             "binary": exe_path(compile_projects["rust"]["binary"]),
             "mutate_source": compile_projects["rust"]["mutate_source"],
             "mutate_sources": compile_projects["rust"].get("mutate_sources", []),
+            "mixed_leaf_sources": compile_projects["rust"].get("mixed_leaf_sources", []),
+            "mixed_groups": compile_projects["rust"].get("mixed_groups", []),
         },
         "go": {
             "cmd": [
@@ -884,6 +1029,8 @@ def make_compile_jobs(
             "go_cache_dir": compile_projects["go"]["project_dir"] / ".gocache",
             "mutate_source": compile_projects["go"]["mutate_source"],
             "mutate_sources": compile_projects["go"].get("mutate_sources", []),
+            "mixed_leaf_sources": compile_projects["go"].get("mixed_leaf_sources", []),
+            "mixed_groups": compile_projects["go"].get("mixed_groups", []),
         },
     }
 
@@ -901,6 +1048,86 @@ def apply_incremental_source_change(lang: str, source: Path, marker: str) -> Non
 def apply_incremental_source_changes(lang: str, sources: List[Path], marker: str) -> None:
     for idx, source in enumerate(sources):
         apply_incremental_source_change(lang, source, f"{marker}_file_{idx:02d}")
+
+
+def replace_once(path: Path, old: str, new: str) -> None:
+    text = path.read_text(encoding="utf-8")
+    if old not in text:
+        raise RuntimeError(f"Expected mutation hook not found in {path}: {old}")
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+def apply_mixed_invalidation_changes(lang: str, job: Dict, marker: str) -> None:
+    leaf_sources = [Path(p) for p in job.get("mixed_leaf_sources", [])]
+    apply_incremental_source_changes(lang, leaf_sources, f"{marker}_leaf")
+
+    for idx, group in enumerate(job.get("mixed_groups", [])):
+        group_name = group["group_name"]
+        salt = int(group["call_salt"])
+        extra = 5000 + group["group_index"] * 13 + idx
+
+        if lang == "apex":
+            replace_once(
+                Path(group["surface_files"][0]),
+                f"function {group_name}_bridge(x: Integer, salt: Integer): Integer {{",
+                f"function {group_name}_bridge(x: Integer, salt: Integer, extra: Integer): Integer {{",
+            )
+            replace_once(
+                Path(group["surface_files"][0]),
+                f"    return core_fold(x, salt, {salt});",
+                f"    return core_fold(x, salt + extra, {salt});",
+            )
+            old_call = f"    y = {group_name}_bridge(y, {salt}); // MUTATION_CALL_{group_name.upper()}"
+            new_call = f"    y = {group_name}_bridge(y, {salt}, {extra}); // MUTATION_CALL_{group_name.upper()}"
+        elif lang == "c":
+            replace_once(
+                Path(group["surface_files"][0]),
+                f"int64_t {group_name}_bridge(int64_t x, int64_t salt);",
+                f"int64_t {group_name}_bridge(int64_t x, int64_t salt, int64_t extra);",
+            )
+            replace_once(
+                Path(group["surface_files"][1]),
+                f"int64_t {group_name}_bridge(int64_t x, int64_t salt) {{",
+                f"int64_t {group_name}_bridge(int64_t x, int64_t salt, int64_t extra) {{",
+            )
+            replace_once(
+                Path(group["surface_files"][1]),
+                f"    return core_fold(x, salt, {salt});",
+                f"    return core_fold(x, salt + extra, {salt});",
+            )
+            old_call = f"    y = {group_name}_bridge(y, {salt}); // MUTATION_CALL_{group_name.upper()}"
+            new_call = f"    y = {group_name}_bridge(y, {salt}, {extra}); // MUTATION_CALL_{group_name.upper()}"
+        elif lang == "rust":
+            replace_once(
+                Path(group["surface_files"][0]),
+                f"pub fn {group_name}_bridge(x: i64, salt: i64) -> i64 {{",
+                f"pub fn {group_name}_bridge(x: i64, salt: i64, extra: i64) -> i64 {{",
+            )
+            replace_once(
+                Path(group["surface_files"][0]),
+                f"    crate::core::fold(x, salt, {salt})",
+                f"    crate::core::fold(x, salt + extra, {salt})",
+            )
+            old_call = f"    y = crate::{group_name}::{group_name}_bridge(y, {salt}); // MUTATION_CALL_{group_name.upper()}"
+            new_call = f"    y = crate::{group_name}::{group_name}_bridge(y, {salt}, {extra}); // MUTATION_CALL_{group_name.upper()}"
+        elif lang == "go":
+            replace_once(
+                Path(group["surface_files"][0]),
+                f"func {group_name}_bridge(x int64, salt int64) int64 {{",
+                f"func {group_name}_bridge(x int64, salt int64, extra int64) int64 {{",
+            )
+            replace_once(
+                Path(group["surface_files"][0]),
+                f"    return coreFold(x, salt, {salt})",
+                f"    return coreFold(x, salt+extra, {salt})",
+            )
+            old_call = f"    y = {group_name}_bridge(y, {salt}) // MUTATION_CALL_{group_name.upper()}"
+            new_call = f"    y = {group_name}_bridge(y, {salt}, {extra}) // MUTATION_CALL_{group_name.upper()}"
+        else:
+            raise RuntimeError(f"Unsupported language for mixed invalidation: {lang}")
+
+        for caller in group.get("caller_files", []):
+            replace_once(Path(caller), old_call, new_call)
 
 
 def timed_run(binary: Path, cwd: Path) -> (float, int):
@@ -973,7 +1200,7 @@ def build_markdown(result: Dict) -> str:
             lines.append("")
             lines.append(f"- compile mode: `{bench['compile_mode']}`")
         lines.append("")
-        if bench.get("kind") in ("incremental", "incremental_batch", "incremental_batch_synthetic_mega_graph"):
+        if bench.get("kind") in ("incremental", "incremental_batch", "incremental_batch_synthetic_mega_graph", "incremental_mixed_synthetic_mega_graph"):
             phase_one_label = bench.get("phase_one_label", "first mean (s)")
             phase_two_label = bench.get("phase_two_label", "second mean (s)")
             ratio_label = bench.get("ratio_label", "second/first")
@@ -1419,6 +1646,67 @@ def main() -> int:
             phase_one_label = "cold full build mean (s)"
             phase_two_label = f"hot rebuild after {SYNTHETIC_MEGA_GRAPH_MUTATE_COUNT} edits mean (s)"
             ratio_label = "hot/cold"
+        elif spec.kind == "incremental_mixed_synthetic_mega_graph":
+            benchmark_compile_mode = "cold_then_hot_mixed_invalidation"
+            for lang in LANGUAGES:
+                print(f"Synthetic mega-graph mixed invalidation compile {lang}...")
+                first_samples: List[float] = []
+                second_samples: List[float] = []
+                checksums: List[int] = []
+
+                cycles = args.warmup + args.repeats
+                for i in range(cycles):
+                    cycle_projects = generate_compile_project_synthetic_mega_graph(
+                        root, spec.name, mutate_count=SYNTHETIC_MEGA_GRAPH_MUTATE_COUNT
+                    )
+                    cycle_jobs = make_compile_jobs(root, cycle_projects, build_env, c_compiler)
+                    job = cycle_jobs[lang]
+
+                    clean_compile_artifacts(lang, job)
+                    first_elapsed = timed_compile_with_retry(lang, job)
+
+                    apply_mixed_invalidation_changes(lang, job, f"{i}")
+                    second_elapsed = timed_compile_with_retry(lang, job)
+
+                    if not Path(job["binary"]).exists():
+                        timed_compile_with_retry(lang, job, retries=2)
+                    checksum = run_checksum(job["binary"], job["cwd"])
+
+                    if i >= args.warmup:
+                        first_samples.append(first_elapsed)
+                        second_samples.append(second_elapsed)
+                        checksums.append(checksum)
+
+                if len(set(checksums)) != 1:
+                    raise RuntimeError(
+                        f"Non-deterministic checksum in mixed synthetic mega-graph invalidation {lang}/{spec.name}: {checksums}"
+                    )
+
+                checksum = checksums[0]
+                if reference_checksum is None:
+                    reference_checksum = checksum
+                elif checksum != reference_checksum:
+                    raise RuntimeError(
+                        f"Checksum mismatch for {spec.name}: {lang}={checksum}, expected={reference_checksum}"
+                    )
+
+                first_stats = compute_stats(first_samples)
+                second_stats = compute_stats(second_samples)
+                lang_data[lang] = {
+                    "checksum": checksum,
+                    "first_samples_s": first_samples,
+                    "second_samples_s": second_samples,
+                    "first_stats": first_stats,
+                    "second_stats": second_stats,
+                    "stats": second_stats,
+                    "metric": "incremental_compile_second",
+                }
+            phase_one_label = "cold full build mean (s)"
+            phase_two_label = (
+                f"mixed rebuild mean (leaf {SYNTHETIC_MEGA_GRAPH_MIXED_LEAF_EDITS} + "
+                f"{SYNTHETIC_MEGA_GRAPH_MIXED_GROUP_EDITS} API groups)"
+            )
+            ratio_label = "mixed/cold"
         else:
             raise RuntimeError(f"Unsupported benchmark kind: {spec.kind}")
 
@@ -1434,10 +1722,10 @@ def main() -> int:
                 "name": spec.name,
                 "description": spec.description,
                 "kind": spec.kind,
-                "compile_mode": benchmark_compile_mode if spec.kind in ("compile", "incremental", "incremental_batch", "incremental_batch_synthetic_mega_graph") else None,
-                "phase_one_label": phase_one_label if spec.kind in ("incremental", "incremental_batch", "incremental_batch_synthetic_mega_graph") else None,
-                "phase_two_label": phase_two_label if spec.kind in ("incremental", "incremental_batch", "incremental_batch_synthetic_mega_graph") else None,
-                "ratio_label": ratio_label if spec.kind in ("incremental", "incremental_batch", "incremental_batch_synthetic_mega_graph") else None,
+                "compile_mode": benchmark_compile_mode if spec.kind in ("compile", "incremental", "incremental_batch", "incremental_batch_synthetic_mega_graph", "incremental_mixed_synthetic_mega_graph") else None,
+                "phase_one_label": phase_one_label if spec.kind in ("incremental", "incremental_batch", "incremental_batch_synthetic_mega_graph", "incremental_mixed_synthetic_mega_graph") else None,
+                "phase_two_label": phase_two_label if spec.kind in ("incremental", "incremental_batch", "incremental_batch_synthetic_mega_graph", "incremental_mixed_synthetic_mega_graph") else None,
+                "ratio_label": ratio_label if spec.kind in ("incremental", "incremental_batch", "incremental_batch_synthetic_mega_graph", "incremental_mixed_synthetic_mega_graph") else None,
                 "languages": lang_data,
                 "speedup_vs_apex": speedups,
             }
