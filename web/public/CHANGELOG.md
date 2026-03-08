@@ -41,6 +41,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Added `incremental_rebuild_1_file` benchmark: compile once, mutate one source file, then recompile and report first/second compile timing.
   - Added `incremental_rebuild_central_file` benchmark: compile once, mutate shared core dependency file, then recompile for dependency-heavy invalidation path measurement.
   - Added `incremental_rebuild_mega_project_10_files` benchmark: compile a generated 120-file mega-project, apply syntax-only edits to 10 spread-out files, then report cold full-build vs hot rebuild timing.
+  - Added `compile_project_mega_chromium_like` benchmark: compile a generated 1000-file chromium-like project with 64 helper functions per file to compare cold/hot compile-time scaling across languages.
+  - `compile_project_mega_chromium_like` now generates a layered cross-file dependency graph instead of mostly isolated leaf files, making the compile-time workload closer to a real multi-component codebase.
   - `python3 benchmark/run.py` now includes both `compile_project_10_files_hot` and `compile_project_10_files_cold` plus incremental rebuild output in one report by default.
   - Benchmark runner now normalizes executable path handling for Windows (`.exe`) and supports C compiler auto-detection (`CC`/`clang`/`gcc`).
 - New language coverage examples:

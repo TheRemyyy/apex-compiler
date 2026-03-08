@@ -29,6 +29,11 @@ BENCHMARKS: List[BenchmarkSpec] = [
         kind="compile",
     ),
     BenchmarkSpec(
+        "compile_project_mega_chromium_like",
+        "Compile stress test on generated chromium-like 1000-file mega-project per language",
+        kind="compile",
+    ),
+    BenchmarkSpec(
         "incremental_rebuild_1_file",
         "Compile 10-file project, mutate one file, then recompile",
         kind="incremental",
@@ -371,12 +376,13 @@ def generate_compile_project_10_files(
     (go_dir / "main.go").write_text("\n".join(go_main) + "\n", encoding="utf-8")
     for i in range(file_count):
         part = f"part_{i:02d}"
-        go_part_files.append(go_dir / f"{part}.go")
+        go_part_file = go_dir / f"unit_{i:04d}.go"
+        go_part_files.append(go_part_file)
         lines = ["package main", "", "func " + part + "_apply(x int64) int64 {", "    y := x"]
         for j in range(funcs_per_file):
             lines.append(f"    y = coreMix(y, {i + j + 1})")
         lines.extend(["    return y", "}"])
-        (go_dir / f"{part}.go").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        go_part_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     (go_dir / "core.go").write_text(
         "\n".join(
             [
@@ -438,6 +444,293 @@ def generate_incremental_rebuild_mega_project_10_files(root: Path, bench_name: s
         funcs_per_file=320,
         mutate_count=10,
     )
+
+
+def chromium_like_dependency_indices(index: int) -> List[int]:
+    if index <= 0:
+        return []
+
+    candidates = [
+        index - 1,
+        index - 3,
+        index // 2,
+        index - 32,
+        (index * 7) // 11,
+    ]
+    deps: List[int] = []
+    for candidate in candidates:
+        if 0 <= candidate < index and candidate not in deps:
+            deps.append(candidate)
+        if len(deps) == 4:
+            break
+    return deps
+
+
+def generate_compile_project_mega_chromium_like(
+    root: Path, bench_name: str
+) -> Dict[str, Dict[str, Path]]:
+    file_count = 1000
+    funcs_per_file = 64
+    generated_root = root / "benchmark" / "generated" / bench_name
+    if generated_root.exists():
+        shutil.rmtree(generated_root)
+    generated_root.mkdir(parents=True, exist_ok=True)
+
+    part_names = [f"part_{i:04d}" for i in range(file_count)]
+
+    apex_dir = generated_root / "apex"
+    apex_src = apex_dir / "src"
+    apex_src.mkdir(parents=True, exist_ok=True)
+    apex_files = []
+    apex_part_files: List[Path] = []
+    apex_core = apex_src / "core.apex"
+    apex_core.write_text(
+        "\n".join(
+            [
+                "function core_mix(x: Integer, k: Integer): Integer {",
+                "    return x + k;",
+                "}",
+                "",
+                "function core_fold(a: Integer, b: Integer, salt: Integer): Integer {",
+                "    return a + b + salt;",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    apex_files.append("src/core.apex")
+    for i, part in enumerate(part_names):
+        apex_files.append(f"src/{part}.apex")
+        apex_part_files.append(apex_src / f"{part}.apex")
+        deps = chromium_like_dependency_indices(i)
+        lines: List[str] = []
+        for j in range(funcs_per_file):
+            lines.append(
+                f"function {part}_f{j:03d}(x: Integer): Integer {{ return core_mix(x, {i + j + 1}); }}"
+            )
+        lines.extend(["", f"function {part}_apply(x: Integer): Integer {{", "    mut y: Integer = x;"])
+        for j in range(funcs_per_file):
+            lines.append(f"    y = {part}_f{j:03d}(y);")
+        lines.extend(["    return y;", "}", "", f"function {part}_wire(x: Integer): Integer {{", f"    mut y: Integer = {part}_apply(x);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            lines.append(f"    y = core_fold(y, {dep_part}_apply(x), {i + dep + 1});")
+        for dep in deps:
+            dep_part = part_names[dep]
+            lines.append(f"    y = core_fold(y, {dep_part}_wire(x), {i + dep + 33});")
+        lines.extend(["    return y;", "}"])
+        (apex_src / f"{part}.apex").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    main_lines: List[str] = ["import std.io.*;", "", "function main(): None {", "    mut acc: Integer = 0;"]
+    for part in part_names:
+        main_lines.append(f"    acc = {part}_apply(acc);")
+    main_lines.extend(['    println(to_string(acc));', "    return None;", "}"])
+    (apex_src / "main.apex").write_text("\n".join(main_lines) + "\n", encoding="utf-8")
+    apex_files.append("src/main.apex")
+
+    toml_lines = [
+        f'name = "{bench_name}"',
+        'version = "0.1.0"',
+        'entry = "src/main.apex"',
+        "files = [",
+    ]
+    toml_lines.extend([f'    "{f}",' for f in apex_files])
+    toml_lines.extend(["]", f'output = "{bench_name}"', 'opt_level = "3"'])
+    (apex_dir / "apex.toml").write_text("\n".join(toml_lines) + "\n", encoding="utf-8")
+
+    c_dir = generated_root / "c"
+    c_dir.mkdir(parents=True, exist_ok=True)
+    c_part_files: List[Path] = []
+    (c_dir / "core.h").write_text(
+        "\n".join(
+            [
+                "#ifndef CORE_H",
+                "#define CORE_H",
+                "#include <stdint.h>",
+                "int64_t core_mix(int64_t x, int64_t k);",
+                "int64_t core_fold(int64_t a, int64_t b, int64_t salt);",
+                "#endif",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (c_dir / "core.c").write_text(
+        "\n".join(
+            [
+                "#include <stdint.h>",
+                "int64_t core_mix(int64_t x, int64_t k) {",
+                "    return x + k;",
+                "}",
+                "int64_t core_fold(int64_t a, int64_t b, int64_t salt) {",
+                "    return a + b + salt;",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    for i, part in enumerate(part_names):
+        deps = chromium_like_dependency_indices(i)
+        (c_dir / f"{part}.h").write_text(
+            "\n".join(
+                [
+                    "#ifndef " + part.upper() + "_H",
+                    "#define " + part.upper() + "_H",
+                    "#include <stdint.h>",
+                    f"int64_t {part}_apply(int64_t x);",
+                    f"int64_t {part}_wire(int64_t x);",
+                    "#endif",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        c_part_file = c_dir / f"{part}.c"
+        c_part_files.append(c_part_file)
+        lines = ["#include <stdint.h>", '#include "core.h"', f'#include "{part}.h"']
+        for dep in deps:
+            lines.append(f'#include "{part_names[dep]}.h"')
+        lines.extend([f"int64_t {part}_apply(int64_t x) {{", "    int64_t y = x;"])
+        for j in range(funcs_per_file):
+            lines.append(f"    y = core_mix(y, {i + j + 1});")
+        lines.extend(["    return y;", "}", "", f"int64_t {part}_wire(int64_t x) {{", f"    int64_t y = {part}_apply(x);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            lines.append(f"    y = core_fold(y, {dep_part}_apply(x), {i + dep + 1});")
+        for dep in deps:
+            dep_part = part_names[dep]
+            lines.append(f"    y = core_fold(y, {dep_part}_wire(x), {i + dep + 33});")
+        lines.extend(["    return y;", "}"])
+        c_part_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    main_c = ["#include <stdint.h>", "#include <stdio.h>"]
+    for part in part_names:
+        main_c.append(f"int64_t {part}_apply(int64_t x);")
+    main_c.extend(["int main(void) {", "    int64_t acc = 0;"])
+    for part in part_names:
+        main_c.append(f"    acc = {part}_apply(acc);")
+    main_c.extend(['    printf("%lld\\n", (long long)acc);', "    return 0;", "}"])
+    (c_dir / "main.c").write_text("\n".join(main_c) + "\n", encoding="utf-8")
+
+    rust_dir = generated_root / "rust"
+    rust_dir.mkdir(parents=True, exist_ok=True)
+    rust_part_files: List[Path] = []
+    rust_main = ["mod core;"]
+    for part in part_names:
+        rust_main.append(f"mod {part};")
+    rust_main.extend(["", "fn main() {", "    let mut acc: i64 = 0;"])
+    for part in part_names:
+        rust_main.append(f"    acc = {part}::apply(acc);")
+    rust_main.extend(['    println!("{acc}");', "}"])
+    (rust_dir / "main.rs").write_text("\n".join(rust_main) + "\n", encoding="utf-8")
+    (rust_dir / "core.rs").write_text(
+        "\n".join(
+            [
+                "pub fn mix(x: i64, k: i64) -> i64 {",
+                "    x + k",
+                "}",
+                "",
+                "pub fn fold(a: i64, b: i64, salt: i64) -> i64 {",
+                "    a + b + salt",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    for i, part in enumerate(part_names):
+        rust_part_file = rust_dir / f"{part}.rs"
+        rust_part_files.append(rust_part_file)
+        deps = chromium_like_dependency_indices(i)
+        lines = ["pub fn apply(x: i64) -> i64 {", "    let mut y = x;"]
+        for j in range(funcs_per_file):
+            lines.append(f"    y = crate::core::mix(y, {i + j + 1});")
+        lines.extend(["    y", "}", "", "pub fn wire(x: i64) -> i64 {", "    let mut y = apply(x);"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            lines.append(f"    y = crate::core::fold(y, crate::{dep_part}::apply(x), {i + dep + 1});")
+        for dep in deps:
+            dep_part = part_names[dep]
+            lines.append(f"    y = crate::core::fold(y, crate::{dep_part}::wire(x), {i + dep + 33});")
+        lines.extend(["    y", "}"])
+        rust_part_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    go_dir = generated_root / "go"
+    go_dir.mkdir(parents=True, exist_ok=True)
+    go_part_files: List[Path] = []
+    (go_dir / "go.mod").write_text("module compile10\n\ngo 1.22\n", encoding="utf-8")
+    go_main = ['package main', "", 'import "fmt"', "", "func main() {", "    var acc int64 = 0"]
+    for part in part_names:
+        go_main.append(f"    acc = {part}_apply(acc)")
+    go_main.extend(["    fmt.Println(acc)", "}"])
+    (go_dir / "main.go").write_text("\n".join(go_main) + "\n", encoding="utf-8")
+    (go_dir / "core.go").write_text(
+        "\n".join(
+            [
+                "package main",
+                "",
+                "func coreMix(x int64, k int64) int64 {",
+                "    return x + k",
+                "}",
+                "",
+                "func coreFold(a int64, b int64, salt int64) int64 {",
+                "    return a + b + salt",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    for i, part in enumerate(part_names):
+        go_part_file = go_dir / f"unit_{i:04d}.go"
+        go_part_files.append(go_part_file)
+        deps = chromium_like_dependency_indices(i)
+        lines = ["package main", "", "func " + part + "_apply(x int64) int64 {", "    y := x"]
+        for j in range(funcs_per_file):
+            lines.append(f"    y = coreMix(y, {i + j + 1})")
+        lines.extend(["    return y", "}", "", "func " + part + "_wire(x int64) int64 {", "    y := " + part + "_apply(x)"])
+        for dep in deps:
+            dep_part = part_names[dep]
+            lines.append(f"    y = coreFold(y, {dep_part}_apply(x), {i + dep + 1})")
+        for dep in deps:
+            dep_part = part_names[dep]
+            lines.append(f"    y = coreFold(y, {dep_part}_wire(x), {i + dep + 33})")
+        lines.extend(["    return y", "}"])
+        go_part_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    apex_mutate_sources = pick_mutation_targets(apex_part_files, 10, "batch_spread")
+    c_mutate_sources = pick_mutation_targets(c_part_files, 10, "batch_spread")
+    rust_mutate_sources = pick_mutation_targets(rust_part_files, 10, "batch_spread")
+    go_mutate_sources = pick_mutation_targets(go_part_files, 10, "batch_spread")
+
+    return {
+        "apex": {
+            "project_dir": apex_dir,
+            "binary": apex_dir / bench_name,
+            "mutate_source": apex_mutate_sources[0],
+            "mutate_sources": apex_mutate_sources,
+        },
+        "c": {
+            "project_dir": c_dir,
+            "binary": c_dir / f"{bench_name}_c",
+            "mutate_source": c_mutate_sources[0],
+            "mutate_sources": c_mutate_sources,
+        },
+        "rust": {
+            "project_dir": rust_dir,
+            "binary": rust_dir / f"{bench_name}_rust",
+            "mutate_source": rust_mutate_sources[0],
+            "mutate_sources": rust_mutate_sources,
+        },
+        "go": {
+            "project_dir": go_dir,
+            "binary": go_dir / f"{bench_name}_go",
+            "mutate_source": go_mutate_sources[0],
+            "mutate_sources": go_mutate_sources,
+        },
+    }
 
 
 def make_compile_jobs(
@@ -827,7 +1120,10 @@ def main() -> int:
                 compile_mode = "cold"
                 base_name = spec.name[: -len("_cold")]
 
-            compile_projects = generate_compile_project_10_files(root, base_name)
+            if base_name == "compile_project_mega_chromium_like":
+                compile_projects = generate_compile_project_mega_chromium_like(root, base_name)
+            else:
+                compile_projects = generate_compile_project_10_files(root, base_name)
             compile_jobs = make_compile_jobs(root, compile_projects, build_env, c_compiler)
 
             for lang in LANGUAGES:
