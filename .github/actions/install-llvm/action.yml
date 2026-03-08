@@ -23,20 +23,23 @@ runs:
       if: runner.os == 'macOS'
       shell: bash
       run: |
-        brew install llvm@21
+        brew install llvm@21 lld@21
         LLVM_PREFIX="$(brew --prefix llvm@21)"
         LLVM_BIN="${LLVM_PREFIX}/bin"
+        LLD_PREFIX="$(brew --prefix lld@21)"
+        LLD_BIN="${LLD_PREFIX}/bin"
         mkdir -p "${HOME}/.local/bin"
-        if [ -x "${LLVM_BIN}/lld" ] && [ ! -e "${HOME}/.local/bin/lld" ]; then
-          ln -sf "${LLVM_BIN}/lld" "${HOME}/.local/bin/lld"
+        if [ -x "${LLD_BIN}/lld" ] && [ ! -e "${HOME}/.local/bin/lld" ]; then
+          ln -sf "${LLD_BIN}/lld" "${HOME}/.local/bin/lld"
         fi
-        if [ -x "${LLVM_BIN}/ld.lld" ] && [ ! -e "${HOME}/.local/bin/ld.lld" ]; then
-          ln -sf "${LLVM_BIN}/ld.lld" "${HOME}/.local/bin/ld.lld"
-        elif [ -x "${LLVM_BIN}/ld64.lld" ] && [ ! -e "${HOME}/.local/bin/ld.lld" ]; then
-          ln -sf "${LLVM_BIN}/ld64.lld" "${HOME}/.local/bin/ld.lld"
+        if [ -x "${LLD_BIN}/ld.lld" ] && [ ! -e "${HOME}/.local/bin/ld.lld" ]; then
+          ln -sf "${LLD_BIN}/ld.lld" "${HOME}/.local/bin/ld.lld"
+        elif [ -x "${LLD_BIN}/ld64.lld" ] && [ ! -e "${HOME}/.local/bin/ld.lld" ]; then
+          ln -sf "${LLD_BIN}/ld64.lld" "${HOME}/.local/bin/ld.lld"
         fi
         echo "LLVM_SYS_211_PREFIX=${LLVM_PREFIX}" >> "$GITHUB_ENV"
         echo "${LLVM_BIN}" >> "$GITHUB_PATH"
+        echo "${LLD_BIN}" >> "$GITHUB_PATH"
         echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
         command -v ld.lld
     - name: Install LLVM (Windows)
@@ -44,7 +47,6 @@ runs:
       shell: pwsh
       run: |
         choco install llvm --version=21.1.7 -y --no-progress
-        $llvmConfig = $null
         $llvmPrefix = $null
         $prefixCandidates = @(
           "C:\Program Files\LLVM",
@@ -52,28 +54,22 @@ runs:
         ) | Where-Object { $_ -and (Test-Path $_) }
 
         foreach ($prefix in $prefixCandidates) {
-          $candidate = Join-Path $prefix "bin\llvm-config.exe"
-          if (-not (Test-Path $candidate)) {
-            continue
-          }
-          $version = (& $candidate --version).Trim()
-          if ($version.StartsWith("21.")) {
-            $llvmConfig = $candidate
+          $clang = Join-Path $prefix "bin\clang.exe"
+          if (Test-Path $clang) {
             $llvmPrefix = $prefix
             break
           }
         }
 
-        if (-not $llvmConfig) {
+        if (-not $llvmPrefix) {
           $chocoRoot = Join-Path $env:ChocolateyInstall "lib"
           if (Test-Path $chocoRoot) {
-            $found = Get-ChildItem -Path $chocoRoot -Filter llvm-config.exe -Recurse -File -ErrorAction SilentlyContinue |
+            $found = Get-ChildItem -Path $chocoRoot -Filter clang.exe -Recurse -File -ErrorAction SilentlyContinue |
               Where-Object { $_.FullName -match '\\llvm(\\|-)'} |
               Select-Object -ExpandProperty FullName
             foreach ($candidate in $found) {
-              $version = (& $candidate --version).Trim()
-              if ($version.StartsWith("21.")) {
-                $llvmConfig = $candidate
+              $version = (& $candidate --version 2>$null | Select-Object -First 1)
+              if ($version -match 'version 21\.') {
                 $llvmPrefix = Split-Path -Parent (Split-Path -Parent $candidate)
                 break
               }
@@ -81,29 +77,19 @@ runs:
           }
         }
 
-        if (-not $llvmConfig) {
-          if ($prefixCandidates.Count -gt 0) {
-            $llvmPrefix = $prefixCandidates[0]
-            $llvmBin = Join-Path $llvmPrefix "bin"
-            if (Test-Path $llvmBin) {
-              $llvmPrefixUnix = $llvmPrefix -replace '\\','/'
-              echo "LLVM_SYS_211_PREFIX=$llvmPrefixUnix" >> $env:GITHUB_ENV
-              echo "$llvmBin" >> $env:GITHUB_PATH
-              Write-Host "Configured LLVM without llvm-config from prefix: $llvmPrefix"
-              exit 0
-            }
-          }
-          throw "LLVM 21 llvm-config.exe not found after LLVM install"
+        if (-not $llvmPrefix) {
+          throw "LLVM 21 installation prefix not found after LLVM install"
         }
 
-        $llvmVersion = (& $llvmConfig --version).Trim()
-        $llvmBin = Split-Path -Parent $llvmConfig
-        if (-not $llvmPrefix) {
-          $llvmPrefix = Split-Path -Parent $llvmBin
+        $llvmBin = Join-Path $llvmPrefix "bin"
+        $llvmLib = Join-Path $llvmPrefix "lib"
+        if (-not (Test-Path (Join-Path $llvmBin "clang.exe"))) {
+          throw "clang.exe not found in LLVM bin directory: $llvmBin"
+        }
+        if (-not (Test-Path $llvmLib)) {
+          throw "LLVM lib directory not found: $llvmLib"
         }
         $llvmPrefixUnix = $llvmPrefix -replace '\\','/'
-        $llvmConfigUnix = $llvmConfig -replace '\\','/'
 
         echo "LLVM_SYS_211_PREFIX=$llvmPrefixUnix" >> $env:GITHUB_ENV
-        echo "LLVM_CONFIG_PATH=$llvmConfigUnix" >> $env:GITHUB_ENV
         echo "$llvmBin" >> $env:GITHUB_PATH

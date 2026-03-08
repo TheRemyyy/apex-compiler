@@ -223,6 +223,23 @@ jobs:
           CI_SKIP_COMPILER_BUILD: "1"
           APEX_COMPILER_PATH: ${{ github.workspace }}/target/release/apex-compiler
 
+  smoke-windows:
+    name: CLI Smoke (windows-x64)
+    runs-on: windows-latest
+    needs: build-windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/install-llvm
+      - uses: actions/download-artifact@v4
+        with:
+          name: apex-compiler-windows-x64
+          path: target/release
+      - run: bash scripts/ci_cli_smoke.sh
+        shell: bash
+        env:
+          CI_SKIP_COMPILER_BUILD: "1"
+          APEX_COMPILER_PATH: target/release/apex-compiler.exe
+
   examples-linux:
     name: Examples (linux-x64)
     runs-on: ubuntu-latest
