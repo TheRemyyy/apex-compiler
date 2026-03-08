@@ -124,21 +124,18 @@ jobs:
             compiler_path: target/release/apex-compiler
             prepare_cmd: chmod +x target/release/apex-compiler
             run_cmd: bash scripts/test_examples_linux.sh
-            shell: bash
           - label: macos-arm64
             os: macos-latest
             artifact_name: apex-compiler-macos-arm64
             compiler_path: target/release/apex-compiler
             prepare_cmd: chmod +x target/release/apex-compiler
             run_cmd: bash scripts/test_examples_macos.sh
-            shell: bash
           - label: windows-x64
             os: windows-latest
             artifact_name: apex-compiler-windows-x64
             compiler_path: target/release/apex-compiler.exe
             prepare_cmd: ''
             run_cmd: scripts\\test_examples.bat
-            shell: cmd
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/install-llvm
@@ -149,8 +146,16 @@ jobs:
       - name: Prepare compiler
         if: matrix.prepare_cmd != ''
         run: ${{ matrix.prepare_cmd }}
-      - name: Run examples
-        shell: ${{ matrix.shell }}
+      - name: Run examples (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: ${{ matrix.run_cmd }}
+        env:
+          CI_SKIP_COMPILER_BUILD: "1"
+          APEX_COMPILER_PATH: ${{ github.workspace }}/${{ matrix.compiler_path }}
+      - name: Run examples (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
         run: ${{ matrix.run_cmd }}
         env:
           CI_SKIP_COMPILER_BUILD: "1"
