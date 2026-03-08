@@ -56,7 +56,7 @@ class Animal {
     }
 
     public function describe(): String {
-        return "Animal(${this.name})";
+        return "Animal({this.name})";
     }
 }
 

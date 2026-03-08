@@ -24,6 +24,8 @@ r = range(0, 10, 2);    // 0, 2, 4, 6, 8
 r = range(10, 0, -1);   // 10, 9, 8, 7, 6, 5, 4, 3, 2, 1
 ```
 
+`range()` currently accepts `Integer` arguments only. The optional `step` must be non-zero.
+
 ## Type Annotation
 
 Explicitly type your range variables:
@@ -135,6 +137,7 @@ result: Integer = sum_range(1, 6);  // Returns 15 (1+2+3+4+5)
 - **Step direction matters**: 
   - Positive step: iterates while current < end
   - Negative step: iterates while current > end
+  - Zero step is invalid and is rejected
 
 - **One-time use**: A Range iterator can only be traversed once. To iterate again, create a new range.
 

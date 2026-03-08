@@ -15,7 +15,7 @@ class Animal {
     }
 
     public function describe(): String {
-        return "Animal(${this.name})";
+        return "Animal({this.name})";
     }
 }
 
@@ -32,7 +32,7 @@ class Dog extends Animal {
 function main(): None {
     println("=== Inheritance (extends) ===");
     d: Dog = Dog("Buddy");
-    println("${d.describe()}");
-    println("sound=${d.speak()}");
+    println("{d.describe()}");
+    println("sound={d.speak()}");
     return None;
 }

@@ -19,7 +19,7 @@ class Book implements Named {
     }
 
     public function print_me(): None {
-        println("Book: ${this.title}");
+        println("Book: {this.title}");
         return None;
     }
 
@@ -36,7 +36,7 @@ function render(item: Printable): None {
 function main(): None {
     println("=== Interfaces ===");
     b: Book = Book("Apex Language");
-    println("name=${b.get_name()}");
+    println("name={b.get_name()}");
     render(b);
     return None;
 }

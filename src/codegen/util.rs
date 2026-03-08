@@ -1762,6 +1762,17 @@ impl<'ctx> Codegen<'ctx> {
     ) -> Result<PointerValue<'ctx>> {
         let range_type = self.get_range_type();
         let malloc = self.get_or_declare_malloc();
+        let printf = self.get_or_declare_printf();
+        let exit_fn = self.get_or_declare_exit();
+        let current_fn = self
+            .builder
+            .get_insert_block()
+            .and_then(|bb| bb.get_parent())
+            .ok_or_else(|| CodegenError::new("Range creation must occur inside a function"))?;
+        let zero_step_bb = self
+            .context
+            .append_basic_block(current_fn, "range_zero_step");
+        let ok_bb = self.context.append_basic_block(current_fn, "range_init");
 
         // Allocate memory for Range struct
         let size = range_type.size_of().unwrap();
@@ -1776,10 +1787,52 @@ impl<'ctx> Codegen<'ctx> {
 
         // Initialize fields - use i32 for GEP indices as required by LLVM
         let i32_type = self.context.i32_type();
+        let i64_type = self.context.i64_type();
         let zero = i32_type.const_int(0, false);
         let one = i32_type.const_int(1, false);
         let two = i32_type.const_int(2, false);
         let three = i32_type.const_int(3, false);
+
+        let step_is_zero = self
+            .builder
+            .build_int_compare(
+                inkwell::IntPredicate::EQ,
+                step.into_int_value(),
+                i64_type.const_int(0, false),
+                "range_step_is_zero",
+            )
+            .unwrap();
+        self.builder
+            .build_conditional_branch(step_is_zero, zero_step_bb, ok_bb)
+            .unwrap();
+
+        self.builder.position_at_end(zero_step_bb);
+        let panic_global = if let Some(existing) = self.module.get_global("range_zero_step_panic") {
+            existing
+        } else {
+            let panic_msg = self
+                .context
+                .const_string(b"Runtime error: range() step cannot be 0\n\0", false);
+            let global =
+                self.module
+                    .add_global(panic_msg.get_type(), None, "range_zero_step_panic");
+            global.set_linkage(Linkage::Private);
+            global.set_initializer(&panic_msg);
+            global
+        };
+        self.builder
+            .build_call(printf, &[panic_global.as_pointer_value().into()], "")
+            .unwrap();
+        self.builder
+            .build_call(
+                exit_fn,
+                &[self.context.i32_type().const_int(1, false).into()],
+                "",
+            )
+            .unwrap();
+        self.builder.build_unreachable().unwrap();
+
+        self.builder.position_at_end(ok_bb);
 
         // Store start
         let start_ptr = unsafe {

@@ -16,6 +16,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - escaped interpolation braces (`\{` and `\}`) now remain literal text instead of incorrectly triggering string interpolation
 - Fixed `apex test` ignore-reason rendering so backslashes and control characters are preserved correctly in generated runner output.
 - Fixed `apex test --list` ignore-reason rendering so control characters no longer break discovery layout.
+- Fixed stale example/docs interpolation snippets that used `${...}` instead of Apex `{...}` interpolation syntax.
+- Fixed `range()` validation so Float arguments are rejected instead of producing invalid integer iterator output at runtime.
+- Fixed zero-step `range()` creation so dynamic `step=0` now fails fast with a runtime error instead of producing inconsistent `has_next()/next()` behavior.
 - Expanded CLI smoke coverage to assert the real `examples/24_test_attributes.apex` runner output and ignored-test totals.
 
 ## [1.3.5] - Bug Fixes - 2026-03-08

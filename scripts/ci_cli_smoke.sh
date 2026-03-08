@@ -30,6 +30,9 @@ IGNORE_ESC_FILE="${TMP_DIR}/ignore_escape_test.apex"
 ESCAPE_FILE="${TMP_DIR}/escapes.apex"
 ESCAPE_OUT="${TMP_DIR}/escapes_bin"
 ESCAPE_STDOUT="${TMP_DIR}/escapes.stdout"
+EXAMPLE_STDOUT="${TMP_DIR}/example.stdout"
+RANGE_FLOAT_FILE="${TMP_DIR}/range_float.apex"
+RANGE_ZERO_RUNTIME_FILE="${TMP_DIR}/range_zero_runtime.apex"
 HEADER_FILE="${TMP_DIR}/sample.h"
 BINDINGS_FILE="${TMP_DIR}/bindings.apex"
 OUT_FILE="${TMP_DIR}/ugly_bin"
@@ -151,6 +154,46 @@ EOF_ESCAPE
 "${COMPILER}" compile "${ESCAPE_FILE}" -o "${ESCAPE_OUT}" >/dev/null
 "${ESCAPE_OUT}" > "${ESCAPE_STDOUT}"
 cmp -s "${ESCAPE_STDOUT}" <(printf 'A\nB\nX\tY\nQ:" Z\n')
+
+"${COMPILER}" run "${REPO_ROOT}/examples/35_visibility_enforcement.apex" >"${EXAMPLE_STDOUT}"
+grep -Fq 'Account: Standard, balance=150' "${EXAMPLE_STDOUT}"
+grep -Fq 'Premium owner code=77' "${EXAMPLE_STDOUT}"
+"${COMPILER}" run "${REPO_ROOT}/examples/36_inheritance_extends.apex" >"${EXAMPLE_STDOUT}"
+grep -Fq 'Animal(Buddy)' "${EXAMPLE_STDOUT}"
+grep -Fq 'sound=woof' "${EXAMPLE_STDOUT}"
+"${COMPILER}" run "${REPO_ROOT}/examples/37_interfaces_contracts.apex" >"${EXAMPLE_STDOUT}"
+grep -Fq 'name=Apex Language' "${EXAMPLE_STDOUT}"
+grep -Fq 'Book: Apex Language' "${EXAMPLE_STDOUT}"
+"${COMPILER}" run "${REPO_ROOT}/examples/38_import_aliases.apex" >"${EXAMPLE_STDOUT}"
+grep -Fq 'abs=42, upper=APEX' "${EXAMPLE_STDOUT}"
+
+cat <<'EOF_RANGE_FLOAT' > "${RANGE_FLOAT_FILE}"
+function main(): None {
+    r: Range<Integer> = range(0.0, 3.0, 1.0);
+    return None;
+}
+EOF_RANGE_FLOAT
+if "${COMPILER}" check "${RANGE_FLOAT_FILE}" >"${BORROW_ERR_OUT}" 2>&1; then
+  echo "range() unexpectedly accepted Float arguments" >&2
+  exit 1
+fi
+grep -q "range() arguments must be Integer" "${BORROW_ERR_OUT}"
+
+cat <<'EOF_RANGE_ZERO' > "${RANGE_ZERO_RUNTIME_FILE}"
+function choose_zero(): Integer {
+    return 0;
+}
+
+function main(): None {
+    r: Range<Integer> = range(0, 3, choose_zero());
+    return None;
+}
+EOF_RANGE_ZERO
+if "${COMPILER}" run "${RANGE_ZERO_RUNTIME_FILE}" >"${BORROW_ERR_OUT}" 2>&1; then
+  echo "range() unexpectedly accepted runtime zero step" >&2
+  exit 1
+fi
+grep -q "Runtime error: range() step cannot be 0" "${BORROW_ERR_OUT}"
 
 cat <<'EOF_HEADER' > "${HEADER_FILE}"
 int add(int a, int b);

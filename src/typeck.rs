@@ -3440,11 +3440,16 @@ impl TypeChecker {
                 }
                 for arg in args {
                     let t = self.check_expr(&arg.node, arg.span.clone());
-                    if !matches!(t, ResolvedType::Integer | ResolvedType::Float) {
+                    if !matches!(t, ResolvedType::Integer) {
                         self.error(
-                            "range() arguments must be Integer or Float".to_string(),
+                            "range() arguments must be Integer".to_string(),
                             span.clone(),
                         );
+                    }
+                }
+                if let Some(step) = args.get(2) {
+                    if matches!(step.node, Expr::Literal(Literal::Integer(0))) {
+                        self.error("range() step cannot be 0".to_string(), step.span.clone());
                     }
                 }
                 Some(ResolvedType::Range(Box::new(ResolvedType::Integer)))
@@ -5153,6 +5158,43 @@ mod tests {
             .filter(|e| e.message.contains("Undefined variable: y"))
             .count();
         assert_eq!(undef_count, 1, "{:?}", errors);
+    }
+
+    #[test]
+    fn range_rejects_float_arguments() {
+        let src = r#"
+            function main(): None {
+                r: Range<Integer> = range(0.0, 3.0, 1.0);
+                return None;
+            }
+        "#;
+        let errors = check_source(src).expect_err("float range arguments should fail");
+        let joined = errors
+            .iter()
+            .map(|e| e.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("range() arguments must be Integer"),
+            "{joined}"
+        );
+    }
+
+    #[test]
+    fn range_rejects_zero_literal_step() {
+        let src = r#"
+            function main(): None {
+                r: Range<Integer> = range(0, 3, 0);
+                return None;
+            }
+        "#;
+        let errors = check_source(src).expect_err("zero range step should fail");
+        let joined = errors
+            .iter()
+            .map(|e| e.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("range() step cannot be 0"), "{joined}");
     }
 }
 

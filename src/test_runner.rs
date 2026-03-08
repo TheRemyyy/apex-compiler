@@ -399,8 +399,8 @@ fn filter_out_main_function(source: &str) -> String {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{
-        discover_tests, ensure_test_runner_imports, escape_display_text,
-        generate_test_runner, generate_test_runner_with_source, TestDiscovery,
+        discover_tests, ensure_test_runner_imports, escape_display_text, generate_test_runner,
+        generate_test_runner_with_source, TestDiscovery,
     };
     use crate::{lexer::tokenize, parser::Parser};
 

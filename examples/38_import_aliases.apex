@@ -9,6 +9,6 @@ function main(): None {
     io.println("=== Import Aliases ===");
     value: Integer = math.abs(-42);
     text: String = str.upper("apex");
-    io.println("abs=${value}, upper=${text}");
+    io.println("abs={value}, upper={text}");
     return None;
 }

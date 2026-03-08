@@ -41,10 +41,10 @@ function main(): None {
     println("=== Visibility Enforcement ===");
     mut a: Account = Account("Standard", 100, 42);
     a.deposit(50);
-    println("Account: ${a.label}, balance=${a.getBalance()}");
+    println("Account: {a.label}, balance={a.getBalance()}");
 
     p: PremiumAccount = PremiumAccount("Premium", 250, 77);
-    println("Premium owner code=${p.ownerCode()}");
+    println("Premium owner code={p.ownerCode()}");
 
     println("Private/protected access violations are compile-time errors.");
     return None;
