@@ -4,6 +4,7 @@
 use crate::ast::{
     BinOp, Expr, Literal, MatchArm, Parameter, Pattern, Spanned, Stmt, StringPart, Type, UnaryOp,
 };
+use crate::project::OutputKind;
 
 use inkwell::basic_block::BasicBlock;
 use inkwell::module::Linkage;
@@ -1331,6 +1332,7 @@ impl<'ctx> Codegen<'ctx> {
         path: &Path,
         opt_level: Option<&str>,
         target_triple: Option<&str>,
+        output_kind: &OutputKind,
     ) -> std::result::Result<(), String> {
         Self::ensure_object_emission_targets_initialized(target_triple)?;
 
@@ -1363,7 +1365,10 @@ impl<'ctx> Codegen<'ctx> {
                 &cpu,
                 &features,
                 Self::resolve_optimization_level(opt_level),
-                RelocMode::Default,
+                match output_kind {
+                    OutputKind::Shared => RelocMode::PIC,
+                    OutputKind::Bin | OutputKind::Static => RelocMode::Default,
+                },
                 CodeModel::Default,
             )
             .ok_or("Failed to create target machine")?;

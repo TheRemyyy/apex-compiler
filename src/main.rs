@@ -3471,7 +3471,7 @@ fn compile_program_ast_to_object_filtered(
         })?;
     }
     codegen
-        .write_object_with_config(object_path, link.opt_level, link.target)
+        .write_object_with_config(object_path, link.opt_level, link.target, &link.output_kind)
         .map_err(|e| {
             format!(
                 "{}: Failed to emit object for '{}': {}",
@@ -3753,6 +3753,20 @@ fn require_lld_linker() -> Result<(), String> {
     ))
 }
 
+fn should_force_no_pie(link: &LinkConfig<'_>) -> bool {
+    if link.output_kind != OutputKind::Bin {
+        return false;
+    }
+
+    match link.target {
+        None => true,
+        Some(target) => {
+            let target = target.to_ascii_lowercase();
+            !(target.contains("windows") || target.contains("mingw") || target.contains("darwin") || target.contains("apple"))
+        }
+    }
+}
+
 fn escape_response_file_arg(arg: &str) -> String {
     let escaped = arg.replace('\\', "\\\\").replace('"', "\\\"");
     format!("\"{}\"", escaped)
@@ -3819,6 +3833,13 @@ fn compile_ir(ir_path: &Path, output_path: &Path, link: &LinkConfig<'_>) -> Resu
 
         #[cfg(not(windows))]
         cmd.arg("-lm").arg("-pthread");
+
+        // GitHub Actions Ubuntu links executables as PIE by default; Apex bin objects/IR are
+        // regular executable codegen, so request non-PIE explicitly on ELF toolchains.
+        #[cfg(all(unix, not(target_os = "macos")))]
+        if should_force_no_pie(link) {
+            cmd.arg("-no-pie");
+        }
 
         for path in link.link_search {
             cmd.arg(format!("-L{}", path));
@@ -3957,6 +3978,12 @@ fn link_objects(
 
             #[cfg(not(windows))]
             cmd.arg("-lm").arg("-pthread");
+
+            // Avoid distro-dependent default PIE linking for normal executables on ELF hosts.
+            #[cfg(all(unix, not(target_os = "macos")))]
+            if should_force_no_pie(link) {
+                cmd.arg("-no-pie");
+            }
 
             for path in link.link_search {
                 cmd.arg(format!("-L{}", path));
