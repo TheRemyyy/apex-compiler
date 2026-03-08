@@ -29,6 +29,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Instant;
+use std::time::UNIX_EPOCH;
 use twox_hash::XxHash64;
 
 use crate::ast::{Block, Decl, Expr, ImportDecl, Pattern, Program, Spanned, Stmt};
@@ -402,12 +403,20 @@ fn save_semantic_cached_fingerprint(project_root: &Path, fingerprint: &str) -> R
     })
 }
 
-const PARSE_CACHE_SCHEMA: &str = "v3";
+const PARSE_CACHE_SCHEMA: &str = "v4";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct FileMetadataStamp {
+    len: u64,
+    modified_secs: u64,
+    modified_nanos: u32,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ParsedFileCacheEntry {
     schema: String,
     compiler_version: String,
+    file_metadata: FileMetadataStamp,
     source_fingerprint: String,
     api_fingerprint: String,
     semantic_fingerprint: String,
@@ -633,10 +642,42 @@ fn combined_program_for_files(rewritten_files: &[RewrittenProjectUnit]) -> Progr
     program
 }
 
-fn load_parsed_file_cache(
+fn current_file_metadata_stamp(file: &Path) -> Result<FileMetadataStamp, String> {
+    let metadata = fs::metadata(file).map_err(|e| {
+        format!(
+            "{}: Failed to stat '{}': {}",
+            "error".red().bold(),
+            file.display(),
+            e
+        )
+    })?;
+    let modified = metadata.modified().map_err(|e| {
+        format!(
+            "{}: Failed to read modified time for '{}': {}",
+            "error".red().bold(),
+            file.display(),
+            e
+        )
+    })?;
+    let duration = modified.duration_since(UNIX_EPOCH).map_err(|e| {
+        format!(
+            "{}: Invalid modified time for '{}': {}",
+            "error".red().bold(),
+            file.display(),
+            e
+        )
+    })?;
+
+    Ok(FileMetadataStamp {
+        len: metadata.len(),
+        modified_secs: duration.as_secs(),
+        modified_nanos: duration.subsec_nanos(),
+    })
+}
+
+fn load_parsed_file_cache_entry(
     project_root: &Path,
     file: &Path,
-    source_fp: &str,
 ) -> Result<Option<ParsedFileCacheEntry>, String> {
     let path = parsed_file_cache_path(project_root, file);
     if !path.exists() {
@@ -657,10 +698,7 @@ fn load_parsed_file_cache(
         Err(_) => return Ok(None),
     };
 
-    if entry.schema != PARSE_CACHE_SCHEMA
-        || entry.compiler_version != env!("CARGO_PKG_VERSION")
-        || entry.source_fingerprint != source_fp
-    {
+    if entry.schema != PARSE_CACHE_SCHEMA || entry.compiler_version != env!("CARGO_PKG_VERSION") {
         return Ok(None);
     }
 
@@ -1840,32 +1878,109 @@ fn save_object_cache_meta(
 }
 
 fn parse_project_unit(project_root: &Path, file: &Path) -> Result<ParsedProjectUnit, String> {
-    let source = fs::read_to_string(file).map_err(|e| {
-        format!(
-            "{}: Failed to read '{}': {}",
-            "error".red().bold(),
-            file.display(),
-            e
-        )
-    })?;
-
     let filename = file
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("unknown.apex");
-
-    let source_fp = source_fingerprint(&source);
+    let file_metadata = current_file_metadata_stamp(file)?;
+    let cached_entry = load_parsed_file_cache_entry(project_root, file)?;
     let (namespace, program, imports, api_fingerprint, semantic_fingerprint, from_parse_cache) =
-        if let Some(cache) = load_parsed_file_cache(project_root, file, &source_fp)? {
-            (
-                cache.namespace,
-                cache.program,
-                cache.imports,
-                cache.api_fingerprint,
-                cache.semantic_fingerprint,
-                true,
-            )
+        if let Some(cache) = cached_entry.as_ref() {
+            if cache.file_metadata == file_metadata {
+                (
+                    cache.namespace.clone(),
+                    cache.program.clone(),
+                    cache.imports.clone(),
+                    cache.api_fingerprint.clone(),
+                    cache.semantic_fingerprint.clone(),
+                    true,
+                )
+            } else {
+                let source = fs::read_to_string(file).map_err(|e| {
+                    format!(
+                        "{}: Failed to read '{}': {}",
+                        "error".red().bold(),
+                        file.display(),
+                        e
+                    )
+                })?;
+                let source_fp = source_fingerprint(&source);
+                if cache.source_fingerprint == source_fp {
+                    (
+                        cache.namespace.clone(),
+                        cache.program.clone(),
+                        cache.imports.clone(),
+                        cache.api_fingerprint.clone(),
+                        cache.semantic_fingerprint.clone(),
+                        true,
+                    )
+                } else {
+                    let tokens = lexer::tokenize(&source).map_err(|e| {
+                        format!(
+                            "{}: Lexer error in {}: {}",
+                            "error".red().bold(),
+                            filename,
+                            e
+                        )
+                    })?;
+                    let mut parser = Parser::new(tokens);
+                    let program = parser.parse_program().map_err(|e| {
+                        format!(
+                            "{}: Parse error in {}: {}",
+                            "error".red().bold(),
+                            filename,
+                            e.message
+                        )
+                    })?;
+
+                    let namespace = program
+                        .package
+                        .clone()
+                        .unwrap_or_else(|| "global".to_string());
+                    let imports: Vec<ImportDecl> = program
+                        .declarations
+                        .iter()
+                        .filter_map(|d| match &d.node {
+                            Decl::Import(import) => Some(import.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    let api_fingerprint = api_program_fingerprint(&program);
+                    let semantic_fingerprint = semantic_program_fingerprint(&program);
+
+                    let cache_entry = ParsedFileCacheEntry {
+                        schema: PARSE_CACHE_SCHEMA.to_string(),
+                        compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+                        file_metadata: file_metadata.clone(),
+                        source_fingerprint: source_fp,
+                        api_fingerprint: api_fingerprint.clone(),
+                        semantic_fingerprint: semantic_fingerprint.clone(),
+                        namespace: namespace.clone(),
+                        program: program.clone(),
+                        imports: imports.clone(),
+                    };
+                    save_parsed_file_cache(project_root, file, &cache_entry)?;
+
+                    (
+                        namespace,
+                        program,
+                        imports,
+                        api_fingerprint,
+                        semantic_fingerprint,
+                        false,
+                    )
+                }
+            }
         } else {
+            let source = fs::read_to_string(file).map_err(|e| {
+                format!(
+                    "{}: Failed to read '{}': {}",
+                    "error".red().bold(),
+                    file.display(),
+                    e
+                )
+            })?;
+            let source_fp = source_fingerprint(&source);
             let tokens = lexer::tokenize(&source).map_err(|e| {
                 format!(
                     "{}: Lexer error in {}: {}",
@@ -1902,7 +2017,8 @@ fn parse_project_unit(project_root: &Path, file: &Path) -> Result<ParsedProjectU
             let cache_entry = ParsedFileCacheEntry {
                 schema: PARSE_CACHE_SCHEMA.to_string(),
                 compiler_version: env!("CARGO_PKG_VERSION").to_string(),
-                source_fingerprint: source_fp.clone(),
+                file_metadata,
+                source_fingerprint: source_fp,
                 api_fingerprint: api_fingerprint.clone(),
                 semantic_fingerprint: semantic_fingerprint.clone(),
                 namespace: namespace.clone(),
@@ -4298,7 +4414,7 @@ fn bindgen_header(header: &Path, output: Option<&Path>) -> Result<(), String> {
 mod tests {
     use super::{
         api_program_fingerprint, build_file_dependency_graph, build_reverse_dependency_graph,
-        compute_link_fingerprint, compute_rewrite_context_fingerprint_for_unit,
+        compute_link_fingerprint, compute_rewrite_context_fingerprint_for_unit, parse_project_unit,
         semantic_program_fingerprint, should_skip_final_link, transitive_dependents,
         DependencyResolutionContext, LinkConfig, LinkManifestCache, OutputKind, ParsedProjectUnit,
         RewriteFingerprintContext, LINK_MANIFEST_CACHE_SCHEMA,
@@ -4308,6 +4424,8 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::fs;
     use std::path::PathBuf;
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     fn parse_program(source: &str) -> Program {
         let tokens = crate::lexer::tokenize(source).expect("tokenize");
@@ -4740,5 +4858,34 @@ function add(x: Float): Float {
         assert!(should_skip_final_link(Some(&current), &current, &temp, 0));
 
         let _ = fs::remove_file(temp);
+    }
+
+    #[test]
+    fn parse_cache_reuses_same_content_even_after_metadata_change() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "apex-parse-cache-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let src_dir = temp_root.join("src");
+        fs::create_dir_all(&src_dir).expect("create temp src dir");
+        let file = src_dir.join("main.apex");
+        let source = "function main(): None { return None; }\n";
+        fs::write(&file, source).expect("write source");
+
+        let first = parse_project_unit(&temp_root, &file).expect("first parse");
+        assert!(!first.from_parse_cache);
+
+        thread::sleep(Duration::from_millis(5));
+        fs::write(&file, source).expect("rewrite identical source");
+
+        let second = parse_project_unit(&temp_root, &file).expect("second parse");
+        assert!(second.from_parse_cache);
+        assert_eq!(first.semantic_fingerprint, second.semantic_fingerprint);
+
+        let _ = fs::remove_dir_all(temp_root);
     }
 }

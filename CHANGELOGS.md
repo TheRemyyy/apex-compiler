@@ -92,6 +92,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Project builds now use `.apexcache` with:
   - early up-to-date skip via project fingerprint cache
   - parser-level per-file AST cache reuse for unchanged files in changed builds
+  - parse cache now does a metadata fast-path (`len + mtime`) before falling back to full source hashing for unchanged-file reuse
   - persistent file dependency graph cache for explicit `body-only` vs `API` impact classification and reverse-dependent tracking
   - same-namespace dependency edges now come from AST symbol references instead of blanket namespace-wide file fanout
   - import-check success cache reuse keyed by semantic fingerprint + import/rewrite context

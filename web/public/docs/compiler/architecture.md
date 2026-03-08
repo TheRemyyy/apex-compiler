@@ -19,6 +19,8 @@ This document describes the internal architecture of the Apex compiler.
 - **Parsed file cache** (`.apexcache/parsed/*.json`):
   - Stores parsed AST + namespace/import metadata keyed by source fingerprint.
   - On incremental edits, unchanged files bypass tokenization/parsing and reuse cached AST.
+  - Uses a fast unchanged-file check from cached file metadata (`len + modified time`) before reading full file contents.
+  - If metadata changed but file content hash is still identical, the cached parse result is still reused safely.
 - **Rewritten file cache** (`.apexcache/rewritten/*.json`):
   - Stores namespace-rewritten AST fragments keyed by semantic fingerprint + per-file rewrite-context fingerprint.
   - On incremental edits, files whose semantics and relevant namespace/import context did not change bypass rewrite and are stitched directly into combined AST.
