@@ -132,6 +132,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - CI job graph is now `build -> (checks, smoke, examples)` while `web` runs independently in parallel.
 - Release workflow now publishes both macOS architectures (`aarch64-apple-darwin`, `x86_64-apple-darwin`).
 - Windows release workflow LLVM setup now uses Chocolatey (`choco install llvm`) instead of downloading a hardcoded GitHub release tarball URL.
+- Async task runtime control now uses a portable completion-state model instead of relying on Linux-only timed join APIs.
+  - `Task.await_timeout(...)` now works through portable completion polling plus final join semantics.
+  - Async function and async block runtimes now publish task completion/result state explicitly before final await/join.
+  - Task runtime state now distinguishes `completed` from `done`, matching `is_done`, `cancel`, and timeout behavior more accurately across platforms.
+- CI LLVM setup on Windows now resolves `llvm-sys` from a real `llvm-config.exe` prefix instead of only checking for `clang.exe`.
+  - GitHub Actions build/check steps now rely on `GITHUB_ENV` exports from the shared LLVM install action instead of re-overriding LLVM env vars per step.
 
 ### 🐛 Fixed
 
@@ -190,6 +196,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed CI `cli-smoke` compiler path resolution when reusing downloaded release artifact:
   - `scripts/ci_cli_smoke.sh` now normalizes relative `APEX_COMPILER_PATH` to absolute path before changing working directories.
   - CI now passes absolute compiler path via `${{ github.workspace }}/target/release/apex-compiler`.
+- Fixed macOS async runtime example/link failures caused by `Task.await_timeout(...)` depending on unavailable `pthread_timedjoin_np`.
+- Fixed async task completion races by initializing task back-pointers before worker thread spawn and publishing completion state atomically.
+- Fixed Windows GitHub Actions `llvm-sys` detection failures by requiring/exporting a valid LLVM 21 prefix containing `llvm-config.exe`.
 - Fixed parser handling of empty interpolation braces (`{}`) to preserve braces as literal text.
 - Fixed parser string interpolation normalization so all-literal interpolation parts are merged back into plain string literals.
 - Fixed import checker alias semantics: namespace alias imports no longer implicitly import all symbols as unqualified calls.

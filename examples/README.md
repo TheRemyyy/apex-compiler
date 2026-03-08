@@ -31,7 +31,7 @@ This folder is the executable language feature gallery.
 - `25_range_types.apex`: `Range<T>` and iterators.
 - `26_effect_system.apex`: effect attributes (`@Pure`, `@Io`, `@Thread`).
 - `27_extern_c_interop.apex`: `extern function` C interop.
-- `28_async_runtime_control.apex`: true async runtime task controls (`is_done`, `await_timeout`, `cancel`).
+- `28_async_runtime_control.apex`: true async runtime task controls (`is_done`, `await_timeout`, `cancel`) with portable timeout behavior across Linux, macOS, and Windows.
 - `29_effect_inference_and_any.apex`: automatic effect inference and `@Any`.
 - `30_extern_variadic_printf.apex`: variadic `extern` calls (`printf` with `...`).
 - `31_extern_abi_link_name.apex`: explicit ABI + symbol aliasing (`extern(c, "symbol")`).

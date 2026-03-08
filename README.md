@@ -82,6 +82,8 @@ Run all bundled examples with platform-specific scripts from the repo root:
 - **Linux**: `bash scripts/test_examples_linux.sh`
 - **macOS**: `bash scripts/test_examples_macos.sh`
 
+Async runtime examples and task controls (`await`, `await_timeout`, `is_done`, `cancel`) are intended to behave consistently across Linux, macOS, and Windows.
+
 ## 📁 Quick Start: Multi-File Project
 
 ```bash
