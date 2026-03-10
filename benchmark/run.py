@@ -60,7 +60,7 @@ BENCHMARKS: List[BenchmarkSpec] = [
     ),
 ]
 
-LANGUAGES = ("apex", "c", "rust", "go")
+LANGUAGES = ("apex", "rust", "go")
 SYNTHETIC_MEGA_GRAPH_FILE_COUNT = 1400
 SYNTHETIC_MEGA_GRAPH_FUNCS_PER_FILE = 96
 SYNTHETIC_MEGA_GRAPH_MUTATE_COUNT = 40
@@ -78,17 +78,6 @@ def exe_path(path: Path) -> Path:
     if is_windows() and path.suffix.lower() != ".exe":
         return path.with_suffix(".exe")
     return path
-
-
-def pick_c_compiler() -> str:
-    cc_env = os.environ.get("CC", "").strip()
-    if cc_env:
-        return cc_env
-    if shutil.which("clang"):
-        return "clang"
-    if shutil.which("gcc"):
-        return "gcc"
-    raise RuntimeError("C compiler not found. Install clang/gcc or set CC.")
 
 
 def run_cmd(cmd: List[str], cwd: Path, env: Dict[str, str] | None = None) -> subprocess.CompletedProcess:
@@ -146,16 +135,6 @@ def compile_apex(
     proc = run_cmd(cmd, root, env=build_env)
     if proc.returncode != 0:
         raise RuntimeError(f"Failed to compile Apex benchmark {bench}:\n{proc.stderr}")
-
-
-def compile_c(root: Path, bench: str, out: Path, c_compiler: str) -> None:
-    src = root / "benchmark" / "c" / f"{bench}.c"
-    cmd = [c_compiler, "-O3", "-std=c11", str(src), "-o", str(out)]
-    if c_compiler != "cl":
-        cmd.insert(2, "-march=native")
-    proc = run_cmd(cmd, root)
-    if proc.returncode != 0:
-        raise RuntimeError(f"Failed to compile C benchmark {bench}:\n{proc.stderr}")
 
 
 def compile_rust(root: Path, bench: str, out: Path) -> None:
@@ -301,56 +280,6 @@ def generate_compile_project_10_files(
     toml_lines.extend(["]", f'output = "{bench_name}"', 'opt_level = "3"'])
     (apex_dir / "apex.toml").write_text("\n".join(toml_lines) + "\n", encoding="utf-8")
 
-    c_dir = generated_root / "c"
-    c_dir.mkdir(parents=True, exist_ok=True)
-    c_part_files: List[Path] = []
-    (c_dir / "core.h").write_text(
-        "\n".join(
-            [
-                "#ifndef CORE_H",
-                "#define CORE_H",
-                "#include <stdint.h>",
-                "int64_t core_mix(int64_t x, int64_t k);",
-                "#endif",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (c_dir / "core.c").write_text(
-        "\n".join(
-            [
-                "#include <stdint.h>",
-                "int64_t core_mix(int64_t x, int64_t k) {",
-                "    return x + k;",
-                "}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    for i in range(file_count):
-        part = f"part_{i:02d}"
-        c_part_files.append(c_dir / f"{part}.c")
-        lines = [
-            "#include <stdint.h>",
-            '#include "core.h"',
-            f"int64_t {part}_apply(int64_t x) {{",
-            "    int64_t y = x;",
-        ]
-        for j in range(funcs_per_file):
-            lines.append(f"    y = core_mix(y, {i + j + 1});")
-        lines.extend(["    return y;", "}"])
-        (c_dir / f"{part}.c").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    main_c = ["#include <stdint.h>", "#include <stdio.h>"]
-    for i in range(file_count):
-        main_c.append(f"int64_t part_{i:02d}_apply(int64_t x);")
-    main_c.extend(["int main(void) {", "    int64_t acc = 0;"])
-    for i in range(file_count):
-        main_c.append(f"    acc = part_{i:02d}_apply(acc);")
-    main_c.extend(['    printf("%lld\\n", (long long)acc);', "    return 0;", "}"])
-    (c_dir / "main.c").write_text("\n".join(main_c) + "\n", encoding="utf-8")
-
     rust_dir = generated_root / "rust"
     rust_dir.mkdir(parents=True, exist_ok=True)
     rust_part_files: List[Path] = []
@@ -415,12 +344,10 @@ def generate_compile_project_10_files(
     )
 
     apex_mutate_sources = pick_mutation_targets(apex_part_files, mutate_count, mutation_profile)
-    c_mutate_sources = pick_mutation_targets(c_part_files, mutate_count, mutation_profile)
     rust_mutate_sources = pick_mutation_targets(rust_part_files, mutate_count, mutation_profile)
     go_mutate_sources = pick_mutation_targets(go_part_files, mutate_count, mutation_profile)
     if mutation_profile == "central":
         apex_mutate_sources = [apex_core]
-        c_mutate_sources = [c_dir / "core.c"]
         rust_mutate_sources = [rust_dir / "core.rs"]
         go_mutate_sources = [go_dir / "core.go"]
 
@@ -430,12 +357,6 @@ def generate_compile_project_10_files(
             "binary": apex_dir / bench_name,
             "mutate_source": apex_mutate_sources[0],
             "mutate_sources": apex_mutate_sources,
-        },
-        "c": {
-            "project_dir": c_dir,
-            "binary": c_dir / f"{bench_name}_c",
-            "mutate_source": c_mutate_sources[0],
-            "mutate_sources": c_mutate_sources,
         },
         "rust": {
             "project_dir": rust_dir,
@@ -506,8 +427,6 @@ def generate_compile_project_synthetic_mega_graph(
     apex_dir = generated_root / "apex"
     apex_src = apex_dir / "src"
     apex_src.mkdir(parents=True, exist_ok=True)
-    c_dir = generated_root / "c"
-    c_dir.mkdir(parents=True, exist_ok=True)
     rust_dir = generated_root / "rust"
     rust_dir.mkdir(parents=True, exist_ok=True)
     go_dir = generated_root / "go"
@@ -515,11 +434,9 @@ def generate_compile_project_synthetic_mega_graph(
 
     apex_files = ["src/core.apex"]
     apex_part_files: List[Path] = []
-    c_part_files: List[Path] = []
     rust_part_files: List[Path] = []
     go_part_files: List[Path] = []
     apex_group_plans: List[Dict] = []
-    c_group_plans: List[Dict] = []
     rust_group_plans: List[Dict] = []
     go_group_plans: List[Dict] = []
 
@@ -532,35 +449,6 @@ def generate_compile_project_synthetic_mega_graph(
                 "}",
                 "",
                 "function core_fold(a: Integer, b: Integer, salt: Integer): Integer {",
-                "    return a + b + salt;",
-                "}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (c_dir / "core.h").write_text(
-        "\n".join(
-            [
-                "#ifndef CORE_H",
-                "#define CORE_H",
-                "#include <stdint.h>",
-                "int64_t core_mix(int64_t x, int64_t k);",
-                "int64_t core_fold(int64_t a, int64_t b, int64_t salt);",
-                "#endif",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (c_dir / "core.c").write_text(
-        "\n".join(
-            [
-                "#include <stdint.h>",
-                "int64_t core_mix(int64_t x, int64_t k) {",
-                "    return x + k;",
-                "}",
-                "int64_t core_fold(int64_t a, int64_t b, int64_t salt) {",
                 "    return a + b + salt;",
                 "}",
                 "",
@@ -620,37 +508,6 @@ def generate_compile_project_synthetic_mega_graph(
         )
         apex_files.append(f"src/{group_name}.apex")
 
-        c_group_header = c_dir / f"{group_name}.h"
-        c_group_header.write_text(
-            "\n".join(
-                [
-                    f"#ifndef {group_name.upper()}_H",
-                    f"#define {group_name.upper()}_H",
-                    "#include <stdint.h>",
-                    f"int64_t {group_name}_bridge(int64_t x, int64_t salt);",
-                    "#endif",
-                    "",
-                ]
-            ),
-            encoding="utf-8",
-        )
-        c_group_file = c_dir / f"{group_name}.c"
-        c_group_file.write_text(
-            "\n".join(
-                [
-                    "#include <stdint.h>",
-                    '#include "core.h"',
-                    f'#include "{group_name}.h"',
-                    f"// MUTATION_SURFACE_{group_name.upper()}",
-                    f"int64_t {group_name}_bridge(int64_t x, int64_t salt) {{",
-                    f"    return core_fold(x, salt, {group_salt});",
-                    "}",
-                    "",
-                ]
-            ),
-            encoding="utf-8",
-        )
-
         rust_group_file = rust_dir / f"{group_name}.rs"
         rust_group_file.write_text(
             "\n".join(
@@ -683,9 +540,6 @@ def generate_compile_project_synthetic_mega_graph(
 
         apex_group_plans.append(
             {"group_name": group_name, "group_index": group_idx, "call_salt": group_salt, "surface_files": [apex_group_file], "caller_files": []}
-        )
-        c_group_plans.append(
-            {"group_name": group_name, "group_index": group_idx, "call_salt": group_salt, "surface_files": [c_group_header, c_group_file], "caller_files": []}
         )
         rust_group_plans.append(
             {"group_name": group_name, "group_index": group_idx, "call_salt": group_salt, "surface_files": [rust_group_file], "caller_files": []}
@@ -737,58 +591,6 @@ def generate_compile_project_synthetic_mega_graph(
             apex_lines.append(f"    y = core_fold(y, {dep_part}_apply(seed), {i + dep + 97});")
         apex_lines.extend(["    return y;", "}"])
         apex_part_file.write_text("\n".join(apex_lines) + "\n", encoding="utf-8")
-
-        c_part_file = c_dir / f"{part}.c"
-        c_part_files.append(c_part_file)
-        c_group_plans[group_idx]["caller_files"].append(c_part_file)
-        (c_dir / f"{part}.h").write_text(
-            "\n".join(
-                [
-                    f"#ifndef {part.upper()}_H",
-                    f"#define {part.upper()}_H",
-                    "#include <stdint.h>",
-                    f"int64_t {part}_apply(int64_t x);",
-                    f"int64_t {part}_chain(int64_t x);",
-                    f"int64_t {part}_wire(int64_t x);",
-                    "#endif",
-                    "",
-                ]
-            ),
-            encoding="utf-8",
-        )
-        c_lines = ["#include <stdint.h>", '#include "core.h"', f'#include "{part}.h"', f'#include "{group_name}.h"']
-        for dep in deps:
-            c_lines.append(f'#include "{part_names[dep]}.h"')
-        for j in range(funcs_per_file):
-            c_lines.append(f"int64_t {part}_f{j:03d}(int64_t x) {{ return core_mix(x, {i + j + 1}); }}")
-        c_lines.extend([f"int64_t {part}_apply(int64_t x) {{", "    int64_t y = x;"])
-        for j in range(funcs_per_file):
-            c_lines.append(f"    y = {part}_f{j:03d}(y);")
-        c_lines.append(f"    y = {group_name}_bridge(y, {group_salt}); // MUTATION_CALL_{group_name.upper()}")
-        c_lines.extend(["    return y;", "}"])
-        c_lines.extend(["", f"int64_t {part}_chain(int64_t x) {{", f"    int64_t y = {part}_apply(x);"])
-        for j in range(0, funcs_per_file, 3):
-            c_lines.append(f"    y = {part}_f{j:03d}(y);")
-        c_lines.extend(["    return y;", "}"])
-        c_lines.extend(["", f"int64_t {part}_wire(int64_t x) {{", f"    int64_t y = {part}_chain(x);"])
-        for dep in deps:
-            dep_part = part_names[dep]
-            c_lines.append(f"    y = core_fold(y, {dep_part}_apply(x), {i + dep + 1});")
-        for dep in deps:
-            dep_part = part_names[dep]
-            c_lines.append(f"    y = core_fold(y, {dep_part}_wire(x), {i + dep + 33});")
-        c_lines.extend(["    return y;", "}"])
-        c_lines.extend(["", f"int64_t {part}_fanout(int64_t x) {{", f"    int64_t y = {part}_wire(x);"])
-        for dep in deps:
-            dep_part = part_names[dep]
-            c_lines.append(f"    y = core_fold(y, {dep_part}_chain(x), {i + dep + 65});")
-        c_lines.extend(["    return y;", "}"])
-        c_lines.extend(["", f"int64_t {part}_signature(int64_t seed) {{", f"    int64_t y = {part}_fanout(seed);"])
-        for dep in deps:
-            dep_part = part_names[dep]
-            c_lines.append(f"    y = core_fold(y, {dep_part}_apply(seed), {i + dep + 97});")
-        c_lines.extend(["    return y;", "}"])
-        c_part_file.write_text("\n".join(c_lines) + "\n", encoding="utf-8")
 
         rust_part_file = rust_dir / f"{part}.rs"
         rust_part_files.append(rust_part_file)
@@ -876,15 +678,6 @@ def generate_compile_project_synthetic_mega_graph(
     toml_lines.extend(["]", f'output = "{bench_name}"', 'opt_level = "3"'])
     (apex_dir / "apex.toml").write_text("\n".join(toml_lines) + "\n", encoding="utf-8")
 
-    main_c = ["#include <stdint.h>", "#include <stdio.h>"]
-    for part in part_names:
-        main_c.append(f"int64_t {part}_apply(int64_t x);")
-    main_c.extend(["int main(void) {", "    int64_t acc = 0;"])
-    for part in part_names:
-        main_c.append(f"    acc = {part}_apply(acc);")
-    main_c.extend(['    printf("%lld\\n", (long long)acc);', "    return 0;", "}"])
-    (c_dir / "main.c").write_text("\n".join(main_c) + "\n", encoding="utf-8")
-
     rust_main = ["mod core;"]
     for group_name in group_names:
         rust_main.append(f"mod {group_name};")
@@ -903,7 +696,6 @@ def generate_compile_project_synthetic_mega_graph(
     (go_dir / "main.go").write_text("\n".join(go_main) + "\n", encoding="utf-8")
 
     apex_mutate_sources = pick_mutation_targets(apex_part_files, mutate_count, "batch_spread")
-    c_mutate_sources = pick_mutation_targets(c_part_files, mutate_count, "batch_spread")
     rust_mutate_sources = pick_mutation_targets(rust_part_files, mutate_count, "batch_spread")
     go_mutate_sources = pick_mutation_targets(go_part_files, mutate_count, "batch_spread")
 
@@ -925,14 +717,6 @@ def generate_compile_project_synthetic_mega_graph(
             "mutate_sources": apex_mutate_sources,
             "mixed_leaf_sources": pick_mutation_targets(apex_part_files, SYNTHETIC_MEGA_GRAPH_MIXED_LEAF_EDITS, "batch_spread"),
             "mixed_groups": spread_group_plans(apex_group_plans, SYNTHETIC_MEGA_GRAPH_MIXED_GROUP_EDITS),
-        },
-        "c": {
-            "project_dir": c_dir,
-            "binary": c_dir / f"{bench_name}_c",
-            "mutate_source": c_mutate_sources[0],
-            "mutate_sources": c_mutate_sources,
-            "mixed_leaf_sources": pick_mutation_targets(c_part_files, SYNTHETIC_MEGA_GRAPH_MIXED_LEAF_EDITS, "batch_spread"),
-            "mixed_groups": spread_group_plans(c_group_plans, SYNTHETIC_MEGA_GRAPH_MIXED_GROUP_EDITS),
         },
         "rust": {
             "project_dir": rust_dir,
@@ -957,7 +741,6 @@ def make_compile_jobs(
     root: Path,
     compile_projects: Dict[str, Dict[str, Path]],
     build_env: Dict[str, str],
-    c_compiler: str,
 ) -> Dict[str, Dict]:
     compiler = root / "target" / "release" / "apex-compiler"
     return {
@@ -970,27 +753,6 @@ def make_compile_jobs(
             "mutate_sources": compile_projects["apex"].get("mutate_sources", []),
             "mixed_leaf_sources": compile_projects["apex"].get("mixed_leaf_sources", []),
             "mixed_groups": compile_projects["apex"].get("mixed_groups", []),
-        },
-        "c": {
-            "cmd": [
-                c_compiler,
-                "-O3",
-                "-march=native",
-                "-std=c11",
-                *[
-                    str(path)
-                    for path in sorted(compile_projects["c"]["project_dir"].glob("*.c"))
-                ],
-                "-o",
-                str(compile_projects["c"]["binary"]),
-            ],
-            "cwd": compile_projects["c"]["project_dir"],
-            "env": None,
-            "binary": exe_path(compile_projects["c"]["binary"]),
-            "mutate_source": compile_projects["c"]["mutate_source"],
-            "mutate_sources": compile_projects["c"].get("mutate_sources", []),
-            "mixed_leaf_sources": compile_projects["c"].get("mixed_leaf_sources", []),
-            "mixed_groups": compile_projects["c"].get("mixed_groups", []),
         },
         "rust": {
             "cmd": [
@@ -1038,9 +800,7 @@ def make_compile_jobs(
 def apply_incremental_source_change(lang: str, source: Path, marker: str) -> None:
     if not source.exists():
         raise RuntimeError(f"Missing source to mutate: {source}")
-    prefix = "//" if lang in ("apex", "rust", "go") else "/*"
-    suffix = "" if lang in ("apex", "rust", "go") else " */"
-    line = f"\n{prefix} incremental bench mutation {marker}{suffix}\n"
+    line = f"\n// incremental bench mutation {marker}\n"
     with source.open("a", encoding="utf-8") as f:
         f.write(line)
 
@@ -1074,24 +834,6 @@ def apply_mixed_invalidation_changes(lang: str, job: Dict, marker: str) -> None:
             )
             replace_once(
                 Path(group["surface_files"][0]),
-                f"    return core_fold(x, salt, {salt});",
-                f"    return core_fold(x, salt + extra, {salt});",
-            )
-            old_call = f"    y = {group_name}_bridge(y, {salt}); // MUTATION_CALL_{group_name.upper()}"
-            new_call = f"    y = {group_name}_bridge(y, {salt}, {extra}); // MUTATION_CALL_{group_name.upper()}"
-        elif lang == "c":
-            replace_once(
-                Path(group["surface_files"][0]),
-                f"int64_t {group_name}_bridge(int64_t x, int64_t salt);",
-                f"int64_t {group_name}_bridge(int64_t x, int64_t salt, int64_t extra);",
-            )
-            replace_once(
-                Path(group["surface_files"][1]),
-                f"int64_t {group_name}_bridge(int64_t x, int64_t salt) {{",
-                f"int64_t {group_name}_bridge(int64_t x, int64_t salt, int64_t extra) {{",
-            )
-            replace_once(
-                Path(group["surface_files"][1]),
                 f"    return core_fold(x, salt, {salt});",
                 f"    return core_fold(x, salt + extra, {salt});",
             )
@@ -1188,7 +930,6 @@ def build_markdown(result: Dict) -> str:
     lines.append(f"- Warmup runs: `{result['warmup']}`")
     lines.append(f"- Apex opt level: `{result.get('apex_opt_level', 'n/a')}`")
     lines.append(f"- Apex target: `{result.get('apex_target') or 'native/default'}`")
-    lines.append(f"- C compiler: `{result.get('c_compiler', 'n/a')}`")
     lines.append(f"- Compile mode: `{result.get('compile_mode', 'n/a')}`")
     lines.append("")
 
@@ -1265,7 +1006,7 @@ def detect_llvm_prefix() -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run Apex vs C vs Rust benchmarks")
+    parser = argparse.ArgumentParser(description="Run Apex vs Rust vs Go benchmarks")
     parser.add_argument("--repeats", type=int, default=5, help="Timed runs per benchmark/language")
     parser.add_argument("--warmup", type=int, default=1, help="Warmup runs per benchmark/language")
     parser.add_argument(
@@ -1311,8 +1052,6 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     ensure_tool("python3")
-    c_compiler = pick_c_compiler()
-    ensure_tool(c_compiler)
     ensure_tool("rustc")
     ensure_tool("go")
     ensure_tool("cargo")
@@ -1356,7 +1095,6 @@ def main() -> int:
         "warmup": args.warmup,
         "apex_opt_level": args.apex_opt_level,
         "apex_target": args.apex_target,
-        "c_compiler": c_compiler,
         "compile_mode": "mixed" if args.bench is None else args.compile_mode,
         "benchmarks": [],
     }
@@ -1369,7 +1107,6 @@ def main() -> int:
         if spec.kind == "runtime":
             binaries = {
                 "apex": exe_path(bin_dir / f"{spec.name}_apex"),
-                "c": exe_path(bin_dir / f"{spec.name}_c"),
                 "rust": exe_path(bin_dir / f"{spec.name}_rust"),
                 "go": exe_path(bin_dir / f"{spec.name}_go"),
             }
@@ -1382,7 +1119,6 @@ def main() -> int:
                 args.apex_opt_level,
                 args.apex_target,
             )
-            compile_c(root, spec.name, binaries["c"], c_compiler)
             compile_rust(root, spec.name, binaries["rust"])
             compile_go(root, spec.name, binaries["go"])
 
@@ -1432,7 +1168,7 @@ def main() -> int:
                 compile_projects = generate_compile_project_synthetic_mega_graph(root, base_name)
             else:
                 compile_projects = generate_compile_project_10_files(root, base_name)
-            compile_jobs = make_compile_jobs(root, compile_projects, build_env, c_compiler)
+            compile_jobs = make_compile_jobs(root, compile_projects, build_env)
 
             for lang in LANGUAGES:
                 print(f"Compiling {lang}...")
@@ -1482,7 +1218,7 @@ def main() -> int:
                     cycle_projects = generate_compile_project_10_files(
                         root, spec.name, mutation_profile=mutation_profile
                     )
-                    cycle_jobs = make_compile_jobs(root, cycle_projects, build_env, c_compiler)
+                    cycle_jobs = make_compile_jobs(root, cycle_projects, build_env)
                     job = cycle_jobs[lang]
 
                     if benchmark_compile_mode == "cold":
@@ -1541,7 +1277,7 @@ def main() -> int:
                     cycle_projects = generate_incremental_rebuild_mega_project_10_files(
                         root, spec.name
                     )
-                    cycle_jobs = make_compile_jobs(root, cycle_projects, build_env, c_compiler)
+                    cycle_jobs = make_compile_jobs(root, cycle_projects, build_env)
                     job = cycle_jobs[lang]
 
                     clean_compile_artifacts(lang, job)
@@ -1600,7 +1336,7 @@ def main() -> int:
                     cycle_projects = generate_compile_project_synthetic_mega_graph(
                         root, spec.name, mutate_count=SYNTHETIC_MEGA_GRAPH_MUTATE_COUNT
                     )
-                    cycle_jobs = make_compile_jobs(root, cycle_projects, build_env, c_compiler)
+                    cycle_jobs = make_compile_jobs(root, cycle_projects, build_env)
                     job = cycle_jobs[lang]
 
                     clean_compile_artifacts(lang, job)
@@ -1659,7 +1395,7 @@ def main() -> int:
                     cycle_projects = generate_compile_project_synthetic_mega_graph(
                         root, spec.name, mutate_count=SYNTHETIC_MEGA_GRAPH_MUTATE_COUNT
                     )
-                    cycle_jobs = make_compile_jobs(root, cycle_projects, build_env, c_compiler)
+                    cycle_jobs = make_compile_jobs(root, cycle_projects, build_env)
                     job = cycle_jobs[lang]
 
                     clean_compile_artifacts(lang, job)

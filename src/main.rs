@@ -278,12 +278,6 @@ fn stable_hasher() -> XxHash64 {
     XxHash64::with_seed(0)
 }
 
-fn decode_cache_blob<T: DeserializeOwned>(blob: &[u8]) -> Option<T> {
-    bincode::deserialize(blob)
-        .ok()
-        .or_else(|| serde_json::from_slice(blob).ok())
-}
-
 fn read_cache_blob<T: DeserializeOwned>(path: &Path, label: &str) -> Result<Option<T>, String> {
     if !path.exists() {
         return Ok(None);
@@ -298,7 +292,7 @@ fn read_cache_blob<T: DeserializeOwned>(path: &Path, label: &str) -> Result<Opti
             e
         )
     })?;
-    Ok(decode_cache_blob(&raw))
+    Ok(bincode::deserialize(&raw).ok())
 }
 
 fn write_cache_blob<T: Serialize>(path: &Path, label: &str, value: &T) -> Result<(), String> {

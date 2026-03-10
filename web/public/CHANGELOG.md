@@ -28,7 +28,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed Windows CLI smoke coverage by running the canonical `scripts/ci_cli_smoke.sh` through a Windows PowerShell wrapper instead of maintaining a reduced forked smoke script.
 - Fixed the Windows smoke wrapper to normalize paths for Git Bash, `chmod +x` the downloaded compiler/script pair, and return the underlying bash exit code instead of failing opaquely in PowerShell.
 - Fixed Apex CLI wording by tightening help text, command descriptions, scaffold output, and runtime status messages across `new`, `build`, `run`, `check`, `fmt`, `lint`, `fix`, `test`, `bindgen`, `bench`, and `profile`.
-- Changed internal compiler caches from JSON-first parsing to bincode with transparent JSON fallback, cutting cache decode overhead without breaking existing `.apexcache` data.
+- Fixed the benchmark suite scope so it now compares Apex only against Rust and Go; legacy C runner paths, generated projects, canned results, and fixture references were removed.
+- Changed internal compiler caches from JSON to bincode-only blobs, dropping legacy fallback parsing in favor of lower cache decode overhead.
 - Changed object emission to reuse thread-local LLVM `TargetMachine` instances and emit object bytes from an in-memory buffer before persisting cache objects.
 - Changed dependency graph rebuilds to reuse unchanged per-file entries from the previous cache instead of recomputing the whole graph every run.
 
@@ -89,7 +90,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     - 40-file edit batches in the synthetic mega-graph rebuild benchmark instead of 25
   - Synthetic mega-graph workloads now include active group bridge modules, enabling a more realistic mixed invalidation benchmark that changes shared API surface and rewrites dependent callers instead of only appending syntax-only edits.
   - `python3 benchmark/run.py` now includes both `compile_project_10_files_hot` and `compile_project_10_files_cold` plus incremental rebuild output in one report by default.
-  - Benchmark runner now normalizes executable path handling for Windows (`.exe`) and supports C compiler auto-detection (`CC`/`clang`/`gcc`).
+  - Benchmark runner now normalizes executable path handling for Windows (`.exe`).
 - New language coverage examples:
   - `examples/35_visibility_enforcement.apex`
   - `examples/36_inheritance_extends.apex`

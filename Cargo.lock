@@ -69,7 +69,6 @@ dependencies = [
  "logos",
  "rayon",
  "serde",
- "serde_json",
  "tokio",
  "toml",
  "tower-lsp",

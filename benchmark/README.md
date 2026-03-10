@@ -1,6 +1,6 @@
 # Apex Production Benchmark Suite
 
-This directory contains a structured benchmark suite that compares Apex against C, Rust, and Go on the same workloads.
+This directory contains a structured benchmark suite that compares Apex against Rust and Go on the same workloads.
 
 ## Goals
 
@@ -27,7 +27,6 @@ This directory contains a structured benchmark suite that compares Apex against 
 ```text
 benchmark/
   apex/         # Apex implementations
-  c/            # C implementations
   rust/         # Rust implementations
   go/           # Go implementations
   bin/          # Compiled binaries (generated)
@@ -40,7 +39,6 @@ benchmark/
 
 - Linux/macOS/Windows shell environment.
 - `python3`
-- `clang` (for C)
 - `rustc` (for Rust)
 - `go` (for Go)
 - `mold` for Linux Apex project builds, or LLVM `lld` on macOS/Windows
