@@ -526,6 +526,20 @@ struct SemanticSummaryFileEntry {
     class_names: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TypecheckSummaryCache {
+    schema: String,
+    compiler_version: String,
+    files: Vec<TypecheckSummaryFileEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TypecheckSummaryFileEntry {
+    file: PathBuf,
+    semantic_fingerprint: String,
+    component_fingerprint: String,
+}
+
 fn parsed_file_cache_path(project_root: &Path, file: &Path) -> PathBuf {
     let mut hasher = stable_hasher();
     file.hash(&mut hasher);
@@ -696,27 +710,6 @@ fn codegen_program_for_unit(
             declaration_symbols
                 .map(|symbols| filter_codegen_program_by_symbols(&unit.api_program, symbols))
                 .unwrap_or_else(|| unit.api_program.clone())
-        };
-        program.declarations.extend(source_program.declarations);
-    }
-
-    program
-}
-
-fn semantic_program_for_files(
-    rewritten_files: &[RewrittenProjectUnit],
-    full_files: &HashSet<PathBuf>,
-) -> Program {
-    let mut program = Program {
-        package: None,
-        declarations: Vec::new(),
-    };
-
-    for unit in rewritten_files {
-        let source_program = if full_files.contains(&unit.file) {
-            unit.program.clone()
-        } else {
-            unit.api_program.clone()
         };
         program.declarations.extend(source_program.declarations);
     }
@@ -924,8 +917,9 @@ fn save_parsed_file_cache(
 }
 
 const IMPORT_CHECK_CACHE_SCHEMA: &str = "v1";
-const DEPENDENCY_GRAPH_CACHE_SCHEMA: &str = "v1";
+const DEPENDENCY_GRAPH_CACHE_SCHEMA: &str = "v2";
 const SEMANTIC_SUMMARY_CACHE_SCHEMA: &str = "v1";
+const TYPECHECK_SUMMARY_CACHE_SCHEMA: &str = "v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ImportCheckCacheEntry {
@@ -1071,6 +1065,48 @@ fn save_semantic_summary_cache(
     }
 
     write_cache_blob(&path, "semantic summary cache", cache)
+}
+
+fn typecheck_summary_cache_path(project_root: &Path) -> PathBuf {
+    project_root
+        .join(".apexcache")
+        .join("typecheck_summary")
+        .join("latest.json")
+}
+
+fn load_typecheck_summary_cache(
+    project_root: &Path,
+) -> Result<Option<TypecheckSummaryCache>, String> {
+    let path = typecheck_summary_cache_path(project_root);
+    let cache: TypecheckSummaryCache = match read_cache_blob(&path, "typecheck summary cache")? {
+        Some(cache) => cache,
+        None => return Ok(None),
+    };
+    if cache.schema != TYPECHECK_SUMMARY_CACHE_SCHEMA
+        || cache.compiler_version != env!("CARGO_PKG_VERSION")
+    {
+        return Ok(None);
+    }
+    Ok(Some(cache))
+}
+
+fn save_typecheck_summary_cache(
+    project_root: &Path,
+    cache: &TypecheckSummaryCache,
+) -> Result<(), String> {
+    let path = typecheck_summary_cache_path(project_root);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "{}: Failed to create typecheck summary cache directory '{}': {}",
+                "error".red().bold(),
+                parent.display(),
+                e
+            )
+        })?;
+    }
+
+    write_cache_blob(&path, "typecheck summary cache", cache)
 }
 
 const REWRITE_CACHE_SCHEMA: &str = "v2";
@@ -1384,6 +1420,10 @@ fn build_file_dependency_graph_incremental(
     ctx: &DependencyResolutionContext<'_>,
     previous: Option<&DependencyGraphCache>,
 ) -> (HashMap<PathBuf, HashSet<PathBuf>>, usize) {
+    let current_api_fingerprints: HashMap<&PathBuf, &str> = parsed_files
+        .iter()
+        .map(|unit| (&unit.file, unit.api_fingerprint.as_str()))
+        .collect();
     let previous_entries = previous
         .map(|cache| {
             cache
@@ -1393,14 +1433,54 @@ fn build_file_dependency_graph_incremental(
                 .collect::<HashMap<_, _>>()
         })
         .unwrap_or_default();
+    let previous_reverse_graph = previous
+        .map(|cache| {
+            let mut reverse: HashMap<&PathBuf, HashSet<&PathBuf>> = HashMap::new();
+            for entry in &cache.files {
+                reverse.entry(&entry.file).or_default();
+                for dep in &entry.direct_dependencies {
+                    reverse.entry(dep).or_default().insert(&entry.file);
+                }
+            }
+            reverse
+        })
+        .unwrap_or_default();
 
     let mut graph = HashMap::new();
     let mut reused = 0usize;
 
     for unit in parsed_files {
         let deps = if let Some(previous_entry) = previous_entries.get(&unit.file) {
+            let direct_dependency_api_changed =
+                previous_entry.direct_dependencies.iter().any(|dep| {
+                    previous_entries
+                        .get(dep)
+                        .and_then(|previous_dep| {
+                            current_api_fingerprints
+                                .get(dep)
+                                .map(|current| previous_dep.api_fingerprint != *current)
+                        })
+                        .unwrap_or(true)
+                });
+            let direct_dependent_api_changed = previous_reverse_graph
+                .get(&unit.file)
+                .into_iter()
+                .flatten()
+                .any(|dependent| {
+                    previous_entries
+                        .get(dependent)
+                        .and_then(|previous_dependent| {
+                            current_api_fingerprints
+                                .get(dependent)
+                                .map(|current| previous_dependent.api_fingerprint != *current)
+                        })
+                        .unwrap_or(true)
+                });
+
             if previous_entry.semantic_fingerprint == unit.semantic_fingerprint
                 && previous_entry.api_fingerprint == unit.api_fingerprint
+                && !direct_dependency_api_changed
+                && !direct_dependent_api_changed
             {
                 reused += 1;
                 previous_entry
@@ -1418,6 +1498,47 @@ fn build_file_dependency_graph_incremental(
     }
 
     (graph, reused)
+}
+
+fn semantic_check_components(
+    parsed_files: &[ParsedProjectUnit],
+    forward_graph: &HashMap<PathBuf, HashSet<PathBuf>>,
+) -> Vec<Vec<PathBuf>> {
+    let reverse_graph = build_reverse_dependency_graph(forward_graph);
+    let mut remaining: HashSet<PathBuf> =
+        parsed_files.iter().map(|unit| unit.file.clone()).collect();
+    let mut components = Vec::new();
+
+    while let Some(start) = remaining.iter().next().cloned() {
+        let mut component = Vec::new();
+        let mut stack = vec![start.clone()];
+        remaining.remove(&start);
+
+        while let Some(file) = stack.pop() {
+            component.push(file.clone());
+
+            if let Some(next) = forward_graph.get(&file) {
+                for dep in next {
+                    if remaining.remove(dep) {
+                        stack.push(dep.clone());
+                    }
+                }
+            }
+            if let Some(next) = reverse_graph.get(&file) {
+                for dep in next {
+                    if remaining.remove(dep) {
+                        stack.push(dep.clone());
+                    }
+                }
+            }
+        }
+
+        component.sort();
+        components.push(component);
+    }
+
+    components.sort_by(|a, b| a.first().cmp(&b.first()));
+    components
 }
 
 fn build_reverse_dependency_graph(
@@ -1536,6 +1657,125 @@ fn semantic_summary_cache_from_state(
         class_method_effects,
         class_mutating_methods,
     }
+}
+
+fn component_fingerprint(
+    component_files: &[PathBuf],
+    current_fingerprints: &HashMap<PathBuf, String>,
+) -> String {
+    let mut hasher = stable_hasher();
+    for file in component_files {
+        file.hash(&mut hasher);
+        if let Some(fingerprint) = current_fingerprints.get(file) {
+            fingerprint.hash(&mut hasher);
+        }
+    }
+    format!("{:016x}", hasher.finish())
+}
+
+fn typecheck_summary_cache_from_state(
+    current_fingerprints: &HashMap<PathBuf, String>,
+    components: &[Vec<PathBuf>],
+) -> TypecheckSummaryCache {
+    let mut files = Vec::new();
+    for component in components {
+        let component_fingerprint = component_fingerprint(component, current_fingerprints);
+        for file in component {
+            if let Some(semantic_fingerprint) = current_fingerprints.get(file) {
+                files.push(TypecheckSummaryFileEntry {
+                    file: file.clone(),
+                    semantic_fingerprint: semantic_fingerprint.clone(),
+                    component_fingerprint: component_fingerprint.clone(),
+                });
+            }
+        }
+    }
+    files.sort_by(|a, b| a.file.cmp(&b.file));
+
+    TypecheckSummaryCache {
+        schema: TYPECHECK_SUMMARY_CACHE_SCHEMA.to_string(),
+        compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+        files,
+    }
+}
+
+fn typecheck_summary_cache_matches(
+    cache: &TypecheckSummaryCache,
+    current_fingerprints: &HashMap<PathBuf, String>,
+    components: &[Vec<PathBuf>],
+) -> bool {
+    let cached_entries: HashMap<&PathBuf, &TypecheckSummaryFileEntry> = cache
+        .files
+        .iter()
+        .map(|entry| (&entry.file, entry))
+        .collect();
+
+    if cached_entries.len() != current_fingerprints.len() {
+        return false;
+    }
+
+    for component in components {
+        let current_component_fingerprint = component_fingerprint(component, current_fingerprints);
+        for file in component {
+            let Some(entry) = cached_entries.get(file) else {
+                return false;
+            };
+            let Some(current_semantic_fingerprint) = current_fingerprints.get(file) else {
+                return false;
+            };
+            if entry.semantic_fingerprint != *current_semantic_fingerprint
+                || entry.component_fingerprint != current_component_fingerprint
+            {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+fn semantic_program_for_component(
+    rewritten_files: &[RewrittenProjectUnit],
+    component_files: &HashSet<PathBuf>,
+    full_files: &HashSet<PathBuf>,
+) -> Program {
+    let mut program = Program {
+        package: None,
+        declarations: Vec::new(),
+    };
+
+    for unit in rewritten_files {
+        if !component_files.contains(&unit.file) {
+            continue;
+        }
+        let source_program = if full_files.contains(&unit.file) {
+            unit.program.clone()
+        } else {
+            unit.api_program.clone()
+        };
+        program.declarations.extend(source_program.declarations);
+    }
+
+    program
+}
+
+fn render_type_errors(errors: Vec<typeck::TypeError>) -> String {
+    let mut rendered = String::new();
+    for error in errors {
+        rendered.push_str(&format!("\x1b[1;31merror\x1b[0m: {}\n", error.message));
+    }
+    rendered
+}
+
+fn render_borrow_errors(errors: Vec<borrowck::BorrowError>) -> String {
+    let mut rendered = String::new();
+    for error in errors {
+        rendered.push_str(&format!(
+            "\x1b[1;31merror[E0505]\x1b[0m: {}\n",
+            error.message
+        ));
+    }
+    rendered
 }
 
 fn semantic_seed_data_from_cache(
@@ -2773,6 +3013,7 @@ fn build_project(
     }
 
     let previous_semantic_summary = load_semantic_summary_cache(&project_root)?;
+    let previous_typecheck_summary = load_typecheck_summary_cache(&project_root)?;
     let mut body_only_changed = HashSet::new();
     let mut api_changed = HashSet::new();
     let mut dependent_api_impact = HashSet::new();
@@ -3086,14 +3327,41 @@ fn build_project(
                 semantic_full_files.extend(parsed_files.iter().map(|u| u.file.clone()));
             }
         }
-
-        let semantic_program = semantic_program_for_files(&rewritten_files, &semantic_full_files);
         let current_semantic_fingerprints: HashMap<PathBuf, String> = parsed_files
             .iter()
             .map(|unit| (unit.file.clone(), unit.semantic_fingerprint.clone()))
             .collect();
-        let (seeded_function_effects, seeded_class_method_effects, seeded_class_mutating_methods) =
-            previous_semantic_summary
+        let semantic_components = semantic_check_components(&parsed_files, &file_dependency_graph);
+        let reusable_typecheck_cache = previous_semantic_summary
+            .as_ref()
+            .zip(previous_typecheck_summary.as_ref())
+            .is_some_and(|(_, cache)| {
+                body_only_changed.is_empty()
+                    && api_changed.is_empty()
+                    && dependent_api_impact.is_empty()
+                    && typecheck_summary_cache_matches(
+                        cache,
+                        &current_semantic_fingerprints,
+                        &semantic_components,
+                    )
+            });
+
+        if reusable_typecheck_cache {
+            println!(
+                "{} Reused typecheck/borrowck cache for {}/{} files",
+                "→".cyan(),
+                current_semantic_fingerprints.len(),
+                parsed_files.len()
+            );
+        } else {
+            let seeded_function_effects;
+            let seeded_class_method_effects;
+            let seeded_class_mutating_methods;
+            (
+                seeded_function_effects,
+                seeded_class_method_effects,
+                seeded_class_mutating_methods,
+            ) = previous_semantic_summary
                 .as_ref()
                 .map(|cache| {
                     semantic_seed_data_from_cache(
@@ -3104,52 +3372,104 @@ fn build_project(
                 })
                 .unwrap_or_else(|| (HashMap::new(), HashMap::new(), HashMap::new()));
 
-        if semantic_full_files.len() < parsed_files.len() {
-            println!(
-                "{} Semantic delta: checking {}/{} files with full bodies",
-                "→".cyan(),
-                semantic_full_files.len(),
-                parsed_files.len()
-            );
-        }
-
-        let mut type_checker = TypeChecker::new(String::new());
-        if let Err(errors) = type_checker.check_with_effect_seeds(
-            &semantic_program,
-            &seeded_function_effects,
-            &seeded_class_method_effects,
-        ) {
-            let mut rendered = String::new();
-            for error in errors {
-                rendered.push_str(&format!("\x1b[1;31merror\x1b[0m: {}\n", error.message));
+            if semantic_full_files.len() < parsed_files.len() {
+                println!(
+                    "{} Semantic delta: checking {}/{} files with full bodies",
+                    "→".cyan(),
+                    semantic_full_files.len(),
+                    parsed_files.len()
+                );
             }
-            return Err(rendered);
-        }
-
-        let mut borrow_checker = BorrowChecker::new();
-        if let Err(errors) = borrow_checker
-            .check_with_mutating_method_seeds(&semantic_program, &seeded_class_mutating_methods)
-        {
-            let mut rendered = String::new();
-            for error in errors {
-                rendered.push_str(&format!(
-                    "\x1b[1;31merror[E0505]\x1b[0m: {}\n",
-                    error.message
-                ));
+            if semantic_components.len() > 1 {
+                println!(
+                    "{} Parallel semantic check across {} independent components",
+                    "→".cyan(),
+                    semantic_components.len()
+                );
             }
-            return Err(rendered);
-        }
-        let (function_effects, class_method_effects) = type_checker.export_effect_summary();
 
-        save_semantic_summary_cache(
-            &project_root,
-            &semantic_summary_cache_from_state(
-                &parsed_files,
-                function_effects,
-                class_method_effects,
-                borrow_checker.export_class_mutating_method_summary(),
-            ),
-        )?;
+            struct ComponentSemanticCheckResult {
+                function_effects: FunctionEffectsSummary,
+                class_method_effects: ClassMethodEffectsSummary,
+                class_mutating_methods: HashMap<String, HashSet<String>>,
+            }
+
+            let semantic_results: Vec<Result<ComponentSemanticCheckResult, String>> =
+                semantic_components
+                    .par_iter()
+                    .map(|component| {
+                        let component_files: HashSet<PathBuf> = component.iter().cloned().collect();
+                        let semantic_program = semantic_program_for_component(
+                            &rewritten_files,
+                            &component_files,
+                            &semantic_full_files,
+                        );
+
+                        let mut type_checker = TypeChecker::new(String::new());
+                        if let Err(errors) = type_checker.check_with_effect_seeds(
+                            &semantic_program,
+                            &seeded_function_effects,
+                            &seeded_class_method_effects,
+                        ) {
+                            return Err(render_type_errors(errors));
+                        }
+
+                        let mut borrow_checker = BorrowChecker::new();
+                        if let Err(errors) = borrow_checker.check_with_mutating_method_seeds(
+                            &semantic_program,
+                            &seeded_class_mutating_methods,
+                        ) {
+                            return Err(render_borrow_errors(errors));
+                        }
+
+                        let (function_effects, class_method_effects) =
+                            type_checker.export_effect_summary();
+                        Ok(ComponentSemanticCheckResult {
+                            function_effects,
+                            class_method_effects,
+                            class_mutating_methods: borrow_checker
+                                .export_class_mutating_method_summary(),
+                        })
+                    })
+                    .collect();
+
+            let mut rendered_errors = String::new();
+            let mut function_effects = HashMap::new();
+            let mut class_method_effects = HashMap::new();
+            let mut class_mutating_methods = HashMap::new();
+
+            for result in semantic_results {
+                match result {
+                    Ok(component) => {
+                        function_effects.extend(component.function_effects);
+                        class_method_effects.extend(component.class_method_effects);
+                        class_mutating_methods.extend(component.class_mutating_methods);
+                    }
+                    Err(errors) => rendered_errors.push_str(&errors),
+                }
+            }
+
+            if !rendered_errors.is_empty() {
+                return Err(rendered_errors);
+            }
+
+            save_semantic_summary_cache(
+                &project_root,
+                &semantic_summary_cache_from_state(
+                    &parsed_files,
+                    function_effects,
+                    class_method_effects,
+                    class_mutating_methods,
+                ),
+            )?;
+            save_typecheck_summary_cache(
+                &project_root,
+                &typecheck_summary_cache_from_state(
+                    &current_semantic_fingerprints,
+                    &semantic_components,
+                ),
+            )?;
+        }
     }
 
     if check_only {
@@ -4597,8 +4917,10 @@ mod tests {
         build_reverse_dependency_graph, compute_link_fingerprint,
         compute_rewrite_context_fingerprint_for_unit, escape_response_file_arg, parse_project_unit,
         semantic_program_fingerprint, should_skip_final_link, transitive_dependents,
-        DependencyResolutionContext, LinkConfig, LinkManifestCache, OutputKind, ParsedProjectUnit,
-        RewriteFingerprintContext, LINK_MANIFEST_CACHE_SCHEMA,
+        typecheck_summary_cache_from_state, typecheck_summary_cache_matches, DependencyGraphCache,
+        DependencyGraphFileEntry, DependencyResolutionContext, LinkConfig, LinkManifestCache,
+        OutputKind, ParsedProjectUnit, RewriteFingerprintContext, DEPENDENCY_GRAPH_CACHE_SCHEMA,
+        LINK_MANIFEST_CACHE_SCHEMA,
     };
     use crate::ast::{ImportDecl, Program};
     use crate::parser::Parser;
@@ -4960,6 +5282,81 @@ function add(x: Float): Float {
             .cloned()
             .unwrap_or_default()
             .is_empty());
+    }
+
+    #[test]
+    fn dependency_graph_recomputes_direct_neighbors_after_api_change() {
+        let mut app = make_unit("src/app.apex", "app", &["lib.foo"]);
+        app.api_fingerprint = "app-v1".to_string();
+        app.semantic_fingerprint = "app-v1".to_string();
+        let mut foo = make_unit("src/lib_foo.apex", "lib", &[]);
+        foo.function_names = vec!["foo".to_string()];
+        foo.api_fingerprint = "foo-v2".to_string();
+        foo.semantic_fingerprint = "foo-v2".to_string();
+
+        let previous = DependencyGraphCache {
+            schema: DEPENDENCY_GRAPH_CACHE_SCHEMA.to_string(),
+            compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+            files: vec![
+                DependencyGraphFileEntry {
+                    file: PathBuf::from("src/app.apex"),
+                    semantic_fingerprint: "app-v1".to_string(),
+                    api_fingerprint: "app-v1".to_string(),
+                    direct_dependencies: vec![PathBuf::from("src/lib_foo.apex")],
+                },
+                DependencyGraphFileEntry {
+                    file: PathBuf::from("src/lib_foo.apex"),
+                    semantic_fingerprint: "foo-v1".to_string(),
+                    api_fingerprint: "foo-v1".to_string(),
+                    direct_dependencies: vec![],
+                },
+            ],
+        };
+
+        let parsed_files = vec![app.clone(), foo.clone()];
+        let namespace_files_map = HashMap::from([
+            ("app".to_string(), vec![PathBuf::from("src/app.apex")]),
+            ("lib".to_string(), vec![PathBuf::from("src/lib_foo.apex")]),
+        ]);
+        let namespace_function_files = HashMap::from([(
+            "lib".to_string(),
+            HashMap::from([("foo".to_string(), PathBuf::from("src/lib_foo.apex"))]),
+        )]);
+        let ctx = DependencyResolutionContext {
+            namespace_files_map: &namespace_files_map,
+            namespace_function_files: &namespace_function_files,
+            namespace_class_files: &HashMap::new(),
+            namespace_module_files: &HashMap::new(),
+            global_function_map: &HashMap::from([("foo".to_string(), "lib".to_string())]),
+            global_function_file_map: &HashMap::from([(
+                "foo".to_string(),
+                PathBuf::from("src/lib_foo.apex"),
+            )]),
+            global_class_map: &HashMap::new(),
+            global_class_file_map: &HashMap::new(),
+            global_module_map: &HashMap::new(),
+            global_module_file_map: &HashMap::new(),
+        };
+
+        let (_, reused) =
+            build_file_dependency_graph_incremental(&parsed_files, &ctx, Some(&previous));
+        assert_eq!(reused, 0);
+    }
+
+    #[test]
+    fn typecheck_summary_cache_matches_identical_component_fingerprints() {
+        let current = HashMap::from([
+            (PathBuf::from("a.apex"), "sem-a".to_string()),
+            (PathBuf::from("b.apex"), "sem-b".to_string()),
+        ]);
+        let components = vec![vec![PathBuf::from("a.apex")], vec![PathBuf::from("b.apex")]];
+        let cache = typecheck_summary_cache_from_state(&current, &components);
+
+        assert!(typecheck_summary_cache_matches(
+            &cache,
+            &current,
+            &components
+        ));
     }
 
     #[test]

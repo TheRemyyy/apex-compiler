@@ -32,6 +32,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Changed internal compiler caches from JSON to bincode-only blobs, dropping legacy fallback parsing in favor of lower cache decode overhead.
 - Changed object emission to reuse thread-local LLVM `TargetMachine` instances and emit object bytes from an in-memory buffer before persisting cache objects.
 - Changed dependency graph rebuilds to reuse unchanged per-file entries from the previous cache instead of recomputing the whole graph every run.
+- Added a per-file/component typecheck summary cache so unchanged projects can skip semantic checking entirely and large projects can parallelize semantic checking across independent dependency-graph components.
+- Tightened dependency-graph partial invalidation so direct API-neighbor changes also invalidate adjacent cached graph entries instead of only the file whose fingerprint changed.
 
 ### ⚡ Changed
 

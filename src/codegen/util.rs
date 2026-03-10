@@ -35,6 +35,7 @@ struct TargetMachineCacheKey {
 }
 
 thread_local! {
+    // LLVM target machines are not Send, so cache them per worker thread.
     static TARGET_MACHINE_CACHE: RefCell<HashMap<TargetMachineCacheKey, TargetMachine>> =
         RefCell::new(HashMap::new());
 }
@@ -1405,23 +1406,33 @@ impl<'ctx> Codegen<'ctx> {
         TARGET_MACHINE_CACHE.with(|cache| {
             let mut cache = cache.borrow_mut();
             let machine = cache.entry(key.clone()).or_insert_with(|| {
-                let target = Target::from_triple(&triple).expect("target triple should be valid");
-                target
-                    .create_target_machine(
-                        &triple,
-                        &key.cpu,
-                        &key.features,
-                        Self::resolve_optimization_level(opt_level),
-                        match output_kind {
-                            OutputKind::Shared => RelocMode::PIC,
-                            OutputKind::Bin | OutputKind::Static => RelocMode::Default,
-                        },
-                        CodeModel::Default,
-                    )
+                Self::create_target_machine(&triple, &key, opt_level, output_kind)
                     .expect("failed to create target machine")
             });
             f(machine, &triple)
         })
+    }
+
+    fn create_target_machine(
+        triple: &TargetTriple,
+        key: &TargetMachineCacheKey,
+        opt_level: Option<&str>,
+        output_kind: &OutputKind,
+    ) -> std::result::Result<TargetMachine, String> {
+        let target = Target::from_triple(triple).map_err(|e| e.to_string())?;
+        target
+            .create_target_machine(
+                triple,
+                &key.cpu,
+                &key.features,
+                Self::resolve_optimization_level(opt_level),
+                match output_kind {
+                    OutputKind::Shared => RelocMode::PIC,
+                    OutputKind::Bin | OutputKind::Static => RelocMode::Default,
+                },
+                CodeModel::Default,
+            )
+            .ok_or_else(|| "failed to create target machine".to_string())
     }
 
     pub fn emit_object_bytes(
