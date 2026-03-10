@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Expanded CLI smoke coverage to assert the real `examples/24_test_attributes.apex` runner output and ignored-test totals.
 - Fixed Windows LLVM setup in GitHub Actions by removing the fragile `llvm-config` shim/copy path and exporting the real LLVM prefix directly.
 - Fixed Windows CI LLVM setup time by replacing Chocolatey-based installation with a direct cached LLVM release install shared across Windows jobs.
+- Fixed macOS x64 release builds by running `x86_64-apple-darwin` on an Intel GitHub runner instead of linking against ARM Homebrew LLVM artifacts.
 
 ### ⚡ Changed
 

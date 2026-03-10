@@ -49,6 +49,9 @@ runs:
         $llvmInclude = Join-Path $llvmPrefix "include"
         $clangExe = Join-Path $llvmBin "clang.exe"
         $lldLinkExe = Join-Path $llvmBin "lld-link.exe"
+        $shimRoot = Join-Path $env:RUNNER_TEMP "llvm-shim"
+        $shimBin = Join-Path $shimRoot "bin"
+        $llvmConfig = Join-Path $shimBin "llvm-config.exe"
 
         if (-not (Test-Path $clangExe)) {
           $archiveName = "LLVM-$llvmVersion-win64.exe"
@@ -79,5 +82,107 @@ runs:
           throw "LLVM include directory not found: $llvmInclude"
         }
 
-        echo "LLVM_SYS_211_PREFIX=$llvmPrefix" >> $env:GITHUB_ENV
+        if (Test-Path $shimRoot) {
+          Remove-Item -Recurse -Force $shimRoot
+        }
+        New-Item -ItemType Directory -Force -Path $shimBin | Out-Null
+
+        $shimSource = Join-Path $env:RUNNER_TEMP "llvm-config-shim.c"
+        $shimCode = @(
+          '#include <stdio.h>',
+          '#include <stdlib.h>',
+          '#include <string.h>',
+          '#include <windows.h>',
+          '',
+          'static void print_libnames(const char* prefix)',
+          '{',
+          '    char pattern[MAX_PATH];',
+          '    WIN32_FIND_DATAA find_data;',
+          '    HANDLE handle;',
+          '    int first = 1;',
+          '',
+          '    snprintf(pattern, sizeof(pattern), "%s\\lib\\*.lib", prefix);',
+          '    handle = FindFirstFileA(pattern, &find_data);',
+          '    if (handle == INVALID_HANDLE_VALUE) {',
+          '        return;',
+          '    }',
+          '',
+          '    do {',
+          '        const char* name = find_data.cFileName;',
+          '        if (strncmp(name, "LLVM", 4) == 0 || strcmp(name, "LTO.lib") == 0 || strcmp(name, "Remarks.lib") == 0 || strncmp(name, "Polly", 5) == 0) {',
+          '            if (!first) {',
+          '                printf(" ");',
+          '            }',
+          '            printf("%s", name);',
+          '            first = 0;',
+          '        }',
+          '    } while (FindNextFileA(handle, &find_data));',
+          '',
+          '    FindClose(handle);',
+          '}',
+          '',
+          'int main(int argc, char** argv)',
+          '{',
+          '    int i;',
+          '    const char* prefix = getenv("APEX_LLVM_REAL_PREFIX");',
+          '    const char* version = getenv("APEX_LLVM_SHIM_VERSION");',
+          '    const char* command = NULL;',
+          '',
+          '    if (prefix == NULL || prefix[0] == ''\0'') {',
+          '        return 1;',
+          '    }',
+          '    if (version == NULL || version[0] == ''\0'') {',
+          '        version = "21.1.7";',
+          '    }',
+          '',
+          '    for (i = 1; i < argc; ++i) {',
+          '        if (strcmp(argv[i], "--link-static") == 0 || strcmp(argv[i], "--link-shared") == 0) {',
+          '            continue;',
+          '        }',
+          '        command = argv[i];',
+          '        break;',
+          '    }',
+          '',
+          '    if (command == NULL) {',
+          '        return 1;',
+          '    }',
+          '    if (strcmp(command, "--version") == 0) {',
+          '        printf("%s\n", version);',
+          '        return 0;',
+          '    }',
+          '    if (strcmp(command, "--libdir") == 0) {',
+          '        printf("%s\\lib\n", prefix);',
+          '        return 0;',
+          '    }',
+          '    if (strcmp(command, "--cflags") == 0) {',
+          '        printf("-I\"%s\\include\"\n", prefix);',
+          '        return 0;',
+          '    }',
+          '    if (strcmp(command, "--build-mode") == 0) {',
+          '        printf("Release\n");',
+          '        return 0;',
+          '    }',
+          '    if (strcmp(command, "--libnames") == 0) {',
+          '        print_libnames(prefix);',
+          '        printf("\n");',
+          '        return 0;',
+          '    }',
+          '    if (strcmp(command, "--system-libs") == 0) {',
+          '        printf("\n");',
+          '        return 0;',
+          '    }',
+          '    return 1;',
+          '}'
+        ) -join "`n"
+        $shimCode | Set-Content -Path $shimSource -Encoding UTF8
+
+        & $clangExe -O2 -o $llvmConfig $shimSource
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $llvmConfig)) {
+          throw "Failed to compile llvm-config shim with clang.exe"
+        }
+
+        echo "APEX_LLVM_REAL_PREFIX=$llvmPrefix" >> $env:GITHUB_ENV
+        echo "APEX_LLVM_SHIM_VERSION=$llvmVersion" >> $env:GITHUB_ENV
+        echo "LLVM_SYS_211_PREFIX=$shimRoot" >> $env:GITHUB_ENV
+        echo "LLVM_CONFIG_PATH=$llvmConfig" >> $env:GITHUB_ENV
         echo "$llvmBin" >> $env:GITHUB_PATH
