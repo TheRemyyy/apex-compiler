@@ -161,7 +161,7 @@ runs:
           '        return 0;',
           '    }',
           '    if (strcmp(command, "--cflags") == 0) {',
-          '        printf("-I\"%s\\include\"\n", prefix);',
+          '        printf("-I%s\\include\n", prefix);',
           '        return 0;',
           '    }',
           '    if (strcmp(command, "--build-mode") == 0) {',
