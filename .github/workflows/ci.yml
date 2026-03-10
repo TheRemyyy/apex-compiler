@@ -60,6 +60,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+      - uses: actions/cache@v4
+        with:
+          path: C:\apex-toolchains\llvm-21.1.7
+          key: ${{ runner.os }}-llvm-21.1.7-x64
       - uses: ./.github/actions/install-llvm
       - uses: actions/cache@v4
         with:
@@ -90,6 +94,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: C:\apex-toolchains\llvm-21.1.7
+          key: ${{ runner.os }}-llvm-21.1.7-x64
       - uses: ./.github/actions/install-llvm
       - uses: actions/cache@v4
         with:
@@ -199,6 +207,10 @@ jobs:
     needs: build-windows
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: C:\apex-toolchains\llvm-21.1.7
+          key: ${{ runner.os }}-llvm-21.1.7-x64
       - uses: ./.github/actions/install-llvm
       - uses: actions/download-artifact@v4
         with:
@@ -250,6 +262,10 @@ jobs:
     needs: build-windows
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: C:\apex-toolchains\llvm-21.1.7
+          key: ${{ runner.os }}-llvm-21.1.7-x64
       - uses: ./.github/actions/install-llvm
       - uses: actions/download-artifact@v4
         with:
