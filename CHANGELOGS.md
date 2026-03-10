@@ -25,7 +25,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### ⚡ Changed
 
-- Apex project linking now prefers `mold` when available and falls back to `lld`, with linker selection included in build cache fingerprints.
+- Apex project linking now uses an explicit no-fallback policy:
+  - Linux requires `mold`
+  - macOS and Windows require LLVM `lld`
+  - linker selection remains encoded in build cache fingerprints
 - Linux CI LLVM setup now installs `mold` instead of wiring `lld` symlinks into `PATH`.
 
 ## [1.3.5] - Bug Fixes - 2026-03-08

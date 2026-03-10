@@ -43,7 +43,7 @@ benchmark/
 - `clang` (for C)
 - `rustc` (for Rust)
 - `go` (for Go)
-- `mold` (preferred) or `lld` (fallback) for Apex project builds
+- `mold` for Linux Apex project builds, or LLVM `lld` on macOS/Windows
 - Apex compiler binary available at `target/release/apex-compiler`
 
 If the Apex compiler binary is missing, the runner will build it via:

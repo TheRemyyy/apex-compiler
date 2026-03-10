@@ -7,7 +7,7 @@ Before installing the Apex compiler, ensure you have the following dependencies 
 - **Rust**: Version 1.83 or later (stable).
 - **LLVM**: Version 21.0 or later (21.1.7 is recommended).
 - **Clang**: Required for IR/object compilation.
-- **Linker**: `mold` is preferred for Apex builds on Unix-like systems. `lld` is supported as a fallback, and Windows keeps using LLVM's linker path.
+- **Linker**: Linux requires `mold`. macOS and Windows require LLVM `lld`.
 - **Git**: To clone the repository.
 
 ## Installing from Source
@@ -43,7 +43,7 @@ Use Cargo to build the project in release mode:
 cargo build --release
 ```
 
-If neither `mold` nor `lld` is available, Apex project builds will fail immediately with an explicit error.
+On Linux, Apex project builds fail immediately when `mold` is missing. On macOS and Windows, Apex requires LLVM `lld`; there is no linker fallback path.
 
 The compiled binary will be located at `target/release/apex-compiler` (or `target/release/apex-compiler.exe` on Windows).
 

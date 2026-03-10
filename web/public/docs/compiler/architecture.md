@@ -9,7 +9,7 @@ This document describes the internal architecture of the Apex compiler.
 3. **Type Checking** (`typeck.rs`): Traverses the AST to validate types, resolve names, and ensure type safety.
 4. **Borrow Checking** (`borrowck.rs`): Analyses ownership and lifetimes to ensure memory safety without GC.
 5. **Code Generation** (`codegen/core.rs`, `codegen/types.rs`, `codegen/util.rs`): Lowers the AST into LLVM IR (Intermediate Representation).
-6. **Linking**: LLVM IR is compiled to object files and linked through Clang. Apex prefers `mold` when available, falls back to `lld`, and fingerprints caches with the selected linker mode.
+6. **Linking**: LLVM IR is compiled to object files and linked through Clang. Apex uses an explicit per-platform linker policy with no fallback: Linux requires `mold`, while macOS and Windows require LLVM `lld`. Build caches are fingerprinted with that enforced linker mode.
 
 ## Build Caching
 

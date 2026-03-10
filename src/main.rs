@@ -3751,14 +3751,18 @@ fn shutil_which(tool: &str) -> bool {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum LinkerFlavor {
+    #[cfg(target_os = "linux")]
     Mold,
+    #[cfg(any(target_os = "macos", windows))]
     Lld,
 }
 
 impl LinkerFlavor {
     fn clang_fuse_ld(self) -> &'static str {
         match self {
+            #[cfg(target_os = "linux")]
             LinkerFlavor::Mold => "mold",
+            #[cfg(any(target_os = "macos", windows))]
             LinkerFlavor::Lld => "lld",
         }
     }
@@ -3769,15 +3773,42 @@ impl LinkerFlavor {
 }
 
 fn detect_linker_flavor() -> Result<LinkerFlavor, String> {
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     if shutil_which("mold") || shutil_which("ld.mold") {
         return Ok(LinkerFlavor::Mold);
     }
-    if shutil_which("ld.lld") || shutil_which("lld") {
+
+    #[cfg(target_os = "linux")]
+    return Err(format!(
+        "{}: Required linker 'mold' not found in PATH. Install mold and retry.",
+        "error".red().bold()
+    ));
+
+    #[cfg(target_os = "macos")]
+    if shutil_which("ld64.lld") || shutil_which("ld.lld") || shutil_which("lld") {
         return Ok(LinkerFlavor::Lld);
     }
+
+    #[cfg(target_os = "macos")]
+    return Err(format!(
+        "{}: Required LLVM linker not found in PATH. Install lld/ld64.lld and retry.",
+        "error".red().bold()
+    ));
+
+    #[cfg(windows)]
+    if shutil_which("lld-link") || shutil_which("ld.lld") || shutil_which("lld") {
+        return Ok(LinkerFlavor::Lld);
+    }
+
+    #[cfg(windows)]
+    return Err(format!(
+        "{}: Required LLVM linker not found in PATH. Install LLVM lld and retry.",
+        "error".red().bold()
+    ));
+
+    #[allow(unreachable_code)]
     Err(format!(
-        "{}: No supported linker found in PATH. Install mold (preferred) or lld and retry.",
+        "{}: Unsupported host platform for linker detection.",
         "error".red().bold()
     ))
 }

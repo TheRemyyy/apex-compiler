@@ -110,5 +110,7 @@ jobs:
             
             ### Installation
             Download the binary for your platform and ensure you have **LLVM 21** installed on your system for linking.
+            Linux Apex builds require `mold`.
+            macOS and Windows Apex builds require LLVM `lld`.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
