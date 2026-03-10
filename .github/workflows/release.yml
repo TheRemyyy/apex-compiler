@@ -28,10 +28,6 @@ jobs:
             target: aarch64-apple-darwin
             artifact_name: apex-compiler
             asset_name: apex-compiler-macos-arm64
-          - os: macos-13
-            target: x86_64-apple-darwin
-            artifact_name: apex-compiler
-            asset_name: apex-compiler-macos-x64
 
     steps:
       - name: Checkout code
@@ -105,7 +101,6 @@ jobs:
             all-artifacts/apex-compiler-windows-x64.exe
             all-artifacts/apex-compiler-linux-x64
             all-artifacts/apex-compiler-macos-arm64
-            all-artifacts/apex-compiler-macos-x64
           body: |
             ## Apex Programming Language Compiler
             
@@ -113,7 +108,6 @@ jobs:
             - **Windows**: `apex-compiler-windows-x64.exe` (x64 MSVC)
             - **Linux**: `apex-compiler-linux-x64` (x64 GNU)
             - **macOS (Apple Silicon)**: `apex-compiler-macos-arm64`
-            - **macOS (Intel)**: `apex-compiler-macos-x64`
             
             ### Installation
             Download the binary for your platform and ensure you have **LLVM 21** installed on your system for linking.

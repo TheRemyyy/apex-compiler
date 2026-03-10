@@ -216,11 +216,11 @@ jobs:
         with:
           name: apex-compiler-windows-x64
           path: target/release
-      - run: bash scripts/ci_cli_smoke.sh
-        shell: bash
+      - run: .\scripts\ci_cli_smoke_windows.ps1
+        shell: pwsh
         env:
           CI_SKIP_COMPILER_BUILD: "1"
-          APEX_COMPILER_PATH: target/release/apex-compiler.exe
+          APEX_COMPILER_PATH: ${{ github.workspace }}\target\release\apex-compiler.exe
 
   examples-linux:
     name: Examples (linux-x64)
