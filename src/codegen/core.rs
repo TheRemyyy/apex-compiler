@@ -2508,6 +2508,9 @@ impl<'ctx> Codegen<'ctx> {
         let body = self.module.add_function(&body_name, body_fn_type, None);
 
         let thunk_name = format!("__apex_async_thunk__{}", func.name);
+        #[cfg(windows)]
+        let thunk_fn_type = self.context.i32_type().fn_type(&[ptr_type.into()], false);
+        #[cfg(not(windows))]
         let thunk_fn_type = ptr_type.fn_type(&[ptr_type.into()], false);
         let thunk = self.module.add_function(&thunk_name, thunk_fn_type, None);
 
@@ -2544,7 +2547,6 @@ impl<'ctx> Codegen<'ctx> {
     ) -> Result<PointerValue<'ctx>> {
         let task_ty = self.task_struct_type();
         let malloc = self.get_or_declare_malloc();
-        let pthread_create = self.get_or_declare_pthread_create();
         let size = task_ty
             .size_of()
             .ok_or_else(|| CodegenError::new("failed to compute Task runtime size"))?;
@@ -2616,40 +2618,73 @@ impl<'ctx> Codegen<'ctx> {
             .build_store(env_task_slot_ptr, task_ptr)
             .unwrap();
 
-        let thread_tmp = self
-            .builder
-            .build_alloca(self.context.i64_type(), "task_thread_tmp")
-            .unwrap();
-        self.builder
-            .build_store(thread_tmp, self.context.i64_type().const_int(0, false))
-            .unwrap();
-        let null_ptr = self.context.ptr_type(AddressSpace::default()).const_null();
-        let start_fn = self
-            .builder
-            .build_pointer_cast(
-                runner_fn,
-                self.context.ptr_type(AddressSpace::default()),
-                "task_start_fn",
-            )
-            .unwrap();
-        let _spawn_status = self
-            .builder
-            .build_call(
-                pthread_create,
-                &[
-                    thread_tmp.into(),
-                    null_ptr.into(),
-                    start_fn.into(),
-                    env_ptr.into(),
-                ],
-                "task_spawn",
-            )
-            .unwrap();
+        let thread_val = {
+            let null_ptr = self.context.ptr_type(AddressSpace::default()).const_null();
+            let start_fn = self
+                .builder
+                .build_pointer_cast(
+                    runner_fn,
+                    self.context.ptr_type(AddressSpace::default()),
+                    "task_start_fn",
+                )
+                .unwrap();
+            #[cfg(windows)]
+            {
+                let create_thread = self.get_or_declare_create_thread_win();
+                let raw_handle = self
+                    .builder
+                    .build_call(
+                        create_thread,
+                        &[
+                            null_ptr.into(),
+                            self.context.i64_type().const_zero().into(),
+                            start_fn.into(),
+                            env_ptr.into(),
+                            self.context.i32_type().const_zero().into(),
+                            null_ptr.into(),
+                        ],
+                        "task_spawn",
+                    )
+                    .unwrap()
+                    .try_as_basic_value();
+                let handle = match raw_handle {
+                    ValueKind::Basic(BasicValueEnum::PointerValue(p)) => p,
+                    _ => return Err(CodegenError::new("CreateThread should return handle")),
+                };
+                self.builder
+                    .build_ptr_to_int(handle, self.context.i64_type(), "task_thread")
+                    .unwrap()
+            }
+            #[cfg(not(windows))]
+            {
+                let pthread_create = self.get_or_declare_pthread_create();
+                let thread_tmp = self
+                    .builder
+                    .build_alloca(self.context.i64_type(), "task_thread_tmp")
+                    .unwrap();
+                self.builder
+                    .build_store(thread_tmp, self.context.i64_type().const_int(0, false))
+                    .unwrap();
+                let _spawn_status = self
+                    .builder
+                    .build_call(
+                        pthread_create,
+                        &[
+                            thread_tmp.into(),
+                            null_ptr.into(),
+                            start_fn.into(),
+                            env_ptr.into(),
+                        ],
+                        "task_spawn",
+                    )
+                    .unwrap();
 
-        let thread_val = self
-            .builder
-            .build_load(self.context.i64_type(), thread_tmp, "task_thread")
-            .unwrap();
+                self.builder
+                    .build_load(self.context.i64_type(), thread_tmp, "task_thread")
+                    .unwrap()
+                    .into_int_value()
+            }
+        };
         self.builder.build_store(thread_field, thread_val).unwrap();
 
         Ok(self
@@ -2669,7 +2704,6 @@ impl<'ctx> Codegen<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>> {
         let task_ty = self.task_struct_type();
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
-        let pthread_join = self.get_or_declare_pthread_join();
         let task_ptr = self
             .builder
             .build_pointer_cast(
@@ -2741,26 +2775,57 @@ impl<'ctx> Codegen<'ctx> {
             .build_load(self.context.i64_type(), thread_field, "task_thread_id")
             .unwrap()
             .into_int_value();
-        let join_result_ptr = self
-            .builder
-            .build_alloca(ptr_ty, "task_join_result")
-            .unwrap();
-        self.builder
-            .build_store(join_result_ptr, ptr_ty.const_null())
-            .unwrap();
-        let _join_status = self
-            .builder
-            .build_call(
-                pthread_join,
-                &[thread_id.into(), join_result_ptr.into()],
-                "task_join_call",
-            )
-            .unwrap();
-        let new_result = self
-            .builder
-            .build_load(ptr_ty, join_result_ptr, "task_joined_result")
-            .unwrap()
-            .into_pointer_value();
+        #[cfg(windows)]
+        let new_result = {
+            let wait_fn = self.get_or_declare_wait_for_single_object_win();
+            let close_fn = self.get_or_declare_close_handle_win();
+            let handle = self
+                .builder
+                .build_int_to_ptr(thread_id, ptr_ty, "task_thread_handle")
+                .unwrap();
+            self.builder
+                .build_call(
+                    wait_fn,
+                    &[
+                        handle.into(),
+                        self.context.i32_type().const_all_ones().into(),
+                    ],
+                    "task_join_call",
+                )
+                .unwrap();
+            self.builder
+                .build_call(close_fn, &[handle.into()], "")
+                .unwrap();
+            self.builder
+                .build_store(thread_field, self.context.i64_type().const_zero())
+                .unwrap();
+            self.builder
+                .build_load(ptr_ty, result_field, "task_joined_result")
+                .unwrap()
+                .into_pointer_value()
+        };
+        #[cfg(not(windows))]
+        let new_result = {
+            let pthread_join = self.get_or_declare_pthread_join();
+            let join_result_ptr = self
+                .builder
+                .build_alloca(ptr_ty, "task_join_result")
+                .unwrap();
+            self.builder
+                .build_store(join_result_ptr, ptr_ty.const_null())
+                .unwrap();
+            self.builder
+                .build_call(
+                    pthread_join,
+                    &[thread_id.into(), join_result_ptr.into()],
+                    "task_join_call",
+                )
+                .unwrap();
+            self.builder
+                .build_load(ptr_ty, join_result_ptr, "task_joined_result")
+                .unwrap()
+                .into_pointer_value()
+        };
         self.builder.build_store(result_field, new_result).unwrap();
         self.builder
             .build_store(done_field, self.context.i8_type().const_int(1, false))
@@ -3007,6 +3072,11 @@ impl<'ctx> Codegen<'ctx> {
             self.context.i8_type().const_int(1, false),
             AtomicOrdering::Release,
         )?;
+        #[cfg(windows)]
+        self.builder
+            .build_return(Some(&self.context.i32_type().const_int(0, false)))
+            .unwrap();
+        #[cfg(not(windows))]
         self.builder.build_return(Some(&result_storage)).unwrap();
 
         // 3) Compile public wrapper: function name(...)
@@ -4222,6 +4292,9 @@ impl<'ctx> Codegen<'ctx> {
         }
 
         let thunk_name = format!("__apex_async_block_thunk_{}", id);
+        #[cfg(windows)]
+        let thunk_fn_type = self.context.i32_type().fn_type(&[ptr_ty.into()], false);
+        #[cfg(not(windows))]
         let thunk_fn_type = ptr_ty.fn_type(&[ptr_ty.into()], false);
         let thunk_fn = self.module.add_function(&thunk_name, thunk_fn_type, None);
 
@@ -4360,6 +4433,11 @@ impl<'ctx> Codegen<'ctx> {
             self.context.i8_type().const_int(1, false),
             AtomicOrdering::Release,
         )?;
+        #[cfg(windows)]
+        self.builder
+            .build_return(Some(&self.context.i32_type().const_int(0, false)))
+            .unwrap();
+        #[cfg(not(windows))]
         self.builder.build_return(Some(&result_ptr)).unwrap();
 
         self.current_function = saved_function;
@@ -5366,10 +5444,42 @@ impl<'ctx> Codegen<'ctx> {
                     .build_load(self.context.i64_type(), thread_field, "task_thread_id")
                     .unwrap();
 
-                let pthread_cancel = self.get_or_declare_pthread_cancel();
-                self.builder
-                    .build_call(pthread_cancel, &[thread_id.into()], "task_cancel")
-                    .unwrap();
+                #[cfg(windows)]
+                {
+                    let terminate_fn = self.get_or_declare_terminate_thread_win();
+                    let close_fn = self.get_or_declare_close_handle_win();
+                    let handle = self
+                        .builder
+                        .build_int_to_ptr(
+                            thread_id.into_int_value(),
+                            self.context.ptr_type(AddressSpace::default()),
+                            "task_cancel_handle",
+                        )
+                        .unwrap();
+                    self.builder
+                        .build_call(
+                            terminate_fn,
+                            &[
+                                handle.into(),
+                                self.context.i32_type().const_int(1, false).into(),
+                            ],
+                            "task_cancel",
+                        )
+                        .unwrap();
+                    self.builder
+                        .build_call(close_fn, &[handle.into()], "")
+                        .unwrap();
+                    self.builder
+                        .build_store(thread_field, self.context.i64_type().const_zero())
+                        .unwrap();
+                }
+                #[cfg(not(windows))]
+                {
+                    let pthread_cancel = self.get_or_declare_pthread_cancel();
+                    self.builder
+                        .build_call(pthread_cancel, &[thread_id.into()], "task_cancel")
+                        .unwrap();
+                }
 
                 let done_field = unsafe {
                     self.builder
@@ -5663,24 +5773,62 @@ impl<'ctx> Codegen<'ctx> {
                 self.builder.build_unconditional_branch(check_bb).unwrap();
 
                 self.builder.position_at_end(join_bb);
-                let pthread_join = self.get_or_declare_pthread_join();
-                let _join_status = self
-                    .builder
-                    .build_call(
-                        pthread_join,
-                        &[thread_id.into(), join_result_ptr.into()],
-                        "timed_join_finalize",
-                    )
-                    .unwrap();
-                let joined_ptr = self
-                    .builder
-                    .build_load(
-                        self.context.ptr_type(AddressSpace::default()),
-                        join_result_ptr,
-                        "joined_result",
-                    )
-                    .unwrap()
-                    .into_pointer_value();
+                #[cfg(windows)]
+                let joined_ptr = {
+                    let wait_fn = self.get_or_declare_wait_for_single_object_win();
+                    let close_fn = self.get_or_declare_close_handle_win();
+                    let handle = self
+                        .builder
+                        .build_int_to_ptr(
+                            thread_id.into_int_value(),
+                            self.context.ptr_type(AddressSpace::default()),
+                            "timed_join_handle",
+                        )
+                        .unwrap();
+                    self.builder
+                        .build_call(
+                            wait_fn,
+                            &[
+                                handle.into(),
+                                self.context.i32_type().const_all_ones().into(),
+                            ],
+                            "timed_join_finalize",
+                        )
+                        .unwrap();
+                    self.builder
+                        .build_call(close_fn, &[handle.into()], "")
+                        .unwrap();
+                    self.builder
+                        .build_store(thread_field, self.context.i64_type().const_zero())
+                        .unwrap();
+                    self.builder
+                        .build_load(
+                            self.context.ptr_type(AddressSpace::default()),
+                            result_field,
+                            "joined_result",
+                        )
+                        .unwrap()
+                        .into_pointer_value()
+                };
+                #[cfg(not(windows))]
+                let joined_ptr = {
+                    let pthread_join = self.get_or_declare_pthread_join();
+                    self.builder
+                        .build_call(
+                            pthread_join,
+                            &[thread_id.into(), join_result_ptr.into()],
+                            "timed_join_finalize",
+                        )
+                        .unwrap();
+                    self.builder
+                        .build_load(
+                            self.context.ptr_type(AddressSpace::default()),
+                            join_result_ptr,
+                            "joined_result",
+                        )
+                        .unwrap()
+                        .into_pointer_value()
+                };
                 self.builder.build_store(result_field, joined_ptr).unwrap();
                 self.builder
                     .build_store(done_field, self.context.i8_type().const_int(1, false))

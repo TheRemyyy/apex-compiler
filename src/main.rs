@@ -3893,7 +3893,7 @@ fn compile_ir(ir_path: &Path, output_path: &Path, link: &LinkConfig<'_>) -> Resu
         cmd.arg("-fomit-frame-pointer");
 
         #[cfg(windows)]
-        cmd.arg("-llegacy_stdio_definitions");
+        cmd.arg("-llegacy_stdio_definitions").arg("-lkernel32");
 
         #[cfg(not(windows))]
         cmd.arg("-lm").arg("-pthread");
@@ -4038,7 +4038,7 @@ fn link_objects(
             cmd.arg("-fomit-frame-pointer");
 
             #[cfg(windows)]
-            cmd.arg("-llegacy_stdio_definitions");
+            cmd.arg("-llegacy_stdio_definitions").arg("-lkernel32");
 
             #[cfg(not(windows))]
             cmd.arg("-lm").arg("-pthread");

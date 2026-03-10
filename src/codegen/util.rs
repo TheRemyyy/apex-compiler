@@ -1694,6 +1694,67 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, pthread_timedjoin_type, None)
     }
 
+    pub fn get_or_declare_create_thread_win(&mut self) -> FunctionValue<'ctx> {
+        let name = "CreateThread";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let usize_ty = self.context.i64_type();
+        let create_thread_type = ptr.fn_type(
+            &[
+                ptr.into(),
+                usize_ty.into(),
+                ptr.into(),
+                ptr.into(),
+                self.context.i32_type().into(),
+                ptr.into(),
+            ],
+            false,
+        );
+        self.module.add_function(name, create_thread_type, None)
+    }
+
+    pub fn get_or_declare_wait_for_single_object_win(&mut self) -> FunctionValue<'ctx> {
+        let name = "WaitForSingleObject";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let wait_type = self
+            .context
+            .i32_type()
+            .fn_type(&[ptr.into(), self.context.i32_type().into()], false);
+        self.module.add_function(name, wait_type, None)
+    }
+
+    pub fn get_or_declare_terminate_thread_win(&mut self) -> FunctionValue<'ctx> {
+        let name = "TerminateThread";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let terminate_type = self
+            .context
+            .i32_type()
+            .fn_type(&[ptr.into(), self.context.i32_type().into()], false);
+        self.module.add_function(name, terminate_type, None)
+    }
+
+    pub fn get_or_declare_close_handle_win(&mut self) -> FunctionValue<'ctx> {
+        let name = "CloseHandle";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let close_type = self.context.i32_type().fn_type(&[ptr.into()], false);
+        self.module.add_function(name, close_type, None)
+    }
+
     pub fn get_or_declare_clock_gettime(&mut self) -> FunctionValue<'ctx> {
         let name = "clock_gettime";
         if let Some(f) = self.module.get_function(name) {

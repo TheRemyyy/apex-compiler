@@ -24,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed Windows LLVM setup in GitHub Actions by removing the fragile `llvm-config` shim/copy path and exporting the real LLVM prefix directly.
 - Fixed Windows CI LLVM setup time by replacing Chocolatey-based installation with a direct cached prebuilt LLVM archive install shared across Windows jobs.
 - Fixed macOS x64 release builds by running `x86_64-apple-darwin` on an Intel GitHub runner instead of linking against ARM Homebrew LLVM artifacts.
+- Fixed Windows async task/runtime codegen to use Win32 thread primitives instead of unresolved `pthread_*` symbols during Apex program linking.
 
 ### ⚡ Changed
 

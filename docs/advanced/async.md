@@ -31,7 +31,7 @@ async function loadMessage(): Task<String> {
 - The task body runs concurrently in that worker.
 - Subsequent `await` calls return the cached result.
 
-Current runtime behavior is thread-backed (`pthread` runtime): multiple tasks can run in parallel, and `await` joins the task if it is not finished yet.
+Current runtime behavior is thread-backed: Unix-like platforms use the `pthread` runtime, while Windows uses Win32 thread primitives. Multiple tasks can run in parallel, and `await` joins the task if it is not finished yet.
 
 ### Task Methods
 
