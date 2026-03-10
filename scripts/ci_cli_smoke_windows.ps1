@@ -19,12 +19,21 @@ $compilerInput = if ($env:APEX_COMPILER_PATH) {
     Join-Path $repoRoot "target\release\apex-compiler.exe"
 }
 
+if (-not [System.IO.Path]::IsPathRooted($compilerInput)) {
+    $compilerInput = Join-Path $repoRoot $compilerInput
+}
+
 if (-not (Test-Path $compilerInput)) {
     throw "Compiler binary not found: $compilerInput"
 }
 
+$bashScript = (Resolve-Path $bashScript).Path
+$compilerInput = (Resolve-Path $compilerInput).Path
+$repoRoot = (Resolve-Path $repoRoot).Path
+
 $bashScriptUnix = (& $bashCommand.Source -lc "cygpath -u '$bashScript'").Trim()
 $compilerUnix = (& $bashCommand.Source -lc "cygpath -u '$compilerInput'").Trim()
+$repoRootUnix = (& $bashCommand.Source -lc "cygpath -u '$repoRoot'").Trim()
 
 if (-not $bashScriptUnix) {
     throw "Failed to convert smoke script path for bash: $bashScript"
@@ -32,10 +41,23 @@ if (-not $bashScriptUnix) {
 if (-not $compilerUnix) {
     throw "Failed to convert compiler path for bash: $compilerInput"
 }
+if (-not $repoRootUnix) {
+    throw "Failed to convert repo root path for bash: $repoRoot"
+}
 
-$env:APEX_COMPILER_PATH = $compilerUnix
+$ciSkip = if ($env:CI_SKIP_COMPILER_BUILD) { $env:CI_SKIP_COMPILER_BUILD } else { "0" }
+$bashRun = @"
+set -euo pipefail
+cd '$repoRootUnix'
+chmod +x '$bashScriptUnix' '$compilerUnix'
+export APEX_COMPILER_PATH='$compilerUnix'
+export CI_SKIP_COMPILER_BUILD='$ciSkip'
+'$bashScriptUnix'
+"@
 
-& $bashCommand.Source --noprofile --norc -e -o pipefail $bashScriptUnix
-if ($LASTEXITCODE -ne 0) {
-    throw "Windows CLI smoke wrapper failed with exit code $LASTEXITCODE"
+& $bashCommand.Source --noprofile --norc -lc $bashRun
+$exitCode = $LASTEXITCODE
+if ($exitCode -ne 0) {
+    Write-Error "Windows CLI smoke wrapper failed with exit code $exitCode"
+    exit $exitCode
 }
