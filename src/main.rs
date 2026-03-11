@@ -5793,21 +5793,27 @@ fn bindgen_header(header: &Path, output: Option<&Path>) -> Result<(), String> {
 mod tests {
     use super::{
         api_program_fingerprint, build_file_dependency_graph_incremental,
-        build_reverse_dependency_graph, codegen_program_for_unit, component_fingerprint,
-        compute_link_fingerprint, compute_rewrite_context_fingerprint_for_unit,
-        escape_response_file_arg, parse_project_unit, precompute_all_transitive_dependencies,
-        reusable_component_fingerprints, semantic_program_fingerprint, should_skip_final_link,
-        transitive_dependents, typecheck_summary_cache_from_state, typecheck_summary_cache_matches,
-        DependencyGraphCache, DependencyGraphFileEntry, DependencyResolutionContext, LinkConfig,
-        LinkManifestCache, OutputKind, ParsedProjectUnit, RewriteFingerprintContext,
-        RewrittenProjectUnit, DEPENDENCY_GRAPH_CACHE_SCHEMA, LINK_MANIFEST_CACHE_SCHEMA,
+        build_reverse_dependency_graph, check_command, codegen_program_for_unit,
+        component_fingerprint, compute_link_fingerprint,
+        compute_rewrite_context_fingerprint_for_unit, escape_response_file_arg, format_targets,
+        parse_project_unit, precompute_all_transitive_dependencies,
+        reusable_component_fingerprints, run_tests, semantic_program_fingerprint,
+        should_skip_final_link, transitive_dependents, typecheck_summary_cache_from_state,
+        typecheck_summary_cache_matches, DependencyGraphCache, DependencyGraphFileEntry,
+        DependencyResolutionContext, LinkConfig, LinkManifestCache, OutputKind, ParsedProjectUnit,
+        RewriteFingerprintContext, RewrittenProjectUnit, DEPENDENCY_GRAPH_CACHE_SCHEMA,
+        LINK_MANIFEST_CACHE_SCHEMA,
     };
     use crate::ast::{Decl, FunctionDecl, ImportDecl, Program, Spanned, Type, Visibility};
+    use crate::borrowck::BorrowChecker;
+    use crate::formatter::format_program_canonical;
     use crate::parser::Parser;
+    use crate::typeck::TypeChecker;
     use std::collections::{HashMap, HashSet};
     use std::fs;
     use std::path::Path;
     use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
     use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -5820,6 +5826,111 @@ mod tests {
     fn fingerprint_for(source: &str) -> String {
         let program = parse_program(source);
         semantic_program_fingerprint(&program)
+    }
+
+    fn assert_frontend_pipeline_ok(source: &str) {
+        let program = parse_program(source);
+
+        let mut type_checker = TypeChecker::new(source.to_string());
+        if let Err(errors) = type_checker.check(&program) {
+            panic!(
+                "type check failed: {}",
+                errors
+                    .into_iter()
+                    .map(|e| e.message)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+        }
+
+        let mut borrow_checker = BorrowChecker::new();
+        if let Err(errors) = borrow_checker.check(&program) {
+            panic!(
+                "borrow check failed: {}",
+                errors
+                    .into_iter()
+                    .map(|e| e.message)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+        }
+
+        let formatted = format_program_canonical(&program);
+        let reparsed = parse_program(&formatted);
+
+        let mut type_checker = TypeChecker::new(formatted.clone());
+        if let Err(errors) = type_checker.check(&reparsed) {
+            panic!(
+                "type check after format failed: {}",
+                errors
+                    .into_iter()
+                    .map(|e| e.message)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+        }
+
+        let mut borrow_checker = BorrowChecker::new();
+        if let Err(errors) = borrow_checker.check(&reparsed) {
+            panic!(
+                "borrow check after format failed: {}",
+                errors
+                    .into_iter()
+                    .map(|e| e.message)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+        }
+    }
+
+    fn make_temp_project_root(tag: &str) -> PathBuf {
+        let temp_root = std::env::temp_dir().join(format!(
+            "apex-project-smoke-{}-{}-{}",
+            tag,
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(temp_root.join("src")).expect("create temp project src dir");
+        temp_root
+    }
+
+    fn cli_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct CwdRestore {
+        previous: PathBuf,
+    }
+
+    impl Drop for CwdRestore {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.previous);
+        }
+    }
+
+    fn with_current_dir<T>(dir: &Path, f: impl FnOnce() -> T) -> T {
+        let _lock = cli_test_lock().lock().expect("lock cwd test mutex");
+        let previous = std::env::current_dir().expect("current dir");
+        std::env::set_current_dir(dir).expect("set current dir");
+        let _restore = CwdRestore { previous };
+        f()
+    }
+
+    fn write_test_project_config(root: &Path, files: &[&str], entry: &str, output: &str) {
+        let files_toml = files
+            .iter()
+            .map(|file| format!("\"{}\"", file))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let config = format!(
+            "name = \"smoke\"\nversion = \"0.1.0\"\nentry = \"{}\"\nfiles = [{}]\noutput = \"{}\"\n",
+            entry, files_toml, output
+        );
+        fs::write(root.join("apex.toml"), config).expect("write apex.toml");
     }
 
     #[test]
@@ -5902,6 +6013,365 @@ function add(x: Float): Float {
         let pa = parse_program(a);
         let pb = parse_program(b);
         assert_ne!(api_program_fingerprint(&pa), api_program_fingerprint(&pb));
+    }
+
+    #[test]
+    fn frontend_pipeline_corpus_survives_parse_check_borrow_and_format() {
+        let corpus = [
+            r#"
+package demo.core;
+import std.io.*;
+function main(): None {
+    println("hello");
+    return None;
+}
+"#,
+            r#"
+function apply(f: () -> Integer): Integer {
+    return f();
+}
+
+function one(): Integer {
+    return 1;
+}
+"#,
+            r#"
+class Counter {
+    mut value: Integer;
+
+    constructor(start: Integer) {
+        this.value = start;
+    }
+
+    function next(): Integer {
+        this.value = this.value + 1;
+        return this.value;
+    }
+}
+
+function main(): None {
+    mut c: Counter = Counter(1);
+    x: Integer = c.next();
+    println("count {x}");
+    return None;
+}
+"#,
+            r#"
+enum MaybeInt {
+    Some(value: Integer),
+    Empty
+}
+
+function unwrap_or_zero(v: MaybeInt): Integer {
+    match (v) {
+        Some(value) => { return value; },
+        _ => { return 0; },
+    }
+}
+"#,
+            r#"
+module Math {
+    function id<T>(value: T): T {
+        return value;
+    }
+}
+
+function main(): None {
+    x: Integer = Math.id<Integer>(1);
+    y: Integer = if (x == 1) { 10; } else { 20; };
+    println("value {y}");
+    return None;
+}
+"#,
+        ];
+
+        for source in corpus {
+            assert_frontend_pipeline_ok(source);
+        }
+    }
+
+    #[test]
+    fn project_parse_cache_reuses_only_unchanged_files() {
+        let temp_root = make_temp_project_root("parse-cache-selective");
+        let src_dir = temp_root.join("src");
+        let main_file = src_dir.join("main.apex");
+        let lib_file = src_dir.join("lib.apex");
+
+        fs::write(
+            &main_file,
+            "package app;\nimport lib.math;\nfunction main(): None { value: Integer = add(1); return None; }\n",
+        )
+        .expect("write main file");
+        fs::write(
+            &lib_file,
+            "package lib;\nfunction add(x: Integer): Integer { return x + 1; }\n",
+        )
+        .expect("write lib file");
+
+        let first_main = parse_project_unit(&temp_root, &main_file).expect("first main parse");
+        let first_lib = parse_project_unit(&temp_root, &lib_file).expect("first lib parse");
+        assert!(!first_main.from_parse_cache);
+        assert!(!first_lib.from_parse_cache);
+
+        thread::sleep(Duration::from_millis(5));
+        fs::write(
+            &lib_file,
+            "package lib;\nfunction add(x: Integer): Integer { return x + 2; }\n",
+        )
+        .expect("rewrite lib file");
+
+        let second_main = parse_project_unit(&temp_root, &main_file).expect("second main parse");
+        let second_lib = parse_project_unit(&temp_root, &lib_file).expect("second lib parse");
+
+        assert!(second_main.from_parse_cache);
+        assert!(!second_lib.from_parse_cache);
+        assert_eq!(
+            first_main.semantic_fingerprint,
+            second_main.semantic_fingerprint
+        );
+        assert_ne!(
+            first_lib.semantic_fingerprint,
+            second_lib.semantic_fingerprint
+        );
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn project_multi_file_import_graph_tracks_real_parsed_owner_file() {
+        let temp_root = make_temp_project_root("import-graph");
+        let src_dir = temp_root.join("src");
+        let main_file = src_dir.join("main.apex");
+        let math_file = src_dir.join("math.apex");
+
+        fs::write(
+            &main_file,
+            "package app;\nimport lib.math;\nfunction main(): None { value: Integer = add(1); return None; }\n",
+        )
+        .expect("write main file");
+        fs::write(
+            &math_file,
+            "package lib;\nfunction add(x: Integer): Integer { return x + 1; }\n",
+        )
+        .expect("write math file");
+
+        let parsed_files = vec![
+            parse_project_unit(&temp_root, &main_file).expect("parse main"),
+            parse_project_unit(&temp_root, &math_file).expect("parse math"),
+        ];
+
+        let mut namespace_files_map: HashMap<String, Vec<PathBuf>> = HashMap::new();
+        let mut namespace_function_files: HashMap<String, HashMap<String, PathBuf>> =
+            HashMap::new();
+        let mut namespace_class_files: HashMap<String, HashMap<String, PathBuf>> = HashMap::new();
+        let mut namespace_module_files: HashMap<String, HashMap<String, PathBuf>> = HashMap::new();
+        let mut global_function_map: HashMap<String, String> = HashMap::new();
+        let mut global_function_file_map: HashMap<String, PathBuf> = HashMap::new();
+        let mut global_class_map: HashMap<String, String> = HashMap::new();
+        let mut global_class_file_map: HashMap<String, PathBuf> = HashMap::new();
+        let mut global_module_map: HashMap<String, String> = HashMap::new();
+        let mut global_module_file_map: HashMap<String, PathBuf> = HashMap::new();
+
+        for unit in &parsed_files {
+            namespace_files_map
+                .entry(unit.namespace.clone())
+                .or_default()
+                .push(unit.file.clone());
+            for name in &unit.function_names {
+                namespace_function_files
+                    .entry(unit.namespace.clone())
+                    .or_default()
+                    .insert(name.clone(), unit.file.clone());
+                global_function_map.insert(name.clone(), unit.namespace.clone());
+                global_function_file_map.insert(name.clone(), unit.file.clone());
+            }
+            for name in &unit.class_names {
+                namespace_class_files
+                    .entry(unit.namespace.clone())
+                    .or_default()
+                    .insert(name.clone(), unit.file.clone());
+                global_class_map.insert(name.clone(), unit.namespace.clone());
+                global_class_file_map.insert(name.clone(), unit.file.clone());
+            }
+            for name in &unit.module_names {
+                namespace_module_files
+                    .entry(unit.namespace.clone())
+                    .or_default()
+                    .insert(name.clone(), unit.file.clone());
+                global_module_map.insert(name.clone(), unit.namespace.clone());
+                global_module_file_map.insert(name.clone(), unit.file.clone());
+            }
+        }
+
+        let ctx = DependencyResolutionContext {
+            namespace_files_map: &namespace_files_map,
+            namespace_function_files: &namespace_function_files,
+            namespace_class_files: &namespace_class_files,
+            namespace_module_files: &namespace_module_files,
+            global_function_map: &global_function_map,
+            global_function_file_map: &global_function_file_map,
+            global_class_map: &global_class_map,
+            global_class_file_map: &global_class_file_map,
+            global_module_map: &global_module_map,
+            global_module_file_map: &global_module_file_map,
+        };
+
+        let (graph, _) = build_file_dependency_graph_incremental(&parsed_files, &ctx, None);
+        assert_eq!(
+            graph.get(&main_file).cloned().unwrap_or_default(),
+            HashSet::from([math_file.clone()])
+        );
+        assert!(graph
+            .get(&math_file)
+            .cloned()
+            .unwrap_or_default()
+            .is_empty());
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn cli_check_command_succeeds_for_temp_project() {
+        let temp_root = make_temp_project_root("cli-check");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(
+            &temp_root,
+            &["src/main.apex", "src/helper.apex"],
+            "src/main.apex",
+            "smoke",
+        );
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nfunction main(): None { value: Integer = helper(); return None; }\n",
+        )
+        .expect("write main");
+        fs::write(
+            src_dir.join("helper.apex"),
+            "package app;\nfunction helper(): Integer { return 1; }\n",
+        )
+        .expect("write helper");
+
+        with_current_dir(&temp_root, || {
+            check_command(None, false).expect("project check should pass");
+        });
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn cli_format_targets_checks_and_formats_project_files() {
+        let temp_root = make_temp_project_root("cli-fmt");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(&temp_root, &["src/main.apex"], "src/main.apex", "smoke");
+        let main_file = src_dir.join("main.apex");
+        fs::write(
+            &main_file,
+            "function main(): None {println(\"hi\");return None;}\n",
+        )
+        .expect("write unformatted file");
+
+        with_current_dir(&temp_root, || {
+            let err = format_targets(None, true).expect_err("format check should fail before fmt");
+            assert!(err.contains("format check failed"), "{err}");
+            format_targets(None, false).expect("format should succeed");
+            format_targets(None, true).expect("format check should pass after fmt");
+        });
+
+        let formatted = fs::read_to_string(&main_file).expect("read formatted file");
+        assert!(
+            formatted.contains("function main(): None {\n"),
+            "{formatted}"
+        );
+        assert!(formatted.contains("    println(\"hi\");\n"), "{formatted}");
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn cli_run_tests_lists_filtered_tests_in_directory() {
+        let temp_root = make_temp_project_root("cli-test-list");
+        let test_file = temp_root.join("smoke_test.apex");
+        fs::write(
+            &test_file,
+            r#"
+                @Test
+                function smokeAlpha(): None { return None; }
+
+                @Test
+                function otherBeta(): None { return None; }
+            "#,
+        )
+        .expect("write test file");
+
+        run_tests(Some(&temp_root), true, Some("smoke")).expect("test listing should succeed");
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn cli_check_command_reports_cross_file_type_errors() {
+        let temp_root = make_temp_project_root("cli-check-type-error");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(
+            &temp_root,
+            &["src/main.apex", "src/helper.apex"],
+            "src/main.apex",
+            "smoke",
+        );
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nfunction main(): None { value: Integer = helper(); return None; }\n",
+        )
+        .expect("write main");
+        fs::write(
+            src_dir.join("helper.apex"),
+            "package app;\nfunction helper(): String { return \"oops\"; }\n",
+        )
+        .expect("write helper");
+
+        with_current_dir(&temp_root, || {
+            let err = check_command(None, false).expect_err("project check should fail");
+            assert!(
+                err.contains("Type mismatch")
+                    || err.contains("expected Integer")
+                    || err.contains("Expected Integer"),
+                "{err}"
+            );
+        });
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn cli_check_command_reports_cross_file_borrow_errors() {
+        let temp_root = make_temp_project_root("cli-check-borrow-error");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(
+            &temp_root,
+            &["src/main.apex", "src/helper.apex"],
+            "src/main.apex",
+            "smoke",
+        );
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nfunction main(): None { s: String = \"hello\"; consume(s); t: String = s; return None; }\n",
+        )
+        .expect("write main");
+        fs::write(
+            src_dir.join("helper.apex"),
+            "package app;\nfunction consume(owned s: String): None { return None; }\n",
+        )
+        .expect("write helper");
+
+        with_current_dir(&temp_root, || {
+            let err = check_command(None, false).expect_err("project check should fail");
+            assert!(
+                err.contains("Use of moved value 's'") || err.contains("moved value 's'"),
+                "{err}"
+            );
+        });
+
+        let _ = fs::remove_dir_all(temp_root);
     }
 
     fn make_unit(file: &str, namespace: &str, imports: &[&str]) -> ParsedProjectUnit {

@@ -31,6 +31,117 @@ impl ParseError {
 type ParseResult<T> = Result<T, ParseError>;
 
 impl<'src> Parser<'src> {
+    fn builtin_generic_arity(name: &str) -> Option<usize> {
+        match name {
+            "Option" | "List" | "Set" | "Box" | "Rc" | "Arc" | "Ptr" | "Task" | "Range" => Some(1),
+            "Result" | "Map" => Some(2),
+            _ => None,
+        }
+    }
+
+    fn parse_type_arg_list(&mut self) -> ParseResult<Vec<Type>> {
+        let list_span = self.current_span();
+        let mut type_args = Vec::new();
+        if self.check(&Token::Gt) {
+            return Err(ParseError::new(
+                "Generic type argument list cannot be empty",
+                list_span,
+            ));
+        }
+
+        loop {
+            type_args.push(self.parse_type()?);
+            if self.check(&Token::Gt) {
+                break;
+            }
+            self.eat(&Token::Comma)?;
+            if self.check(&Token::Gt) {
+                return Err(ParseError::new(
+                    "Trailing comma is not allowed in generic type arguments",
+                    self.current_span(),
+                ));
+            }
+        }
+
+        Ok(type_args)
+    }
+
+    fn parse_type_list(
+        &mut self,
+        empty_message: &str,
+        trailing_comma_message: &str,
+        terminator: &Token,
+    ) -> ParseResult<Vec<Type>> {
+        let list_span = self.current_span();
+        let mut items = Vec::new();
+        if self.check(terminator) {
+            return Err(ParseError::new(empty_message, list_span));
+        }
+
+        loop {
+            items.push(self.parse_type()?);
+            if self.check(terminator) {
+                break;
+            }
+            self.eat(&Token::Comma)?;
+            if self.check(terminator) {
+                return Err(ParseError::new(trailing_comma_message, self.current_span()));
+            }
+        }
+
+        Ok(items)
+    }
+
+    fn finish_named_type(
+        &self,
+        name: String,
+        type_args: Vec<Type>,
+        span: std::ops::Range<usize>,
+    ) -> ParseResult<Type> {
+        if let Some(expected_arity) = Self::builtin_generic_arity(&name) {
+            if type_args.len() != expected_arity {
+                let plural = if expected_arity == 1 { "" } else { "s" };
+                return Err(ParseError::new(
+                    format!(
+                        "Built-in type '{}' expects {} type argument{}, found {}",
+                        name,
+                        expected_arity,
+                        plural,
+                        type_args.len()
+                    ),
+                    span,
+                ));
+            }
+        }
+
+        Ok(match (name.as_str(), type_args.len()) {
+            ("Option", 1) => Type::Option(Box::new(type_args.into_iter().next().unwrap())),
+            ("Result", 2) => {
+                let mut iter = type_args.into_iter();
+                Type::Result(
+                    Box::new(iter.next().unwrap()),
+                    Box::new(iter.next().unwrap()),
+                )
+            }
+            ("List", 1) => Type::List(Box::new(type_args.into_iter().next().unwrap())),
+            ("Map", 2) => {
+                let mut iter = type_args.into_iter();
+                Type::Map(
+                    Box::new(iter.next().unwrap()),
+                    Box::new(iter.next().unwrap()),
+                )
+            }
+            ("Set", 1) => Type::Set(Box::new(type_args.into_iter().next().unwrap())),
+            ("Box", 1) => Type::Box(Box::new(type_args.into_iter().next().unwrap())),
+            ("Rc", 1) => Type::Rc(Box::new(type_args.into_iter().next().unwrap())),
+            ("Arc", 1) => Type::Arc(Box::new(type_args.into_iter().next().unwrap())),
+            ("Ptr", 1) => Type::Ptr(Box::new(type_args.into_iter().next().unwrap())),
+            ("Task", 1) => Type::Task(Box::new(type_args.into_iter().next().unwrap())),
+            ("Range", 1) => Type::Range(Box::new(type_args.into_iter().next().unwrap())),
+            _ => Type::Generic(name, type_args),
+        })
+    }
+
     pub fn new(tokens: Vec<(Token<'src>, std::ops::Range<usize>)>) -> Self {
         let (known_functions, known_types) = Self::scan_decl_names(&tokens);
         Self {
@@ -199,8 +310,20 @@ impl<'src> Parser<'src> {
 
             // Parse qualified package name
             let mut pkg_parts = vec![self.parse_ident()?];
-            while self.check(&Token::Dot) {
+            while self.check(&Token::Dot) || self.check(&Token::DotDot) {
+                if self.check(&Token::DotDot) {
+                    return Err(ParseError::new(
+                        "Package path cannot contain an empty segment",
+                        self.current_span(),
+                    ));
+                }
                 self.advance();
+                if !matches!(self.current(), Some(Token::Ident(_))) {
+                    return Err(ParseError::new(
+                        "Package path cannot end with '.'",
+                        self.current_span(),
+                    ));
+                }
                 pkg_parts.push(self.parse_ident()?);
             }
             package = Some(pkg_parts.join("."));
@@ -787,61 +910,11 @@ impl<'src> Parser<'src> {
     fn parse_type_from_ident(&mut self, name: &str) -> ParseResult<Type> {
         // Check for generic params
         if self.check(&Token::Lt) {
+            let span = self.current_span();
             self.advance();
-            let mut type_args = Vec::new();
-            while !self.check(&Token::Gt) {
-                type_args.push(self.parse_type()?);
-                if !self.check(&Token::Gt) {
-                    self.eat(&Token::Comma)?;
-                }
-            }
+            let type_args = self.parse_type_arg_list()?;
             self.eat(&Token::Gt)?;
-
-            // Handle built-in generic types
-            match name {
-                "Option" if type_args.len() == 1 => Ok(Type::Option(Box::new(
-                    type_args.into_iter().next().unwrap(),
-                ))),
-                "Result" if type_args.len() == 2 => {
-                    let mut iter = type_args.into_iter();
-                    Ok(Type::Result(
-                        Box::new(iter.next().unwrap()),
-                        Box::new(iter.next().unwrap()),
-                    ))
-                }
-                "List" if type_args.len() == 1 => {
-                    Ok(Type::List(Box::new(type_args.into_iter().next().unwrap())))
-                }
-                "Map" if type_args.len() == 2 => {
-                    let mut iter = type_args.into_iter();
-                    Ok(Type::Map(
-                        Box::new(iter.next().unwrap()),
-                        Box::new(iter.next().unwrap()),
-                    ))
-                }
-                "Set" if type_args.len() == 1 => {
-                    Ok(Type::Set(Box::new(type_args.into_iter().next().unwrap())))
-                }
-                "Box" if type_args.len() == 1 => {
-                    Ok(Type::Box(Box::new(type_args.into_iter().next().unwrap())))
-                }
-                "Rc" if type_args.len() == 1 => {
-                    Ok(Type::Rc(Box::new(type_args.into_iter().next().unwrap())))
-                }
-                "Arc" if type_args.len() == 1 => {
-                    Ok(Type::Arc(Box::new(type_args.into_iter().next().unwrap())))
-                }
-                "Ptr" if type_args.len() == 1 => {
-                    Ok(Type::Ptr(Box::new(type_args.into_iter().next().unwrap())))
-                }
-                "Task" if type_args.len() == 1 => {
-                    Ok(Type::Task(Box::new(type_args.into_iter().next().unwrap())))
-                }
-                "Range" if type_args.len() == 1 => {
-                    Ok(Type::Range(Box::new(type_args.into_iter().next().unwrap())))
-                }
-                _ => Ok(Type::Generic(name.to_string(), type_args)),
-            }
+            self.finish_named_type(name.to_string(), type_args, span)
         } else {
             Ok(Type::Named(name.to_string()))
         }
@@ -930,7 +1003,13 @@ impl<'src> Parser<'src> {
         let mut path_parts = vec![self.parse_ident()?];
 
         // Handle dots for qualified names
-        while self.check(&Token::Dot) {
+        while self.check(&Token::Dot) || self.check(&Token::DotDot) {
+            if self.check(&Token::DotDot) {
+                return Err(ParseError::new(
+                    "Import path cannot contain an empty segment",
+                    self.current_span(),
+                ));
+            }
             self.advance();
 
             // Check for wildcard
@@ -940,6 +1019,12 @@ impl<'src> Parser<'src> {
                 break;
             }
 
+            if !matches!(self.current(), Some(Token::Ident(_))) {
+                return Err(ParseError::new(
+                    "Import path cannot end with '.'",
+                    self.current_span(),
+                ));
+            }
             path_parts.push(self.parse_ident()?);
         }
 
@@ -1029,15 +1114,15 @@ impl<'src> Parser<'src> {
         // Check for function type: (Type, Type) -> Type
         if self.check(&Token::LParen) {
             self.advance();
-            let mut params = Vec::new();
-            while !self.check(&Token::RParen) && !self.is_at_end() {
-                params.push(self.parse_type()?);
-                if self.check(&Token::Comma) {
-                    self.advance();
-                } else if !self.check(&Token::RParen) {
-                    break;
-                }
-            }
+            let params = if self.check(&Token::RParen) {
+                Vec::new()
+            } else {
+                self.parse_type_list(
+                    "Function type parameter list cannot be empty after '('",
+                    "Trailing comma is not allowed in function type parameters",
+                    &Token::RParen,
+                )?
+            };
             self.eat(&Token::RParen)?;
 
             // In Apex, function types MUST have -> ReturnType
@@ -1077,61 +1162,11 @@ impl<'src> Parser<'src> {
 
                 // Check for generic params
                 if self.check(&Token::Lt) {
+                    let span = self.current_span();
                     self.advance();
-                    let mut type_args = Vec::new();
-                    while !self.check(&Token::Gt) {
-                        type_args.push(self.parse_type()?);
-                        if !self.check(&Token::Gt) {
-                            self.eat(&Token::Comma)?;
-                        }
-                    }
+                    let type_args = self.parse_type_arg_list()?;
                     self.eat(&Token::Gt)?;
-
-                    // Handle built-in generic types
-                    match name.as_str() {
-                        "Option" if type_args.len() == 1 => {
-                            Type::Option(Box::new(type_args.into_iter().next().unwrap()))
-                        }
-                        "Result" if type_args.len() == 2 => {
-                            let mut iter = type_args.into_iter();
-                            Type::Result(
-                                Box::new(iter.next().unwrap()),
-                                Box::new(iter.next().unwrap()),
-                            )
-                        }
-                        "List" if type_args.len() == 1 => {
-                            Type::List(Box::new(type_args.into_iter().next().unwrap()))
-                        }
-                        "Map" if type_args.len() == 2 => {
-                            let mut iter = type_args.into_iter();
-                            Type::Map(
-                                Box::new(iter.next().unwrap()),
-                                Box::new(iter.next().unwrap()),
-                            )
-                        }
-                        "Set" if type_args.len() == 1 => {
-                            Type::Set(Box::new(type_args.into_iter().next().unwrap()))
-                        }
-                        "Box" if type_args.len() == 1 => {
-                            Type::Box(Box::new(type_args.into_iter().next().unwrap()))
-                        }
-                        "Rc" if type_args.len() == 1 => {
-                            Type::Rc(Box::new(type_args.into_iter().next().unwrap()))
-                        }
-                        "Arc" if type_args.len() == 1 => {
-                            Type::Arc(Box::new(type_args.into_iter().next().unwrap()))
-                        }
-                        "Ptr" if type_args.len() == 1 => {
-                            Type::Ptr(Box::new(type_args.into_iter().next().unwrap()))
-                        }
-                        "Task" if type_args.len() == 1 => {
-                            Type::Task(Box::new(type_args.into_iter().next().unwrap()))
-                        }
-                        "Range" if type_args.len() == 1 => {
-                            Type::Range(Box::new(type_args.into_iter().next().unwrap()))
-                        }
-                        _ => Type::Generic(name, type_args),
-                    }
+                    self.finish_named_type(name, type_args, span)?
                 } else {
                     Type::Named(name)
                 }
@@ -1761,25 +1796,19 @@ impl<'src> Parser<'src> {
 
         let saved = self.pos;
         self.advance();
-        let mut type_args = Vec::new();
-        let mut parse_ok = true;
-        while !self.check(&Token::Gt) && !self.is_at_end() {
-            match self.parse_type() {
-                Ok(parsed_type) => type_args.push(parsed_type),
-                Err(_) => {
-                    parse_ok = false;
-                    break;
-                }
+        let type_args = match self.parse_type_list(
+            "Generic call type argument list cannot be empty",
+            "Trailing comma is not allowed in generic call type arguments",
+            &Token::Gt,
+        ) {
+            Ok(type_args) => type_args,
+            Err(_) => {
+                self.pos = saved;
+                return Ok(Vec::new());
             }
-            if self.check(&Token::Comma) {
-                self.advance();
-            } else if !self.check(&Token::Gt) {
-                parse_ok = false;
-                break;
-            }
-        }
+        };
 
-        if parse_ok && self.check(&Token::Gt) {
+        if self.check(&Token::Gt) {
             self.advance();
             if self.check(&Token::LParen) {
                 Ok(type_args)
@@ -2396,6 +2425,7 @@ fn decode_escaped_string(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::formatter::format_program_canonical;
     use crate::lexer::tokenize;
 
     fn parse_source(source: &str) -> Result<Program, ParseError> {
@@ -2539,6 +2569,64 @@ mod tests {
         assert!(
             err.message
                 .contains("Cannot use alias with wildcard import"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_reject_import_alias_without_identifier() {
+        let source = r#"
+            import std.math as ;
+            function main(): None { return None; }
+        "#;
+        let err = parse_source(source).expect_err("import alias without identifier should fail");
+        assert!(
+            err.message.contains("Expected identifier"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_reject_import_with_empty_path_segment() {
+        let source = r#"
+            import std..math;
+            function main(): None { return None; }
+        "#;
+        let err = parse_source(source).expect_err("empty import path segment should fail");
+        assert!(
+            err.message
+                .contains("Import path cannot contain an empty segment"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_reject_package_with_empty_path_segment() {
+        let source = r#"
+            package app..core;
+            function main(): None { return None; }
+        "#;
+        let err = parse_source(source).expect_err("empty package path segment should fail");
+        assert!(
+            err.message
+                .contains("Package path cannot contain an empty segment"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_reject_package_with_trailing_dot() {
+        let source = r#"
+            package app.;
+            function main(): None { return None; }
+        "#;
+        let err = parse_source(source).expect_err("package trailing dot should fail");
+        assert!(
+            err.message.contains("Package path cannot end with '.'"),
             "{}",
             err.message
         );
@@ -2882,6 +2970,71 @@ mod tests {
     }
 
     #[test]
+    fn test_reject_function_type_trailing_comma() {
+        let source = r#"
+            function takes(f: (Integer,) -> Integer): None {
+                return None;
+            }
+        "#;
+        let err = parse_source(source).expect_err("function type trailing comma should fail");
+        assert!(
+            err.message
+                .contains("Trailing comma is not allowed in function type parameters"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_parse_zero_arg_function_type() {
+        let source = r#"
+            function takes(f: () -> Integer): None {
+                return None;
+            }
+        "#;
+        parse_source(source).expect("zero-arg function type should remain valid");
+    }
+
+    #[test]
+    fn test_reject_explicit_generic_function_call_with_trailing_comma() {
+        let source = r#"
+            function id<T>(x: T): T { return x; }
+            function main(): None {
+                x: Integer = id<Integer,>(1);
+                return None;
+            }
+        "#;
+        let err = parse_source(source).expect_err("generic call trailing comma should fail");
+        assert!(
+            err.message.contains("Trailing comma") || err.message.contains("Expected"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_reject_explicit_generic_module_call_with_trailing_comma() {
+        let source = r#"
+            module A {
+                module B {
+                    function id<T>(x: T): T { return x; }
+                }
+            }
+            function main(): None {
+                x: Integer = A.B.id<Integer,>(1);
+                return None;
+            }
+        "#;
+        let err = parse_source(source)
+            .expect_err("nested module generic call trailing comma should fail");
+        assert!(
+            err.message.contains("Trailing comma") || err.message.contains("Expected"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
     fn test_parse_float_char_and_negative_match_patterns() {
         let source = r#"
             function main(): None {
@@ -2994,5 +3147,187 @@ mod tests {
             panic!("Expected string literal");
         };
         assert_eq!(s, "{x}");
+    }
+
+    #[test]
+    fn test_string_interp_invalid_expression_stays_literal() {
+        let source = r#"
+            function main(): None {
+                s: String = "value {1+}";
+                return None;
+            }
+        "#;
+        let program = parse_source(source).expect("Should parse");
+        let Decl::Function(func) = &program.declarations[0].node else {
+            panic!("Expected function declaration");
+        };
+        let Stmt::Let { value, .. } = &func.body[0].node else {
+            panic!("Expected let statement");
+        };
+        let Expr::Literal(Literal::String(s)) = &value.node else {
+            panic!("Expected string literal");
+        };
+        assert_eq!(s, "value {1+}");
+    }
+
+    #[test]
+    fn test_string_interp_nested_braces_invalid_expr_stays_literal() {
+        let source = r#"
+            function main(): None {
+                s: String = "value {{1}}";
+                return None;
+            }
+        "#;
+        let program = parse_source(source).expect("Should parse");
+        let Decl::Function(func) = &program.declarations[0].node else {
+            panic!("Expected function declaration");
+        };
+        let Stmt::Let { value, .. } = &func.body[0].node else {
+            panic!("Expected let statement");
+        };
+        let Expr::Literal(Literal::String(s)) = &value.node else {
+            panic!("Expected string literal");
+        };
+        assert_eq!(s, "value {{1}}");
+    }
+
+    #[test]
+    fn test_string_interp_stray_closing_brace_stays_literal() {
+        let source = r#"
+            function main(): None {
+                s: String = "abc }";
+                return None;
+            }
+        "#;
+        let program = parse_source(source).expect("Should parse");
+        let Decl::Function(func) = &program.declarations[0].node else {
+            panic!("Expected function declaration");
+        };
+        let Stmt::Let { value, .. } = &func.body[0].node else {
+            panic!("Expected let statement");
+        };
+        let Expr::Literal(Literal::String(s)) = &value.node else {
+            panic!("Expected string literal");
+        };
+        assert_eq!(s, "abc }");
+    }
+
+    #[test]
+    fn test_builtin_generic_type_rejects_wrong_arity() {
+        let source = r#"
+            function main(): Map<Integer> {
+                return 0;
+            }
+        "#;
+        let err = parse_source(source).expect_err("Map with one type arg should fail to parse");
+        assert!(err
+            .message
+            .contains("Built-in type 'Map' expects 2 type arguments"));
+    }
+
+    #[test]
+    fn test_builtin_generic_type_rejects_empty_args() {
+        let source = r#"
+            function main(): Ptr<> {
+                return 0;
+            }
+        "#;
+        let err = parse_source(source).expect_err("Ptr<> should fail to parse");
+        assert!(err
+            .message
+            .contains("Generic type argument list cannot be empty"));
+    }
+
+    #[test]
+    fn test_builtin_generic_type_rejects_trailing_comma() {
+        let source = r#"
+            function main(): Result<Integer,> {
+                return 0;
+            }
+        "#;
+        let err = parse_source(source).expect_err("Trailing comma in type args should fail");
+        assert!(err
+            .message
+            .contains("Trailing comma is not allowed in generic type arguments"));
+    }
+
+    #[test]
+    fn test_malformed_syntax_corpus_never_panics() {
+        let malformed_cases = [
+            "function main(: None { return None; }",
+            "function main(): Map<Integer> { return 0; }",
+            "function main(): None { x: Integer = id<Integer,>(1); return None; }",
+            "function takes(f: (Integer,) -> Integer): None { return None; }",
+            "import std..math; function main(): None { return None; }",
+            "package app.; function main(): None { return None; }",
+            "module A { function f(): None { return None; }",
+            "function main(): None { s: String = \"value {1+}\"; return None; }",
+            "function main(): None { match (1) { 1 => { }, _ => } return None; }",
+            "function main(): None { x: List<Integer = range(0, 1); return None; }",
+        ];
+
+        for source in malformed_cases {
+            let result = std::panic::catch_unwind(|| parse_source(source));
+            assert!(
+                result.is_ok(),
+                "parser panicked on malformed input: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_valid_syntax_corpus_roundtrips_through_canonical_formatter() {
+        let valid_cases = [
+            r#"
+                package app.core;
+                import std.math as math;
+                function main(): None {
+                    value: Integer = math.abs<Integer>(1);
+                    return None;
+                }
+            "#,
+            r#"
+                function takes(f: () -> Integer): Integer {
+                    return f();
+                }
+            "#,
+            r#"
+                module A {
+                    module B {
+                        function id<T>(x: T): T { return x; }
+                    }
+                }
+                function main(): None {
+                    x: Integer = A.B.id<Integer>(1);
+                    return None;
+                }
+            "#,
+            r#"
+                function main(): None {
+                    msg: String = "hello {name}";
+                    x: Integer = if (true) { 1; } else { 2; };
+                    match (x) {
+                        1 => { println(msg); },
+                        _ => { println("fallback"); },
+                    }
+                    return None;
+                }
+            "#,
+            r#"
+                class Boxed<T> {
+                    value: T;
+
+                    function get(): T {
+                        return self.value;
+                    }
+                }
+            "#,
+        ];
+
+        for source in valid_cases {
+            let program = parse_source(source).expect("valid corpus should parse");
+            let formatted = format_program_canonical(&program);
+            parse_source(&formatted).expect("canonical formatted corpus should still parse");
+        }
     }
 }

@@ -49,6 +49,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Tightened import-check caching to key off a narrower import/reference fingerprint instead of full semantic-body fingerprints, so body-only caller rewrites can reuse import validation when imports and referenced symbols did not change.
 - Extended parsed-file cache entries to persist extracted symbol/reference metadata, removing repeated AST rewalks for unchanged files on the warm semantic-cache-hit path.
 - Extended `--timings` output with an explicit `semantic cache gate` phase so warm rebuild regressions can be separated from parse/dependency work.
+- Tightened parser acceptance for malformed syntax:
+  - built-in generic types now reject wrong arity, empty type argument lists, and trailing commas
+  - function types now reject trailing commas in parameter lists while preserving valid zero-argument `() -> T` syntax
+  - explicit generic calls now reject trailing commas in type arguments, including nested module-qualified calls
+  - malformed `import` and `package` paths with empty segments or trailing dots now fail with direct parser diagnostics
+  - malformed string interpolation forms like empty braces, invalid inner expressions, nested invalid braces, and stray closing braces are now locked by regression tests to remain literal text instead of drifting silently
+- Added parser robustness corpus coverage:
+  - malformed syntax samples are now exercised under `catch_unwind` to ensure parser hardening work does not regress into panics
+  - valid syntax samples are now exercised through `parse -> canonical format -> parse` to catch formatter/parser drift on core language constructs
+- Added lexer robustness corpus coverage:
+  - malformed token streams like unterminated strings, unterminated block comments, invalid char literals, and symbol garbage are now exercised under `catch_unwind` to guard against lexer panics
+  - tricky operator and escape-sequence corpora now lock tokenization behavior for `...`, `..`, `..=`, `::`, compound assignments, arrows, and escaped string/char literals
+- Added frontend end-to-end corpus coverage:
+  - small fixture programs now exercise the real `tokenize -> parse -> typecheck -> borrowck -> canonical format -> parse -> typecheck -> borrowck` pipeline
+  - this locks cross-layer stability for imports, function types, classes with mutating methods, enums, modules, interpolation, and control-flow expressions
+- Added project-mode smoke coverage:
+  - multi-file fixture projects now verify real parsed import-owner dependency graph resolution across files
+  - parse-cache tests now verify that project parsing reuses unchanged files while reparsing only the file whose source actually changed
+- Added CLI-level smoke coverage:
+  - temp project tests now exercise project-mode `apex check` through the real internal command entrypoint
+  - formatter smoke tests now verify `apex fmt --check` failure, `apex fmt` rewrite, and subsequent clean `--check` on project files
+  - test discovery smoke now exercises filtered `apex test --list` style flow on real `.apex` test files without spawning external processes
+  - negative temp project tests now verify cross-file type errors and cross-file use-after-move diagnostics through the same project-mode `check` path
 
 ### ⚡ Changed
 
