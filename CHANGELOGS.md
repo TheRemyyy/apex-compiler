@@ -34,6 +34,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Changed dependency graph rebuilds to reuse unchanged per-file entries from the previous cache instead of recomputing the whole graph every run.
 - Added a per-file/component typecheck summary cache so unchanged projects can skip semantic checking entirely and large projects can parallelize semantic checking across independent dependency-graph components.
 - Tightened dependency-graph partial invalidation so direct API-neighbor changes also invalidate adjacent cached graph entries instead of only the file whose fingerprint changed.
+- Changed project codegen to precompute full transitive dependency closures once per build, probe object-cache hits in parallel, and build per-file codegen programs from an indexed rewritten-file map instead of rescanning every rewritten unit.
+- Reduced object-cache bookkeeping overhead by precomputing per-file object/meta cache paths once per build instead of rehashing them repeatedly during cache probes and object emission.
 
 ### ⚡ Changed
 

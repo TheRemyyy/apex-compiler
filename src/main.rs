@@ -689,6 +689,7 @@ fn api_program_fingerprint(program: &Program) -> String {
 
 fn codegen_program_for_unit(
     rewritten_files: &[RewrittenProjectUnit],
+    rewritten_file_indices: &HashMap<PathBuf, usize>,
     active_file: &Path,
     dependency_closure: Option<&HashSet<PathBuf>>,
     declaration_symbols: Option<&HashSet<String>>,
@@ -698,12 +699,25 @@ fn codegen_program_for_unit(
         declarations: Vec::new(),
     };
 
-    for unit in rewritten_files {
-        if let Some(closure) = dependency_closure {
-            if unit.file != active_file && !closure.contains(&unit.file) {
-                continue;
-            }
-        }
+    let mut relevant_files = dependency_closure
+        .map(|closure| closure.iter().cloned().collect::<Vec<_>>())
+        .unwrap_or_else(|| {
+            rewritten_files
+                .iter()
+                .map(|unit| unit.file.clone())
+                .collect()
+        });
+    if !relevant_files.iter().any(|file| file == active_file) {
+        relevant_files.push(active_file.to_path_buf());
+    }
+    relevant_files.sort();
+    relevant_files.dedup();
+
+    for file in relevant_files {
+        let Some(index) = rewritten_file_indices.get(&file).copied() else {
+            continue;
+        };
+        let unit = &rewritten_files[index];
         let source_program = if unit.file == active_file {
             unit.program.clone()
         } else {
@@ -1592,6 +1606,47 @@ fn transitive_dependencies(
     out
 }
 
+fn precompute_all_transitive_dependencies(
+    forward_graph: &HashMap<PathBuf, HashSet<PathBuf>>,
+) -> HashMap<PathBuf, HashSet<PathBuf>> {
+    fn visit(
+        file: &PathBuf,
+        forward_graph: &HashMap<PathBuf, HashSet<PathBuf>>,
+        memo: &mut HashMap<PathBuf, HashSet<PathBuf>>,
+        visiting: &mut HashSet<PathBuf>,
+    ) -> HashSet<PathBuf> {
+        if let Some(cached) = memo.get(file) {
+            return cached.clone();
+        }
+        if !visiting.insert(file.clone()) {
+            return HashSet::new();
+        }
+
+        let mut closure = HashSet::new();
+        if let Some(deps) = forward_graph.get(file) {
+            for dep in deps {
+                closure.insert(dep.clone());
+                closure.extend(visit(dep, forward_graph, memo, visiting));
+            }
+        }
+
+        visiting.remove(file);
+        memo.insert(file.clone(), closure.clone());
+        closure
+    }
+
+    let mut memo = HashMap::new();
+    let mut visiting = HashSet::new();
+    let mut files: Vec<PathBuf> = forward_graph.keys().cloned().collect();
+    files.sort();
+
+    for file in files {
+        visit(&file, forward_graph, &mut memo, &mut visiting);
+    }
+
+    memo
+}
+
 fn dependency_graph_cache_from_state(
     parsed_files: &[ParsedProjectUnit],
     forward_graph: &HashMap<PathBuf, HashSet<PathBuf>>,
@@ -2053,6 +2108,19 @@ fn object_cache_meta_path(project_root: &Path, file: &Path) -> PathBuf {
         .join(format!("{:016x}.json", hasher.finish()))
 }
 
+#[derive(Debug, Clone)]
+struct ObjectCachePaths {
+    object_path: PathBuf,
+    meta_path: PathBuf,
+}
+
+fn object_cache_paths(project_root: &Path, file: &Path) -> ObjectCachePaths {
+    ObjectCachePaths {
+        object_path: object_cache_object_path(project_root, file),
+        meta_path: object_cache_meta_path(project_root, file),
+    }
+}
+
 fn link_manifest_cache_path(project_root: &Path) -> PathBuf {
     project_root
         .join(".apexcache")
@@ -2133,18 +2201,16 @@ fn compute_object_build_fingerprint(link: &LinkConfig<'_>) -> String {
 }
 
 fn load_object_cache_hit(
-    project_root: &Path,
-    file: &Path,
+    cache_paths: &ObjectCachePaths,
     semantic_fingerprint: &str,
     rewrite_context_fingerprint: &str,
     object_build_fingerprint: &str,
 ) -> Result<Option<PathBuf>, String> {
-    let meta_path = object_cache_meta_path(project_root, file);
-    let obj_path = object_cache_object_path(project_root, file);
-    if !meta_path.exists() || !obj_path.exists() {
+    if !cache_paths.meta_path.exists() || !cache_paths.object_path.exists() {
         return Ok(None);
     }
-    let meta: ObjectCacheEntry = match read_cache_blob(&meta_path, "object cache meta")? {
+    let meta: ObjectCacheEntry = match read_cache_blob(&cache_paths.meta_path, "object cache meta")?
+    {
         Some(meta) => meta,
         None => return Ok(None),
     };
@@ -2158,18 +2224,16 @@ fn load_object_cache_hit(
         return Ok(None);
     }
 
-    Ok(Some(obj_path))
+    Ok(Some(cache_paths.object_path.clone()))
 }
 
 fn save_object_cache_meta(
-    project_root: &Path,
-    file: &Path,
+    cache_paths: &ObjectCachePaths,
     semantic_fingerprint: &str,
     rewrite_context_fingerprint: &str,
     object_build_fingerprint: &str,
 ) -> Result<(), String> {
-    let meta_path = object_cache_meta_path(project_root, file);
-    if let Some(parent) = meta_path.parent() {
+    if let Some(parent) = cache_paths.meta_path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
             format!(
                 "{}: Failed to create object cache directory '{}': {}",
@@ -2187,7 +2251,7 @@ fn save_object_cache_meta(
         rewrite_context_fingerprint: rewrite_context_fingerprint.to_string(),
         object_build_fingerprint: object_build_fingerprint.to_string(),
     };
-    write_cache_blob(&meta_path, "object cache meta", &meta)
+    write_cache_blob(&cache_paths.meta_path, "object cache meta", &meta)
 }
 
 fn parse_project_unit(project_root: &Path, file: &Path) -> Result<ParsedProjectUnit, String> {
@@ -3498,6 +3562,22 @@ fn build_project(
     } else {
         let object_build_fingerprint = compute_object_build_fingerprint(&link);
         let previous_link_manifest = load_link_manifest_cache(&project_root);
+        let rewritten_file_indices: HashMap<PathBuf, usize> = rewritten_files
+            .iter()
+            .enumerate()
+            .map(|(index, unit)| (unit.file.clone(), index))
+            .collect();
+        let object_cache_paths_by_file: HashMap<PathBuf, ObjectCachePaths> = rewritten_files
+            .iter()
+            .map(|unit| {
+                (
+                    unit.file.clone(),
+                    object_cache_paths(&project_root, &unit.file),
+                )
+            })
+            .collect();
+        let transitive_dependency_cache =
+            precompute_all_transitive_dependencies(&file_dependency_graph);
         let codegen_reference_metadata: HashMap<PathBuf, CodegenReferenceMetadata> = parsed_files
             .iter()
             .map(|unit| {
@@ -3511,38 +3591,53 @@ fn build_project(
             })
             .collect();
         let mut object_paths: Vec<Option<PathBuf>> = vec![None; rewritten_files.len()];
-        let mut object_cache_hits: usize = 0;
         let object_candidate_count = rewritten_files
             .iter()
             .filter(|unit| !unit.active_symbols.is_empty())
             .count();
+        let cache_probe_results: Vec<Result<(usize, Option<PathBuf>), String>> = rewritten_files
+            .par_iter()
+            .enumerate()
+            .map(|(index, unit)| {
+                if unit.active_symbols.is_empty() {
+                    return Ok((index, None));
+                }
+                let cache_paths = object_cache_paths_by_file
+                    .get(&unit.file)
+                    .expect("object cache paths should exist for rewritten unit");
+                let cached_obj = load_object_cache_hit(
+                    cache_paths,
+                    &unit.semantic_fingerprint,
+                    &unit.rewrite_context_fingerprint,
+                    &object_build_fingerprint,
+                )?;
+                Ok((index, cached_obj))
+            })
+            .collect();
+
+        let mut object_cache_hits: usize = 0;
         let mut cache_misses: Vec<(usize, &RewrittenProjectUnit)> = Vec::new();
-
-        for (index, unit) in rewritten_files.iter().enumerate() {
-            if unit.active_symbols.is_empty() {
-                continue;
-            }
-
-            if let Some(cached_obj) = load_object_cache_hit(
-                &project_root,
-                &unit.file,
-                &unit.semantic_fingerprint,
-                &unit.rewrite_context_fingerprint,
-                &object_build_fingerprint,
-            )? {
+        for result in cache_probe_results {
+            let (index, cached_obj) = result?;
+            if let Some(cached_obj) = cached_obj {
                 object_paths[index] = Some(cached_obj);
                 object_cache_hits += 1;
-                continue;
+            } else if !rewritten_files[index].active_symbols.is_empty() {
+                cache_misses.push((index, &rewritten_files[index]));
             }
-            cache_misses.push((index, unit));
         }
 
         let compiled_results: Vec<(usize, PathBuf)> = cache_misses
             .par_iter()
             .map(|(index, unit)| {
-                let obj_path = object_cache_object_path(&project_root, &unit.file);
-                let dependency_closure =
-                    transitive_dependencies(&file_dependency_graph, &unit.file);
+                let cache_paths = object_cache_paths_by_file
+                    .get(&unit.file)
+                    .expect("object cache paths should exist for rewritten unit");
+                let obj_path = cache_paths.object_path.clone();
+                let dependency_closure = transitive_dependency_cache
+                    .get(&unit.file)
+                    .cloned()
+                    .unwrap_or_default();
                 let declaration_symbols = declaration_symbols_for_unit(
                     &unit.file,
                     &unit.active_symbols,
@@ -3558,6 +3653,7 @@ fn build_project(
                 );
                 let codegen_program = codegen_program_for_unit(
                     &rewritten_files,
+                    &rewritten_file_indices,
                     &unit.file,
                     Some(&dependency_closure),
                     Some(&declaration_symbols),
@@ -3571,8 +3667,7 @@ fn build_project(
                     &declaration_symbols,
                 )?;
                 save_object_cache_meta(
-                    &project_root,
-                    &unit.file,
+                    cache_paths,
                     &unit.semantic_fingerprint,
                     &unit.rewrite_context_fingerprint,
                     &object_build_fingerprint,
@@ -4914,18 +5009,20 @@ fn bindgen_header(header: &Path, output: Option<&Path>) -> Result<(), String> {
 mod tests {
     use super::{
         api_program_fingerprint, build_file_dependency_graph_incremental,
-        build_reverse_dependency_graph, compute_link_fingerprint,
+        build_reverse_dependency_graph, codegen_program_for_unit, compute_link_fingerprint,
         compute_rewrite_context_fingerprint_for_unit, escape_response_file_arg, parse_project_unit,
-        semantic_program_fingerprint, should_skip_final_link, transitive_dependents,
-        typecheck_summary_cache_from_state, typecheck_summary_cache_matches, DependencyGraphCache,
-        DependencyGraphFileEntry, DependencyResolutionContext, LinkConfig, LinkManifestCache,
-        OutputKind, ParsedProjectUnit, RewriteFingerprintContext, DEPENDENCY_GRAPH_CACHE_SCHEMA,
+        precompute_all_transitive_dependencies, semantic_program_fingerprint,
+        should_skip_final_link, transitive_dependents, typecheck_summary_cache_from_state,
+        typecheck_summary_cache_matches, DependencyGraphCache, DependencyGraphFileEntry,
+        DependencyResolutionContext, LinkConfig, LinkManifestCache, OutputKind, ParsedProjectUnit,
+        RewriteFingerprintContext, RewrittenProjectUnit, DEPENDENCY_GRAPH_CACHE_SCHEMA,
         LINK_MANIFEST_CACHE_SCHEMA,
     };
-    use crate::ast::{ImportDecl, Program};
+    use crate::ast::{Decl, FunctionDecl, ImportDecl, Program, Spanned, Type, Visibility};
     use crate::parser::Parser;
     use std::collections::{HashMap, HashSet};
     use std::fs;
+    use std::path::Path;
     use std::path::PathBuf;
     use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -5474,5 +5571,105 @@ function add(x: Float): Float {
             escape_response_file_arg("C:\\tmp\\a \"b\".o"),
             "\"C:\\\\tmp\\\\a \\\"b\\\".o\""
         );
+    }
+
+    #[test]
+    fn precompute_transitive_dependencies_matches_expected_closure() {
+        let graph = HashMap::from([
+            (
+                PathBuf::from("a.apex"),
+                HashSet::from([PathBuf::from("b.apex"), PathBuf::from("c.apex")]),
+            ),
+            (
+                PathBuf::from("b.apex"),
+                HashSet::from([PathBuf::from("d.apex")]),
+            ),
+            (
+                PathBuf::from("c.apex"),
+                HashSet::from([PathBuf::from("d.apex")]),
+            ),
+            (PathBuf::from("d.apex"), HashSet::new()),
+        ]);
+
+        let all = precompute_all_transitive_dependencies(&graph);
+        assert_eq!(
+            all.get(&PathBuf::from("a.apex"))
+                .cloned()
+                .unwrap_or_default(),
+            HashSet::from([
+                PathBuf::from("b.apex"),
+                PathBuf::from("c.apex"),
+                PathBuf::from("d.apex"),
+            ])
+        );
+    }
+
+    #[test]
+    fn codegen_program_for_unit_uses_indexed_relevant_files_only() {
+        let make_function = |name: &str| {
+            Spanned::new(
+                Decl::Function(FunctionDecl {
+                    name: name.to_string(),
+                    params: Vec::new(),
+                    return_type: Type::None,
+                    body: Vec::new(),
+                    generic_params: Vec::new(),
+                    visibility: Visibility::Public,
+                    is_async: false,
+                    is_extern: false,
+                    extern_abi: None,
+                    extern_link_name: None,
+                    attributes: Vec::new(),
+                    is_variadic: false,
+                }),
+                0..0,
+            )
+        };
+        let make_unit = |file: &str, body_name: &str, api_name: &str| RewrittenProjectUnit {
+            file: PathBuf::from(file),
+            program: Program {
+                package: None,
+                declarations: vec![make_function(body_name)],
+            },
+            api_program: Program {
+                package: None,
+                declarations: vec![make_function(api_name)],
+            },
+            semantic_fingerprint: "sem".to_string(),
+            rewrite_context_fingerprint: "rw".to_string(),
+            active_symbols: HashSet::from([body_name.to_string()]),
+            from_rewrite_cache: false,
+        };
+
+        let rewritten_files = vec![
+            make_unit("a.apex", "fa", "fa_api"),
+            make_unit("b.apex", "fb", "fb_api"),
+            make_unit("c.apex", "fc", "fc_api"),
+        ];
+        let rewritten_file_indices = HashMap::from([
+            (PathBuf::from("a.apex"), 0usize),
+            (PathBuf::from("b.apex"), 1usize),
+            (PathBuf::from("c.apex"), 2usize),
+        ]);
+        let closure = HashSet::from([PathBuf::from("b.apex")]);
+        let declaration_symbols = HashSet::from(["fb_api".to_string()]);
+
+        let program = codegen_program_for_unit(
+            &rewritten_files,
+            &rewritten_file_indices,
+            Path::new("a.apex"),
+            Some(&closure),
+            Some(&declaration_symbols),
+        );
+
+        let names = program
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                Decl::Function(func) => Some(func.name.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["fa".to_string(), "fb_api".to_string()]);
     }
 }
