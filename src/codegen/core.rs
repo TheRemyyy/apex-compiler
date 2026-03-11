@@ -81,6 +81,7 @@ struct AsyncFunctionPlan<'ctx> {
 struct GenericTemplate {
     func: FunctionDecl,
     span: Span,
+    owner_class: Option<String>,
 }
 
 /// Code generator
@@ -197,7 +198,8 @@ impl<'ctx> Codegen<'ctx> {
     fn collect_generic_templates_from_decl(
         decl: &Spanned<Decl>,
         module_prefix: Option<&str>,
-        templates: &mut HashMap<String, GenericTemplate>,
+        function_templates: &mut HashMap<String, GenericTemplate>,
+        method_templates: &mut HashMap<String, Vec<GenericTemplate>>,
     ) {
         match &decl.node {
             Decl::Function(func) => {
@@ -209,11 +211,12 @@ impl<'ctx> Codegen<'ctx> {
                 } else {
                     func.name.clone()
                 };
-                templates.insert(
+                function_templates.insert(
                     key,
                     GenericTemplate {
                         func: func.clone(),
                         span: decl.span.clone(),
+                        owner_class: None,
                     },
                 );
             }
@@ -224,7 +227,32 @@ impl<'ctx> Codegen<'ctx> {
                     module.name.clone()
                 };
                 for inner in &module.declarations {
-                    Self::collect_generic_templates_from_decl(inner, Some(&next_prefix), templates);
+                    Self::collect_generic_templates_from_decl(
+                        inner,
+                        Some(&next_prefix),
+                        function_templates,
+                        method_templates,
+                    );
+                }
+            }
+            Decl::Class(class) => {
+                let class_name = if let Some(prefix) = module_prefix {
+                    format!("{}__{}", prefix, class.name)
+                } else {
+                    class.name.clone()
+                };
+                for method in &class.methods {
+                    if method.generic_params.is_empty() {
+                        continue;
+                    }
+                    method_templates
+                        .entry(method.name.clone())
+                        .or_default()
+                        .push(GenericTemplate {
+                            func: method.clone(),
+                            span: decl.span.clone(),
+                            owner_class: Some(class_name.clone()),
+                        });
                 }
             }
             _ => {}
@@ -246,9 +274,11 @@ impl<'ctx> Codegen<'ctx> {
 
     fn rewrite_stmt_generic_calls(
         stmt: &Stmt,
-        templates: &HashMap<String, GenericTemplate>,
+        function_templates: &HashMap<String, GenericTemplate>,
+        method_templates: &HashMap<String, Vec<GenericTemplate>>,
         emitted: &mut HashSet<String>,
-        generated: &mut Vec<Spanned<Decl>>,
+        generated_functions: &mut Vec<Spanned<Decl>>,
+        generated_methods: &mut HashMap<String, Vec<FunctionDecl>>,
     ) -> Result<Stmt> {
         Ok(match stmt {
             Stmt::Let {
@@ -260,23 +290,51 @@ impl<'ctx> Codegen<'ctx> {
                 name: name.clone(),
                 ty: ty.clone(),
                 value: Spanned::new(
-                    Self::rewrite_expr_generic_calls(&value.node, templates, emitted, generated)?,
+                    Self::rewrite_expr_generic_calls(
+                        &value.node,
+                        function_templates,
+                        method_templates,
+                        emitted,
+                        generated_functions,
+                        generated_methods,
+                    )?,
                     value.span.clone(),
                 ),
                 mutable: *mutable,
             },
             Stmt::Assign { target, value } => Stmt::Assign {
                 target: Spanned::new(
-                    Self::rewrite_expr_generic_calls(&target.node, templates, emitted, generated)?,
+                    Self::rewrite_expr_generic_calls(
+                        &target.node,
+                        function_templates,
+                        method_templates,
+                        emitted,
+                        generated_functions,
+                        generated_methods,
+                    )?,
                     target.span.clone(),
                 ),
                 value: Spanned::new(
-                    Self::rewrite_expr_generic_calls(&value.node, templates, emitted, generated)?,
+                    Self::rewrite_expr_generic_calls(
+                        &value.node,
+                        function_templates,
+                        method_templates,
+                        emitted,
+                        generated_functions,
+                        generated_methods,
+                    )?,
                     value.span.clone(),
                 ),
             },
             Stmt::Expr(expr) => Stmt::Expr(Spanned::new(
-                Self::rewrite_expr_generic_calls(&expr.node, templates, emitted, generated)?,
+                Self::rewrite_expr_generic_calls(
+                    &expr.node,
+                    function_templates,
+                    method_templates,
+                    emitted,
+                    generated_functions,
+                    generated_methods,
+                )?,
                 expr.span.clone(),
             )),
             Stmt::Return(expr) => Stmt::Return(
@@ -284,7 +342,12 @@ impl<'ctx> Codegen<'ctx> {
                     .map(|e| {
                         Ok(Spanned::new(
                             Self::rewrite_expr_generic_calls(
-                                &e.node, templates, emitted, generated,
+                                &e.node,
+                                function_templates,
+                                method_templates,
+                                emitted,
+                                generated_functions,
+                                generated_methods,
                             )?,
                             e.span.clone(),
                         ))
@@ -299,9 +362,11 @@ impl<'ctx> Codegen<'ctx> {
                 condition: Spanned::new(
                     Self::rewrite_expr_generic_calls(
                         &condition.node,
-                        templates,
+                        function_templates,
+                        method_templates,
                         emitted,
-                        generated,
+                        generated_functions,
+                        generated_methods,
                     )?,
                     condition.span.clone(),
                 ),
@@ -310,7 +375,12 @@ impl<'ctx> Codegen<'ctx> {
                     .map(|s| {
                         Ok(Spanned::new(
                             Self::rewrite_stmt_generic_calls(
-                                &s.node, templates, emitted, generated,
+                                &s.node,
+                                function_templates,
+                                method_templates,
+                                emitted,
+                                generated_functions,
+                                generated_methods,
                             )?,
                             s.span.clone(),
                         ))
@@ -323,7 +393,12 @@ impl<'ctx> Codegen<'ctx> {
                             .map(|s| {
                                 Ok(Spanned::new(
                                     Self::rewrite_stmt_generic_calls(
-                                        &s.node, templates, emitted, generated,
+                                        &s.node,
+                                        function_templates,
+                                        method_templates,
+                                        emitted,
+                                        generated_functions,
+                                        generated_methods,
                                     )?,
                                     s.span.clone(),
                                 ))
@@ -336,9 +411,11 @@ impl<'ctx> Codegen<'ctx> {
                 condition: Spanned::new(
                     Self::rewrite_expr_generic_calls(
                         &condition.node,
-                        templates,
+                        function_templates,
+                        method_templates,
                         emitted,
-                        generated,
+                        generated_functions,
+                        generated_methods,
                     )?,
                     condition.span.clone(),
                 ),
@@ -347,7 +424,12 @@ impl<'ctx> Codegen<'ctx> {
                     .map(|s| {
                         Ok(Spanned::new(
                             Self::rewrite_stmt_generic_calls(
-                                &s.node, templates, emitted, generated,
+                                &s.node,
+                                function_templates,
+                                method_templates,
+                                emitted,
+                                generated_functions,
+                                generated_methods,
                             )?,
                             s.span.clone(),
                         ))
@@ -365,9 +447,11 @@ impl<'ctx> Codegen<'ctx> {
                 iterable: Spanned::new(
                     Self::rewrite_expr_generic_calls(
                         &iterable.node,
-                        templates,
+                        function_templates,
+                        method_templates,
                         emitted,
-                        generated,
+                        generated_functions,
+                        generated_methods,
                     )?,
                     iterable.span.clone(),
                 ),
@@ -376,7 +460,12 @@ impl<'ctx> Codegen<'ctx> {
                     .map(|s| {
                         Ok(Spanned::new(
                             Self::rewrite_stmt_generic_calls(
-                                &s.node, templates, emitted, generated,
+                                &s.node,
+                                function_templates,
+                                method_templates,
+                                emitted,
+                                generated_functions,
+                                generated_methods,
                             )?,
                             s.span.clone(),
                         ))
@@ -385,7 +474,14 @@ impl<'ctx> Codegen<'ctx> {
             },
             Stmt::Match { expr, arms } => Stmt::Match {
                 expr: Spanned::new(
-                    Self::rewrite_expr_generic_calls(&expr.node, templates, emitted, generated)?,
+                    Self::rewrite_expr_generic_calls(
+                        &expr.node,
+                        function_templates,
+                        method_templates,
+                        emitted,
+                        generated_functions,
+                        generated_methods,
+                    )?,
                     expr.span.clone(),
                 ),
                 arms: arms
@@ -399,7 +495,12 @@ impl<'ctx> Codegen<'ctx> {
                                 .map(|s| {
                                     Ok(Spanned::new(
                                         Self::rewrite_stmt_generic_calls(
-                                            &s.node, templates, emitted, generated,
+                                            &s.node,
+                                            function_templates,
+                                            method_templates,
+                                            emitted,
+                                            generated_functions,
+                                            generated_methods,
                                         )?,
                                         s.span.clone(),
                                     ))
@@ -762,9 +863,11 @@ impl<'ctx> Codegen<'ctx> {
 
     fn rewrite_expr_generic_calls(
         expr: &Expr,
-        templates: &HashMap<String, GenericTemplate>,
+        function_templates: &HashMap<String, GenericTemplate>,
+        method_templates: &HashMap<String, Vec<GenericTemplate>>,
         emitted: &mut HashSet<String>,
-        generated: &mut Vec<Spanned<Decl>>,
+        generated_functions: &mut Vec<Spanned<Decl>>,
+        generated_methods: &mut HashMap<String, Vec<FunctionDecl>>,
     ) -> Result<Expr> {
         Ok(match expr {
             Expr::Call {
@@ -773,7 +876,14 @@ impl<'ctx> Codegen<'ctx> {
                 type_args,
             } => {
                 let rewritten_callee = Spanned::new(
-                    Self::rewrite_expr_generic_calls(&callee.node, templates, emitted, generated)?,
+                    Self::rewrite_expr_generic_calls(
+                        &callee.node,
+                        function_templates,
+                        method_templates,
+                        emitted,
+                        generated_functions,
+                        generated_methods,
+                    )?,
                     callee.span.clone(),
                 );
                 let rewritten_args = args
@@ -781,7 +891,12 @@ impl<'ctx> Codegen<'ctx> {
                     .map(|arg| {
                         Ok(Spanned::new(
                             Self::rewrite_expr_generic_calls(
-                                &arg.node, templates, emitted, generated,
+                                &arg.node,
+                                function_templates,
+                                method_templates,
+                                emitted,
+                                generated_functions,
+                                generated_methods,
                             )?,
                             arg.span.clone(),
                         ))
@@ -789,8 +904,100 @@ impl<'ctx> Codegen<'ctx> {
                     .collect::<Result<Vec<_>>>()?;
 
                 if !type_args.is_empty() {
+                    if let Expr::Field { field, .. } = &callee.node {
+                        if let Some(candidates) = method_templates.get(field) {
+                            if candidates.len() == 1 {
+                                let template = &candidates[0];
+                                if template.func.generic_params.len() == type_args.len() {
+                                    let suffix = type_args
+                                        .iter()
+                                        .map(Self::type_specialization_suffix)
+                                        .collect::<Vec<_>>()
+                                        .join("_");
+                                    let spec_name = format!("{}__spec__{}", field, suffix);
+                                    let emitted_key = format!(
+                                        "{}::{}",
+                                        template.owner_class.as_deref().unwrap_or(field),
+                                        spec_name
+                                    );
+                                    if emitted.insert(emitted_key) {
+                                        let mut bindings: HashMap<String, Type> = HashMap::new();
+                                        for (param, ty) in template
+                                            .func
+                                            .generic_params
+                                            .iter()
+                                            .zip(type_args.iter())
+                                        {
+                                            bindings.insert(param.name.clone(), ty.clone());
+                                        }
+
+                                        let mut spec_func = template.func.clone();
+                                        spec_func.name = spec_name.clone();
+                                        spec_func.generic_params.clear();
+                                        for param in &mut spec_func.params {
+                                            param.ty = Self::substitute_type(&param.ty, &bindings);
+                                        }
+                                        spec_func.return_type = Self::substitute_type(
+                                            &spec_func.return_type,
+                                            &bindings,
+                                        );
+                                        spec_func.body = spec_func
+                                            .body
+                                            .iter()
+                                            .map(|s| {
+                                                Spanned::new(
+                                                    Self::substitute_stmt_types(&s.node, &bindings),
+                                                    s.span.clone(),
+                                                )
+                                            })
+                                            .collect();
+
+                                        let rewritten_body = spec_func
+                                            .body
+                                            .iter()
+                                            .map(|s| {
+                                                Ok(Spanned::new(
+                                                    Self::rewrite_stmt_generic_calls(
+                                                        &s.node,
+                                                        function_templates,
+                                                        method_templates,
+                                                        emitted,
+                                                        generated_functions,
+                                                        generated_methods,
+                                                    )?,
+                                                    s.span.clone(),
+                                                ))
+                                            })
+                                            .collect::<Result<Vec<_>>>()?;
+                                        spec_func.body = rewritten_body;
+                                        if let Some(owner_class) = &template.owner_class {
+                                            generated_methods
+                                                .entry(owner_class.clone())
+                                                .or_default()
+                                                .push(spec_func);
+                                        }
+                                    }
+
+                                    if let Expr::Field { object, .. } = &rewritten_callee.node {
+                                        return Ok(Expr::Call {
+                                            callee: Box::new(Spanned::new(
+                                                Expr::Field {
+                                                    object: object.clone(),
+                                                    field: spec_name,
+                                                },
+                                                rewritten_callee.span,
+                                            )),
+                                            args: rewritten_args,
+                                            type_args: Vec::new(),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     if let Some(template_key) = Self::template_key_for_callee(&callee.node) {
-                        if let Some(template) = templates.get(&template_key) {
+                        if let Some(template) = function_templates.get(&template_key) {
                             if template.func.generic_params.len() != type_args.len() {
                                 return Ok(Expr::Call {
                                     callee: Box::new(rewritten_callee),
@@ -838,14 +1045,19 @@ impl<'ctx> Codegen<'ctx> {
                                     .map(|s| {
                                         Ok(Spanned::new(
                                             Self::rewrite_stmt_generic_calls(
-                                                &s.node, templates, emitted, generated,
+                                                &s.node,
+                                                function_templates,
+                                                method_templates,
+                                                emitted,
+                                                generated_functions,
+                                                generated_methods,
                                             )?,
                                             s.span.clone(),
                                         ))
                                     })
                                     .collect::<Result<Vec<_>>>()?;
                                 spec_func.body = rewritten_body;
-                                generated.push(Spanned::new(
+                                generated_functions.push(Spanned::new(
                                     Decl::Function(spec_func),
                                     template.span.clone(),
                                 ));
@@ -884,48 +1096,104 @@ impl<'ctx> Codegen<'ctx> {
             Expr::Binary { op, left, right } => Expr::Binary {
                 op: *op,
                 left: Box::new(Spanned::new(
-                    Self::rewrite_expr_generic_calls(&left.node, templates, emitted, generated)?,
+                    Self::rewrite_expr_generic_calls(
+                        &left.node,
+                        function_templates,
+                        method_templates,
+                        emitted,
+                        generated_functions,
+                        generated_methods,
+                    )?,
                     left.span.clone(),
                 )),
                 right: Box::new(Spanned::new(
-                    Self::rewrite_expr_generic_calls(&right.node, templates, emitted, generated)?,
+                    Self::rewrite_expr_generic_calls(
+                        &right.node,
+                        function_templates,
+                        method_templates,
+                        emitted,
+                        generated_functions,
+                        generated_methods,
+                    )?,
                     right.span.clone(),
                 )),
             },
             Expr::Unary { op, expr } => Expr::Unary {
                 op: *op,
                 expr: Box::new(Spanned::new(
-                    Self::rewrite_expr_generic_calls(&expr.node, templates, emitted, generated)?,
+                    Self::rewrite_expr_generic_calls(
+                        &expr.node,
+                        function_templates,
+                        method_templates,
+                        emitted,
+                        generated_functions,
+                        generated_methods,
+                    )?,
                     expr.span.clone(),
                 )),
             },
             Expr::Field { object, field } => Expr::Field {
                 object: Box::new(Spanned::new(
-                    Self::rewrite_expr_generic_calls(&object.node, templates, emitted, generated)?,
+                    Self::rewrite_expr_generic_calls(
+                        &object.node,
+                        function_templates,
+                        method_templates,
+                        emitted,
+                        generated_functions,
+                        generated_methods,
+                    )?,
                     object.span.clone(),
                 )),
                 field: field.clone(),
             },
             Expr::Index { object, index } => Expr::Index {
                 object: Box::new(Spanned::new(
-                    Self::rewrite_expr_generic_calls(&object.node, templates, emitted, generated)?,
+                    Self::rewrite_expr_generic_calls(
+                        &object.node,
+                        function_templates,
+                        method_templates,
+                        emitted,
+                        generated_functions,
+                        generated_methods,
+                    )?,
                     object.span.clone(),
                 )),
                 index: Box::new(Spanned::new(
-                    Self::rewrite_expr_generic_calls(&index.node, templates, emitted, generated)?,
+                    Self::rewrite_expr_generic_calls(
+                        &index.node,
+                        function_templates,
+                        method_templates,
+                        emitted,
+                        generated_functions,
+                        generated_methods,
+                    )?,
                     index.span.clone(),
                 )),
             },
             Expr::Lambda { params, body } => Expr::Lambda {
                 params: params.clone(),
                 body: Box::new(Spanned::new(
-                    Self::rewrite_expr_generic_calls(&body.node, templates, emitted, generated)?,
+                    Self::rewrite_expr_generic_calls(
+                        &body.node,
+                        function_templates,
+                        method_templates,
+                        emitted,
+                        generated_functions,
+                        generated_methods,
+                    )?,
                     body.span.clone(),
                 )),
             },
             Expr::Match { expr, arms } => Expr::Match {
                 expr: Box::new(Spanned::new(
-                    Self::rewrite_expr_generic_calls(&expr.node, templates, emitted, generated)?,
+                    Self::rewrite_expr_generic_calls(
+                        &expr.node,
+                        function_templates,
+                        method_templates,
+                        emitted,
+                        generated_functions,
+                        generated_methods,
+                    )?,
                     expr.span.clone(),
                 )),
                 arms: arms
@@ -939,7 +1207,12 @@ impl<'ctx> Codegen<'ctx> {
                                 .map(|s| {
                                     Ok(Spanned::new(
                                         Self::rewrite_stmt_generic_calls(
-                                            &s.node, templates, emitted, generated,
+                                            &s.node,
+                                            function_templates,
+                                            method_templates,
+                                            emitted,
+                                            generated_functions,
+                                            generated_methods,
                                         )?,
                                         s.span.clone(),
                                     ))
@@ -956,7 +1229,12 @@ impl<'ctx> Codegen<'ctx> {
                         StringPart::Literal(s) => Ok(StringPart::Literal(s.clone())),
                         StringPart::Expr(e) => Ok(StringPart::Expr(Spanned::new(
                             Self::rewrite_expr_generic_calls(
-                                &e.node, templates, emitted, generated,
+                                &e.node,
+                                function_templates,
+                                method_templates,
+                                emitted,
+                                generated_functions,
+                                generated_methods,
                             )?,
                             e.span.clone(),
                         ))),
@@ -964,23 +1242,58 @@ impl<'ctx> Codegen<'ctx> {
                     .collect::<Result<Vec<_>>>()?,
             ),
             Expr::Try(inner) => Expr::Try(Box::new(Spanned::new(
-                Self::rewrite_expr_generic_calls(&inner.node, templates, emitted, generated)?,
+                Self::rewrite_expr_generic_calls(
+                    &inner.node,
+                    function_templates,
+                    method_templates,
+                    emitted,
+                    generated_functions,
+                    generated_methods,
+                )?,
                 inner.span.clone(),
             ))),
             Expr::Borrow(inner) => Expr::Borrow(Box::new(Spanned::new(
-                Self::rewrite_expr_generic_calls(&inner.node, templates, emitted, generated)?,
+                Self::rewrite_expr_generic_calls(
+                    &inner.node,
+                    function_templates,
+                    method_templates,
+                    emitted,
+                    generated_functions,
+                    generated_methods,
+                )?,
                 inner.span.clone(),
             ))),
             Expr::MutBorrow(inner) => Expr::MutBorrow(Box::new(Spanned::new(
-                Self::rewrite_expr_generic_calls(&inner.node, templates, emitted, generated)?,
+                Self::rewrite_expr_generic_calls(
+                    &inner.node,
+                    function_templates,
+                    method_templates,
+                    emitted,
+                    generated_functions,
+                    generated_methods,
+                )?,
                 inner.span.clone(),
             ))),
             Expr::Deref(inner) => Expr::Deref(Box::new(Spanned::new(
-                Self::rewrite_expr_generic_calls(&inner.node, templates, emitted, generated)?,
+                Self::rewrite_expr_generic_calls(
+                    &inner.node,
+                    function_templates,
+                    method_templates,
+                    emitted,
+                    generated_functions,
+                    generated_methods,
+                )?,
                 inner.span.clone(),
             ))),
             Expr::Await(inner) => Expr::Await(Box::new(Spanned::new(
-                Self::rewrite_expr_generic_calls(&inner.node, templates, emitted, generated)?,
+                Self::rewrite_expr_generic_calls(
+                    &inner.node,
+                    function_templates,
+                    method_templates,
+                    emitted,
+                    generated_functions,
+                    generated_methods,
+                )?,
                 inner.span.clone(),
             ))),
             Expr::AsyncBlock(block) => Expr::AsyncBlock(
@@ -989,7 +1302,12 @@ impl<'ctx> Codegen<'ctx> {
                     .map(|s| {
                         Ok(Spanned::new(
                             Self::rewrite_stmt_generic_calls(
-                                &s.node, templates, emitted, generated,
+                                &s.node,
+                                function_templates,
+                                method_templates,
+                                emitted,
+                                generated_functions,
+                                generated_methods,
                             )?,
                             s.span.clone(),
                         ))
@@ -1000,9 +1318,11 @@ impl<'ctx> Codegen<'ctx> {
                 condition: Box::new(Spanned::new(
                     Self::rewrite_expr_generic_calls(
                         &condition.node,
-                        templates,
+                        function_templates,
+                        method_templates,
                         emitted,
-                        generated,
+                        generated_functions,
+                        generated_methods,
                     )?,
                     condition.span.clone(),
                 )),
@@ -1011,7 +1331,12 @@ impl<'ctx> Codegen<'ctx> {
                     .map(|m| {
                         Ok(Box::new(Spanned::new(
                             Self::rewrite_expr_generic_calls(
-                                &m.node, templates, emitted, generated,
+                                &m.node,
+                                function_templates,
+                                method_templates,
+                                emitted,
+                                generated_functions,
+                                generated_methods,
                             )?,
                             m.span.clone(),
                         )))
@@ -1028,7 +1353,12 @@ impl<'ctx> Codegen<'ctx> {
                     .map(|s| {
                         Ok(Box::new(Spanned::new(
                             Self::rewrite_expr_generic_calls(
-                                &s.node, templates, emitted, generated,
+                                &s.node,
+                                function_templates,
+                                method_templates,
+                                emitted,
+                                generated_functions,
+                                generated_methods,
                             )?,
                             s.span.clone(),
                         )))
@@ -1039,7 +1369,12 @@ impl<'ctx> Codegen<'ctx> {
                     .map(|e| {
                         Ok(Box::new(Spanned::new(
                             Self::rewrite_expr_generic_calls(
-                                &e.node, templates, emitted, generated,
+                                &e.node,
+                                function_templates,
+                                method_templates,
+                                emitted,
+                                generated_functions,
+                                generated_methods,
                             )?,
                             e.span.clone(),
                         )))
@@ -1055,9 +1390,11 @@ impl<'ctx> Codegen<'ctx> {
                 condition: Box::new(Spanned::new(
                     Self::rewrite_expr_generic_calls(
                         &condition.node,
-                        templates,
+                        function_templates,
+                        method_templates,
                         emitted,
-                        generated,
+                        generated_functions,
+                        generated_methods,
                     )?,
                     condition.span.clone(),
                 )),
@@ -1066,7 +1403,12 @@ impl<'ctx> Codegen<'ctx> {
                     .map(|s| {
                         Ok(Spanned::new(
                             Self::rewrite_stmt_generic_calls(
-                                &s.node, templates, emitted, generated,
+                                &s.node,
+                                function_templates,
+                                method_templates,
+                                emitted,
+                                generated_functions,
+                                generated_methods,
                             )?,
                             s.span.clone(),
                         ))
@@ -1079,7 +1421,12 @@ impl<'ctx> Codegen<'ctx> {
                             .map(|s| {
                                 Ok(Spanned::new(
                                     Self::rewrite_stmt_generic_calls(
-                                        &s.node, templates, emitted, generated,
+                                        &s.node,
+                                        function_templates,
+                                        method_templates,
+                                        emitted,
+                                        generated_functions,
+                                        generated_methods,
                                     )?,
                                     s.span.clone(),
                                 ))
@@ -1094,7 +1441,12 @@ impl<'ctx> Codegen<'ctx> {
                     .map(|s| {
                         Ok(Spanned::new(
                             Self::rewrite_stmt_generic_calls(
-                                &s.node, templates, emitted, generated,
+                                &s.node,
+                                function_templates,
+                                method_templates,
+                                emitted,
+                                generated_functions,
+                                generated_methods,
                             )?,
                             s.span.clone(),
                         ))
@@ -1107,9 +1459,11 @@ impl<'ctx> Codegen<'ctx> {
 
     fn rewrite_decl_generic_calls(
         decl: &Spanned<Decl>,
-        templates: &HashMap<String, GenericTemplate>,
+        function_templates: &HashMap<String, GenericTemplate>,
+        method_templates: &HashMap<String, Vec<GenericTemplate>>,
         emitted: &mut HashSet<String>,
-        generated: &mut Vec<Spanned<Decl>>,
+        generated_functions: &mut Vec<Spanned<Decl>>,
+        generated_methods: &mut HashMap<String, Vec<FunctionDecl>>,
     ) -> Result<Spanned<Decl>> {
         Ok(match &decl.node {
             Decl::Function(func) => {
@@ -1120,7 +1474,12 @@ impl<'ctx> Codegen<'ctx> {
                     .map(|s| {
                         Ok(Spanned::new(
                             Self::rewrite_stmt_generic_calls(
-                                &s.node, templates, emitted, generated,
+                                &s.node,
+                                function_templates,
+                                method_templates,
+                                emitted,
+                                generated_functions,
+                                generated_methods,
                             )?,
                             s.span.clone(),
                         ))
@@ -1134,7 +1493,14 @@ impl<'ctx> Codegen<'ctx> {
                     .declarations
                     .iter()
                     .map(|inner| {
-                        Self::rewrite_decl_generic_calls(inner, templates, emitted, generated)
+                        Self::rewrite_decl_generic_calls(
+                            inner,
+                            function_templates,
+                            method_templates,
+                            emitted,
+                            generated_functions,
+                            generated_methods,
+                        )
                     })
                     .collect::<Result<Vec<_>>>()?;
                 Spanned::new(Decl::Module(m), decl.span.clone())
@@ -1148,7 +1514,12 @@ impl<'ctx> Codegen<'ctx> {
                         .map(|s| {
                             Ok(Spanned::new(
                                 Self::rewrite_stmt_generic_calls(
-                                    &s.node, templates, emitted, generated,
+                                    &s.node,
+                                    function_templates,
+                                    method_templates,
+                                    emitted,
+                                    generated_functions,
+                                    generated_methods,
                                 )?,
                                 s.span.clone(),
                             ))
@@ -1162,7 +1533,12 @@ impl<'ctx> Codegen<'ctx> {
                         .map(|s| {
                             Ok(Spanned::new(
                                 Self::rewrite_stmt_generic_calls(
-                                    &s.node, templates, emitted, generated,
+                                    &s.node,
+                                    function_templates,
+                                    method_templates,
+                                    emitted,
+                                    generated_functions,
+                                    generated_methods,
                                 )?,
                                 s.span.clone(),
                             ))
@@ -1180,7 +1556,12 @@ impl<'ctx> Codegen<'ctx> {
                             .map(|s| {
                                 Ok(Spanned::new(
                                     Self::rewrite_stmt_generic_calls(
-                                        &s.node, templates, emitted, generated,
+                                        &s.node,
+                                        function_templates,
+                                        method_templates,
+                                        emitted,
+                                        generated_functions,
+                                        generated_methods,
                                     )?,
                                     s.span.clone(),
                                 ))
@@ -1193,6 +1574,48 @@ impl<'ctx> Codegen<'ctx> {
             }
             _ => decl.clone(),
         })
+    }
+
+    fn append_generated_methods_to_decl(
+        decl: &Spanned<Decl>,
+        module_prefix: Option<&str>,
+        generated_methods: &HashMap<String, Vec<FunctionDecl>>,
+    ) -> Spanned<Decl> {
+        match &decl.node {
+            Decl::Module(module) => {
+                let next_prefix = if let Some(prefix) = module_prefix {
+                    format!("{}__{}", prefix, module.name)
+                } else {
+                    module.name.clone()
+                };
+                let mut rewritten_module = module.clone();
+                rewritten_module.declarations = module
+                    .declarations
+                    .iter()
+                    .map(|inner| {
+                        Self::append_generated_methods_to_decl(
+                            inner,
+                            Some(&next_prefix),
+                            generated_methods,
+                        )
+                    })
+                    .collect();
+                Spanned::new(Decl::Module(rewritten_module), decl.span.clone())
+            }
+            Decl::Class(class) => {
+                let class_key = if let Some(prefix) = module_prefix {
+                    format!("{}__{}", prefix, class.name)
+                } else {
+                    class.name.clone()
+                };
+                let mut rewritten_class = class.clone();
+                if let Some(extra_methods) = generated_methods.get(&class_key) {
+                    rewritten_class.methods.extend(extra_methods.clone());
+                }
+                Spanned::new(Decl::Class(rewritten_class), decl.span.clone())
+            }
+            _ => decl.clone(),
+        }
     }
 
     fn expr_has_explicit_generic_calls(expr: &Expr) -> bool {
@@ -1369,31 +1792,43 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     fn specialize_explicit_generic_calls(program: &Program) -> Result<Program> {
-        let mut templates: HashMap<String, GenericTemplate> = HashMap::new();
+        let mut function_templates: HashMap<String, GenericTemplate> = HashMap::new();
+        let mut method_templates: HashMap<String, Vec<GenericTemplate>> = HashMap::new();
         for decl in &program.declarations {
-            Self::collect_generic_templates_from_decl(decl, None, &mut templates);
+            Self::collect_generic_templates_from_decl(
+                decl,
+                None,
+                &mut function_templates,
+                &mut method_templates,
+            );
         }
-        if templates.is_empty() {
+        if function_templates.is_empty() && method_templates.is_empty() {
             return Ok(program.clone());
         }
 
         let mut emitted_specs: HashSet<String> = HashSet::new();
-        let mut generated: Vec<Spanned<Decl>> = Vec::new();
+        let mut generated_functions: Vec<Spanned<Decl>> = Vec::new();
+        let mut generated_methods: HashMap<String, Vec<FunctionDecl>> = HashMap::new();
         let rewritten = program
             .declarations
             .iter()
             .map(|decl| {
                 Self::rewrite_decl_generic_calls(
                     decl,
-                    &templates,
+                    &function_templates,
+                    &method_templates,
                     &mut emitted_specs,
-                    &mut generated,
+                    &mut generated_functions,
+                    &mut generated_methods,
                 )
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let mut all_decls = rewritten;
-        all_decls.extend(generated);
+        let mut all_decls = rewritten
+            .iter()
+            .map(|decl| Self::append_generated_methods_to_decl(decl, None, &generated_methods))
+            .collect::<Vec<_>>();
+        all_decls.extend(generated_functions);
         Ok(Program {
             package: program.package.clone(),
             declarations: all_decls,
@@ -2012,10 +2447,8 @@ impl<'ctx> Codegen<'ctx> {
             },
         );
 
-        // Declare constructor
-        if class.constructor.is_some() {
-            self.declare_class_constructor(class)?;
-        }
+        // Declare constructor (implicit default constructor when omitted)
+        self.declare_class_constructor(class)?;
 
         // Declare methods
         for method in &class.methods {
@@ -2026,11 +2459,12 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     pub fn declare_class_constructor(&mut self, class: &ClassDecl) -> Result<()> {
-        let constructor = class.constructor.as_ref().ok_or_else(|| {
-            CodegenError::new(format!("Class '{}' has no constructor", class.name))
-        })?;
-        let param_types: Vec<BasicMetadataTypeEnum> = constructor
-            .params
+        let ctor_params = class
+            .constructor
+            .as_ref()
+            .map(|c| c.params.as_slice())
+            .unwrap_or(&[]);
+        let param_types: Vec<BasicMetadataTypeEnum> = ctor_params
             .iter()
             .map(|p| self.llvm_type(&p.ty).into())
             .collect();
@@ -2050,7 +2484,7 @@ impl<'ctx> Codegen<'ctx> {
             (
                 func,
                 Type::Function(
-                    constructor.params.iter().map(|p| p.ty.clone()).collect(),
+                    ctor_params.iter().map(|p| p.ty.clone()).collect(),
                     Box::new(Type::Named(class.name.clone())),
                 ),
             ),
@@ -2092,9 +2526,14 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     pub fn compile_class(&mut self, class: &ClassDecl) -> Result<()> {
-        if let Some(constructor) = &class.constructor {
-            self.compile_constructor(class, constructor)?;
-        }
+        let implicit_constructor = Constructor {
+            params: vec![],
+            body: vec![],
+        };
+        self.compile_constructor(
+            class,
+            class.constructor.as_ref().unwrap_or(&implicit_constructor),
+        )?;
 
         for method in &class.methods {
             self.compile_method(class, method)?;
@@ -5047,6 +5486,54 @@ impl<'ctx> Codegen<'ctx> {
                 }
             }
             return self.compile_method_call(&object.node, field, args);
+        }
+
+        if !matches!(callee, Expr::Ident(_) | Expr::Field { .. }) {
+            let callee_ty = self.infer_expr_type(callee, &[]);
+            if let Type::Function(param_types, ret_type) = callee_ty {
+                let closure_val = self.compile_expr(callee)?.into_struct_value();
+                let ptr = self
+                    .builder
+                    .build_extract_value(closure_val, 0, "fn_ptr")
+                    .unwrap()
+                    .into_pointer_value();
+                let env_ptr = self
+                    .builder
+                    .build_extract_value(closure_val, 1, "env_ptr")
+                    .unwrap();
+
+                let llvm_ret = self.llvm_type(&ret_type);
+                let mut llvm_params: Vec<BasicMetadataTypeEnum> =
+                    vec![self.context.ptr_type(AddressSpace::default()).into()];
+                for p in &param_types {
+                    llvm_params.push(self.llvm_type(p).into());
+                }
+
+                let fn_type = match llvm_ret {
+                    BasicTypeEnum::IntType(i) => i.fn_type(&llvm_params, false),
+                    BasicTypeEnum::FloatType(f) => f.fn_type(&llvm_params, false),
+                    BasicTypeEnum::PointerType(p) => p.fn_type(&llvm_params, false),
+                    BasicTypeEnum::StructType(s) => s.fn_type(&llvm_params, false),
+                    _ => self.context.i8_type().fn_type(&llvm_params, false),
+                };
+
+                let mut compiled_args: Vec<BasicValueEnum> = vec![env_ptr];
+                for a in args {
+                    compiled_args.push(self.compile_expr(&a.node)?);
+                }
+
+                let args_meta: Vec<BasicMetadataValueEnum> =
+                    compiled_args.iter().map(|a| (*a).into()).collect();
+                let call = self
+                    .builder
+                    .build_indirect_call(fn_type, ptr, &args_meta, "call")
+                    .unwrap();
+
+                return Ok(match call.try_as_basic_value() {
+                    ValueKind::Basic(val) => val,
+                    ValueKind::Instruction(_) => self.context.i8_type().const_int(0, false).into(),
+                });
+            }
         }
 
         // Regular function call

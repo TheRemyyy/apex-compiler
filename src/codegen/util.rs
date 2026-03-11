@@ -1263,6 +1263,7 @@ impl<'ctx> Codegen<'ctx> {
                 let obj_ty = self.infer_object_type(&object.node)?;
                 let class_name = match &obj_ty {
                     Type::Named(n) => n.clone(),
+                    Type::Generic(n, _) => n.clone(),
                     _ => return None,
                 };
                 let class_info = self.classes.get(&class_name)?;
@@ -1277,6 +1278,7 @@ impl<'ctx> Codegen<'ctx> {
     pub fn type_to_class_name(&self, ty: &Type) -> Option<String> {
         match ty {
             Type::Named(name) => Some(name.clone()),
+            Type::Generic(name, _) => Some(name.clone()),
             Type::Ref(inner)
             | Type::MutRef(inner)
             | Type::Box(inner)

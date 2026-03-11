@@ -5793,7 +5793,7 @@ fn bindgen_header(header: &Path, output: Option<&Path>) -> Result<(), String> {
 mod tests {
     use super::{
         api_program_fingerprint, build_file_dependency_graph_incremental,
-        build_reverse_dependency_graph, check_command, codegen_program_for_unit,
+        build_reverse_dependency_graph, check_command, codegen_program_for_unit, compile_source,
         component_fingerprint, compute_link_fingerprint, compute_namespace_api_fingerprints,
         compute_rewrite_context_fingerprint_for_unit, escape_response_file_arg, format_targets,
         parse_project_unit, precompute_all_transitive_dependencies,
@@ -6329,6 +6329,103 @@ function main(): None {
         with_current_dir(&temp_root, || {
             check_command(None, false).expect("project check should pass");
         });
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn compile_source_supports_implicit_default_class_constructor() {
+        let temp_root = make_temp_project_root("implicit-default-ctor");
+        let source_path = temp_root.join("implicit_ctor.apex");
+        let output_path = temp_root.join("implicit_ctor");
+        let source = r#"
+            class C {
+                function value(): Integer { return 7; }
+            }
+
+            function main(): None {
+                c: C = C();
+                x: Integer = c.value();
+                return None;
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, true, true, None, None)
+            .expect("implicit default constructor codegen should succeed");
+        assert!(output_path.with_extension("ll").exists());
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn compile_source_supports_explicit_generic_method_calls() {
+        let temp_root = make_temp_project_root("generic-method-codegen");
+        let source_path = temp_root.join("generic_method.apex");
+        let output_path = temp_root.join("generic_method");
+        let source = r#"
+            class C {
+                function id<T>(x: T): T { return x; }
+            }
+
+            function main(): None {
+                c: C = C();
+                x: Integer = c.id<Integer>(1);
+                return None;
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, true, true, None, None)
+            .expect("explicit generic method codegen should succeed");
+        assert!(output_path.with_extension("ll").exists());
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn compile_source_supports_generic_class_instance_method_calls() {
+        let temp_root = make_temp_project_root("generic-class-method-codegen");
+        let source_path = temp_root.join("generic_class_method.apex");
+        let output_path = temp_root.join("generic_class_method");
+        let source = r#"
+            class Boxed<T> {
+                value: T;
+                constructor(value: T) { this.value = value; }
+                function get(): T { return this.value; }
+            }
+
+            function main(): None {
+                b: Boxed<Integer> = Boxed<Integer>(7);
+                x: Integer = b.get();
+                return None;
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, true, true, None, None)
+            .expect("generic class instance method codegen should succeed");
+        assert!(output_path.with_extension("ll").exists());
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn compile_source_supports_lambda_callee_calls() {
+        let temp_root = make_temp_project_root("lambda-callee-codegen");
+        let source_path = temp_root.join("lambda_callee.apex");
+        let output_path = temp_root.join("lambda_callee");
+        let source = r#"
+            function main(): None {
+                x: Integer = ((y: Integer) => y + 1)(2);
+                return None;
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, true, true, None, None)
+            .expect("lambda callee codegen should succeed");
+        assert!(output_path.with_extension("ll").exists());
 
         let _ = fs::remove_dir_all(temp_root);
     }

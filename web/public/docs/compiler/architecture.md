@@ -179,6 +179,11 @@ This document describes the internal architecture of the Apex compiler.
 - **Generic class typechecking hardening**:
   - `src/typeck.rs` now preserves user-defined generic class instantiations as `Class("Name<...>")` and substitutes class-level type variables through fields, constructors, and methods.
   - `src/codegen/core.rs` now normalizes generic constructor names back to the base class symbol during constructor codegen.
+  - `src/codegen/core.rs` now emits implicit zero-argument constructors for classes that omit `constructor`, so `C()` works end to end without a handwritten constructor body.
+  - `src/codegen/core.rs` now specializes explicit generic method calls inside class bodies and call sites, so `obj.id<Integer>(...)` no longer survives into unsupported raw codegen.
+  - `src/codegen/util.rs` now resolves `Type::Generic(name, ...)` back to the owning class for generic instance field/method dispatch.
+- **Closure callee codegen hardening**:
+  - `src/codegen/core.rs` now allows non-identifier closure-valued expressions to go through the same indirect-call path as named function variables, so lambda callees compile instead of failing with `Invalid callee`.
 
 ## Directory Structure
 
