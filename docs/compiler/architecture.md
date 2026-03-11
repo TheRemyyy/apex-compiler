@@ -25,9 +25,10 @@ This document describes the internal architecture of the Apex compiler.
   - Stores namespace-rewritten AST fragments keyed by semantic fingerprint + per-file rewrite-context fingerprint.
   - On incremental edits, files whose semantics and relevant namespace/import context did not change bypass rewrite and are stitched directly into combined AST.
 - **Import-check cache** (`.apexcache/import_check/*.json`):
-  - Stores successful import-check results keyed by semantic fingerprint + per-file import/rewrite context fingerprint.
+  - Stores successful import-check results keyed by a narrower import/reference fingerprint plus per-file import/rewrite context fingerprint.
   - Rewrite/import context now prefers exact owner-file API fingerprints for actually used imported symbols instead of hashing whole namespaces whenever that can be resolved safely.
   - Same-namespace symbol usage now also hashes exact owner-file API fingerprints instead of pessimistically hashing the whole current namespace.
+  - Body-only rewrites that do not change imports or referenced symbols can now reuse import-check results instead of invalidating on every semantic-body fingerprint change.
   - Namespace and wildcard imports fall back to namespace fingerprints only when Apex cannot narrow the dependency to exact owner files.
   - Fingerprint inputs are serialized in deterministic sorted order so hot rebuild reuse is stable across runs instead of depending on hash iteration order.
   - Unchanged files can now skip repeated import-check traversal on hot rebuilds with fewer false invalidations from unrelated namespace churn.

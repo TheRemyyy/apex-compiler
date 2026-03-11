@@ -46,6 +46,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Extended `--timings` output with per-phase counters so incremental tuning can see how many files/components each phase considered, reused, checked, rewrote, or rebuilt.
 - Tightened same-namespace rewrite/import invalidation to hash exact owner-file API fingerprints instead of pessimistically hashing the whole current namespace, sharply reducing false cache misses in wide `global` namespaces.
 - Fixed rewrite/import/object cache fingerprint stability by sorting collected symbol/reference inputs before hashing, so hot rebuild reuse is deterministic across runs instead of depending on `HashSet` iteration order.
+- Tightened import-check caching to key off a narrower import/reference fingerprint instead of full semantic-body fingerprints, so body-only caller rewrites can reuse import validation when imports and referenced symbols did not change.
 
 ### ⚡ Changed
 

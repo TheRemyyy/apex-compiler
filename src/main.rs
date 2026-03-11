@@ -488,6 +488,7 @@ struct ParsedProjectUnit {
     imports: Vec<ImportDecl>,
     api_fingerprint: String,
     semantic_fingerprint: String,
+    import_check_fingerprint: String,
     function_names: Vec<String>,
     class_names: Vec<String>,
     module_names: Vec<String>,
@@ -1068,14 +1069,32 @@ fn save_parsed_file_cache(
     write_cache_blob(&path, "parse cache", entry)
 }
 
-const IMPORT_CHECK_CACHE_SCHEMA: &str = "v1";
+const IMPORT_CHECK_CACHE_SCHEMA: &str = "v2";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ImportCheckCacheEntry {
     schema: String,
     compiler_version: String,
-    semantic_fingerprint: String,
+    import_check_fingerprint: String,
     rewrite_context_fingerprint: String,
+}
+
+fn compute_import_check_fingerprint(
+    namespace: &str,
+    imports: &[ImportDecl],
+    referenced_symbols: &[String],
+    qualified_symbol_refs: &[Vec<String>],
+) -> String {
+    let mut hasher = stable_hasher();
+    namespace.hash(&mut hasher);
+    hash_imports(imports, &mut hasher);
+    for symbol in referenced_symbols {
+        symbol.hash(&mut hasher);
+    }
+    for path in qualified_symbol_refs {
+        path.hash(&mut hasher);
+    }
+    format!("{:016x}", hasher.finish())
 }
 
 fn import_check_cache_path(project_root: &Path, file: &Path) -> PathBuf {
@@ -1090,7 +1109,7 @@ fn import_check_cache_path(project_root: &Path, file: &Path) -> PathBuf {
 fn load_import_check_cache_hit(
     project_root: &Path,
     file: &Path,
-    semantic_fingerprint: &str,
+    import_check_fingerprint: &str,
     rewrite_context_fingerprint: &str,
 ) -> Result<bool, String> {
     let path = import_check_cache_path(project_root, file);
@@ -1101,14 +1120,14 @@ fn load_import_check_cache_hit(
 
     Ok(entry.schema == IMPORT_CHECK_CACHE_SCHEMA
         && entry.compiler_version == env!("CARGO_PKG_VERSION")
-        && entry.semantic_fingerprint == semantic_fingerprint
+        && entry.import_check_fingerprint == import_check_fingerprint
         && entry.rewrite_context_fingerprint == rewrite_context_fingerprint)
 }
 
 fn save_import_check_cache_hit(
     project_root: &Path,
     file: &Path,
-    semantic_fingerprint: &str,
+    import_check_fingerprint: &str,
     rewrite_context_fingerprint: &str,
 ) -> Result<(), String> {
     let path = import_check_cache_path(project_root, file);
@@ -1126,7 +1145,7 @@ fn save_import_check_cache_hit(
     let entry = ImportCheckCacheEntry {
         schema: IMPORT_CHECK_CACHE_SCHEMA.to_string(),
         compiler_version: env!("CARGO_PKG_VERSION").to_string(),
-        semantic_fingerprint: semantic_fingerprint.to_string(),
+        import_check_fingerprint: import_check_fingerprint.to_string(),
         rewrite_context_fingerprint: rewrite_context_fingerprint.to_string(),
     };
     write_cache_blob(&path, "import-check cache", &entry)
@@ -3252,6 +3271,13 @@ fn parse_project_unit(project_root: &Path, file: &Path) -> Result<ParsedProjectU
     let mut api_referenced_symbols = api_referenced_symbols.into_iter().collect::<Vec<_>>();
     api_referenced_symbols.sort();
 
+    let import_check_fingerprint = compute_import_check_fingerprint(
+        &namespace,
+        &imports,
+        &referenced_symbols,
+        &qualified_symbol_refs,
+    );
+
     Ok(ParsedProjectUnit {
         file: file.to_path_buf(),
         namespace,
@@ -3259,6 +3285,7 @@ fn parse_project_unit(project_root: &Path, file: &Path) -> Result<ParsedProjectU
         imports,
         api_fingerprint,
         semantic_fingerprint,
+        import_check_fingerprint,
         function_names,
         class_names,
         module_names,
@@ -3790,7 +3817,7 @@ fn build_project(
                             if load_import_check_cache_hit(
                                 &project_root,
                                 &unit.file,
-                                &unit.semantic_fingerprint,
+                                &unit.import_check_fingerprint,
                                 &rewrite_context_fingerprint,
                             )? {
                                 import_check_cache_hits
@@ -3824,7 +3851,7 @@ fn build_project(
                             save_import_check_cache_hit(
                                 &project_root,
                                 &unit.file,
-                                &unit.semantic_fingerprint,
+                                &unit.import_check_fingerprint,
                                 &rewrite_context_fingerprint,
                             )?;
                             Ok(())
@@ -5833,6 +5860,7 @@ function add(x: Float): Float {
                 .collect(),
             api_fingerprint: "api".to_string(),
             semantic_fingerprint: "sem".to_string(),
+            import_check_fingerprint: "import".to_string(),
             function_names: Vec::new(),
             class_names: Vec::new(),
             module_names: Vec::new(),
