@@ -27,7 +27,9 @@ This document describes the internal architecture of the Apex compiler.
 - **Import-check cache** (`.apexcache/import_check/*.json`):
   - Stores successful import-check results keyed by semantic fingerprint + per-file import/rewrite context fingerprint.
   - Rewrite/import context now prefers exact owner-file API fingerprints for actually used imported symbols instead of hashing whole namespaces whenever that can be resolved safely.
+  - Same-namespace symbol usage now also hashes exact owner-file API fingerprints instead of pessimistically hashing the whole current namespace.
   - Namespace and wildcard imports fall back to namespace fingerprints only when Apex cannot narrow the dependency to exact owner files.
+  - Fingerprint inputs are serialized in deterministic sorted order so hot rebuild reuse is stable across runs instead of depending on hash iteration order.
   - Unchanged files can now skip repeated import-check traversal on hot rebuilds with fewer false invalidations from unrelated namespace churn.
 - **Dependency graph cache** (`.apexcache/dependency_graph/latest.json`):
   - Stores per-file semantic/API fingerprints plus direct file dependencies resolved from same-namespace access and explicit imports.
@@ -54,6 +56,7 @@ This document describes the internal architecture of the Apex compiler.
 - **Per-file rewrite invalidation**:
   - Rewrite/object cache invalidation now hashes only the current file's namespace/import context and relevant imported namespace symbol maps.
   - Specific imports (`import lib.foo;`) additionally track owner-file API fingerprints, so unrelated API changes in the same namespace no longer fan out to those files.
+  - Same-namespace references now track owner-file API fingerprints directly, which prevents wide `global` namespaces from invalidating rewrite/object caches project-wide after a small API edit.
   - Unrelated namespace changes no longer force global rewrite-cache/object-cache misses across the entire project.
 - **Transitive codegen closure**:
   - Object-cache misses now rebuild against the changed file plus only its transitive file dependency closure.

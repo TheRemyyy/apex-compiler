@@ -44,6 +44,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Tightened filtered object codegen so per-file rebuilds assemble programs from the declaration-closure file set instead of the full transitive dependency file closure.
 - Added `apex build --timings` / project-mode `apex run --timings` / `apex check --timings` phase timing output for parse, dependency graph, import check, rewrite, semantic, object cache probe, object codegen, and final link stages.
 - Extended `--timings` output with per-phase counters so incremental tuning can see how many files/components each phase considered, reused, checked, rewrote, or rebuilt.
+- Tightened same-namespace rewrite/import invalidation to hash exact owner-file API fingerprints instead of pessimistically hashing the whole current namespace, sharply reducing false cache misses in wide `global` namespaces.
+- Fixed rewrite/import/object cache fingerprint stability by sorting collected symbol/reference inputs before hashing, so hot rebuild reuse is deterministic across runs instead of depending on `HashSet` iteration order.
 
 ### ⚡ Changed
 

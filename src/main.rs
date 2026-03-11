@@ -1452,12 +1452,15 @@ fn import_path_owner_file<'a>(
 
 struct RewriteFingerprintContext<'a> {
     namespace_functions: &'a HashMap<String, HashSet<String>>,
+    namespace_function_files: &'a HashMap<String, HashMap<String, PathBuf>>,
     global_function_map: &'a HashMap<String, String>,
     global_function_file_map: &'a HashMap<String, PathBuf>,
     namespace_classes: &'a HashMap<String, HashSet<String>>,
+    namespace_class_files: &'a HashMap<String, HashMap<String, PathBuf>>,
     global_class_map: &'a HashMap<String, String>,
     global_class_file_map: &'a HashMap<String, PathBuf>,
     namespace_modules: &'a HashMap<String, HashSet<String>>,
+    namespace_module_files: &'a HashMap<String, HashMap<String, PathBuf>>,
     global_module_map: &'a HashMap<String, String>,
     global_module_file_map: &'a HashMap<String, PathBuf>,
     namespace_api_fingerprints: &'a HashMap<String, String>,
@@ -2278,15 +2281,44 @@ fn compute_rewrite_context_fingerprint_for_unit(
     entry_namespace: &str,
     ctx: &RewriteFingerprintContext<'_>,
 ) -> String {
-    let mut relevant_namespaces: HashSet<String> =
-        namespace_prefixes(&unit.namespace).into_iter().collect();
-    relevant_namespaces.insert(unit.namespace.clone());
+    let mut relevant_namespaces: HashSet<String> = HashSet::new();
 
     let mut hasher = stable_hasher();
     entry_namespace.hash(&mut hasher);
     unit.namespace.hash(&mut hasher);
     hash_imports(&unit.imports, &mut hasher);
     let referenced_symbols: HashSet<String> = unit.referenced_symbols.iter().cloned().collect();
+    let mut referenced_symbol_list = referenced_symbols.iter().collect::<Vec<_>>();
+    referenced_symbol_list.sort();
+    for symbol in referenced_symbol_list {
+        if let Some(owner_file) = ctx
+            .namespace_function_files
+            .get(&unit.namespace)
+            .and_then(|map| map.get(symbol))
+        {
+            if owner_file != &unit.file {
+                hash_file_api_fingerprint(ctx.file_api_fingerprints, owner_file, &mut hasher);
+            }
+        }
+        if let Some(owner_file) = ctx
+            .namespace_class_files
+            .get(&unit.namespace)
+            .and_then(|map| map.get(symbol))
+        {
+            if owner_file != &unit.file {
+                hash_file_api_fingerprint(ctx.file_api_fingerprints, owner_file, &mut hasher);
+            }
+        }
+        if let Some(owner_file) = ctx
+            .namespace_module_files
+            .get(&unit.namespace)
+            .and_then(|map| map.get(symbol))
+        {
+            if owner_file != &unit.file {
+                hash_file_api_fingerprint(ctx.file_api_fingerprints, owner_file, &mut hasher);
+            }
+        }
+    }
     let empty_namespace_files_map: HashMap<String, Vec<PathBuf>> = HashMap::new();
     let empty_namespace_function_files: HashMap<String, HashMap<String, PathBuf>> = HashMap::new();
     let empty_namespace_class_files: HashMap<String, HashMap<String, PathBuf>> = HashMap::new();
@@ -2319,6 +2351,8 @@ fn compute_rewrite_context_fingerprint_for_unit(
                     relevant_namespaces.insert(prefix);
                 }
             } else {
+                let mut owner_files = owner_files.into_iter().collect::<Vec<_>>();
+                owner_files.sort();
                 for owner_file in owner_files {
                     hash_file_api_fingerprint(ctx.file_api_fingerprints, &owner_file, &mut hasher);
                 }
@@ -2348,6 +2382,8 @@ fn compute_rewrite_context_fingerprint_for_unit(
                     relevant_namespaces.insert(prefix);
                 }
             } else {
+                let mut matched_owner_files = matched_owner_files.into_iter().collect::<Vec<_>>();
+                matched_owner_files.sort();
                 for owner_file in matched_owner_files {
                     hash_file_api_fingerprint(ctx.file_api_fingerprints, &owner_file, &mut hasher);
                 }
@@ -3209,6 +3245,13 @@ fn parse_project_unit(project_root: &Path, file: &Path) -> Result<ParsedProjectU
         );
     }
 
+    let mut referenced_symbols = referenced_symbols.into_iter().collect::<Vec<_>>();
+    referenced_symbols.sort();
+    let mut qualified_symbol_refs = qualified_symbol_refs.into_iter().collect::<Vec<_>>();
+    qualified_symbol_refs.sort();
+    let mut api_referenced_symbols = api_referenced_symbols.into_iter().collect::<Vec<_>>();
+    api_referenced_symbols.sort();
+
     Ok(ParsedProjectUnit {
         file: file.to_path_buf(),
         namespace,
@@ -3219,9 +3262,9 @@ fn parse_project_unit(project_root: &Path, file: &Path) -> Result<ParsedProjectU
         function_names,
         class_names,
         module_names,
-        referenced_symbols: referenced_symbols.into_iter().collect(),
-        qualified_symbol_refs: qualified_symbol_refs.into_iter().collect(),
-        api_referenced_symbols: api_referenced_symbols.into_iter().collect(),
+        referenced_symbols,
+        qualified_symbol_refs,
+        api_referenced_symbols,
         from_parse_cache,
     })
 }
@@ -3711,12 +3754,15 @@ fn build_project(
         .collect();
     let rewrite_fingerprint_ctx = RewriteFingerprintContext {
         namespace_functions: &namespace_functions,
+        namespace_function_files: &namespace_function_files,
         global_function_map: &global_function_map,
         global_function_file_map: &global_function_file_map,
         namespace_classes: &namespace_class_map,
+        namespace_class_files: &namespace_class_files,
         global_class_map: &global_class_map,
         global_class_file_map: &global_class_file_map,
         namespace_modules: &namespace_module_map,
+        namespace_module_files: &namespace_module_files,
         global_module_map: &global_module_map,
         global_module_file_map: &global_module_file_map,
         namespace_api_fingerprints: &namespace_api_fingerprints,
@@ -5813,10 +5859,19 @@ function add(x: Float): Float {
             ("foo".to_string(), PathBuf::from("src/lib_foo.apex")),
             ("bar".to_string(), PathBuf::from("src/lib_bar.apex")),
         ]);
+        let namespace_function_files = HashMap::from([(
+            "lib".to_string(),
+            HashMap::from([
+                ("foo".to_string(), PathBuf::from("src/lib_foo.apex")),
+                ("bar".to_string(), PathBuf::from("src/lib_bar.apex")),
+            ]),
+        )]);
         let namespace_classes = HashMap::new();
+        let namespace_class_files = HashMap::new();
         let global_class_map = HashMap::new();
         let global_class_file_map = HashMap::new();
         let namespace_modules = HashMap::new();
+        let namespace_module_files = HashMap::new();
         let global_module_map = HashMap::new();
         let global_module_file_map = HashMap::new();
         let namespace_api_fingerprints = HashMap::from([("lib".to_string(), "ns-v1".to_string())]);
@@ -5826,12 +5881,15 @@ function add(x: Float): Float {
         ]);
         let ctx_a = RewriteFingerprintContext {
             namespace_functions: &namespace_functions,
+            namespace_function_files: &namespace_function_files,
             global_function_map: &global_function_map,
             global_function_file_map: &global_function_file_map,
             namespace_classes: &namespace_classes,
+            namespace_class_files: &namespace_class_files,
             global_class_map: &global_class_map,
             global_class_file_map: &global_class_file_map,
             namespace_modules: &namespace_modules,
+            namespace_module_files: &namespace_module_files,
             global_module_map: &global_module_map,
             global_module_file_map: &global_module_file_map,
             namespace_api_fingerprints: &namespace_api_fingerprints,
@@ -5847,12 +5905,15 @@ function add(x: Float): Float {
         ]);
         let ctx_b = RewriteFingerprintContext {
             namespace_functions: &namespace_functions,
+            namespace_function_files: &namespace_function_files,
             global_function_map: &global_function_map,
             global_function_file_map: &global_function_file_map,
             namespace_classes: &namespace_classes,
+            namespace_class_files: &namespace_class_files,
             global_class_map: &global_class_map,
             global_class_file_map: &global_class_file_map,
             namespace_modules: &namespace_modules,
+            namespace_module_files: &namespace_module_files,
             global_module_map: &global_module_map,
             global_module_file_map: &global_module_file_map,
             namespace_api_fingerprints: &namespace_api_fingerprints_b,
@@ -5879,22 +5940,34 @@ function add(x: Float): Float {
             ("foo".to_string(), PathBuf::from("src/lib_foo.apex")),
             ("bar".to_string(), PathBuf::from("src/lib_bar.apex")),
         ]);
+        let namespace_function_files = HashMap::from([(
+            "lib".to_string(),
+            HashMap::from([
+                ("foo".to_string(), PathBuf::from("src/lib_foo.apex")),
+                ("bar".to_string(), PathBuf::from("src/lib_bar.apex")),
+            ]),
+        )]);
         let namespace_classes = HashMap::new();
+        let namespace_class_files = HashMap::new();
         let global_class_map = HashMap::new();
         let global_class_file_map = HashMap::new();
         let namespace_modules = HashMap::new();
+        let namespace_module_files = HashMap::new();
         let global_module_map = HashMap::new();
         let global_module_file_map = HashMap::new();
         let namespace_api_fingerprints_a =
             HashMap::from([("lib".to_string(), "ns-v1".to_string())]);
         let ctx_a = RewriteFingerprintContext {
             namespace_functions: &namespace_functions,
+            namespace_function_files: &namespace_function_files,
             global_function_map: &global_function_map,
             global_function_file_map: &global_function_file_map,
             namespace_classes: &namespace_classes,
+            namespace_class_files: &namespace_class_files,
             global_class_map: &global_class_map,
             global_class_file_map: &global_class_file_map,
             namespace_modules: &namespace_modules,
+            namespace_module_files: &namespace_module_files,
             global_module_map: &global_module_map,
             global_module_file_map: &global_module_file_map,
             namespace_api_fingerprints: &namespace_api_fingerprints_a,
@@ -5905,12 +5978,15 @@ function add(x: Float): Float {
             HashMap::from([("lib".to_string(), "ns-v2".to_string())]);
         let ctx_b = RewriteFingerprintContext {
             namespace_functions: &namespace_functions,
+            namespace_function_files: &namespace_function_files,
             global_function_map: &global_function_map,
             global_function_file_map: &global_function_file_map,
             namespace_classes: &namespace_classes,
+            namespace_class_files: &namespace_class_files,
             global_class_map: &global_class_map,
             global_class_file_map: &global_class_file_map,
             namespace_modules: &namespace_modules,
+            namespace_module_files: &namespace_module_files,
             global_module_map: &global_module_map,
             global_module_file_map: &global_module_file_map,
             namespace_api_fingerprints: &namespace_api_fingerprints_b,
