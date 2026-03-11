@@ -26,14 +26,19 @@ This document describes the internal architecture of the Apex compiler.
   - On incremental edits, files whose semantics and relevant namespace/import context did not change bypass rewrite and are stitched directly into combined AST.
 - **Import-check cache** (`.apexcache/import_check/*.json`):
   - Stores successful import-check results keyed by semantic fingerprint + per-file import/rewrite context fingerprint.
-  - Unchanged files can now skip repeated import-check traversal on hot rebuilds.
+  - Rewrite/import context now prefers exact owner-file API fingerprints for actually used imported symbols instead of hashing whole namespaces whenever that can be resolved safely.
+  - Namespace and wildcard imports fall back to namespace fingerprints only when Apex cannot narrow the dependency to exact owner files.
+  - Unchanged files can now skip repeated import-check traversal on hot rebuilds with fewer false invalidations from unrelated namespace churn.
 - **Dependency graph cache** (`.apexcache/dependency_graph/latest.json`):
   - Stores per-file semantic/API fingerprints plus direct file dependencies resolved from same-namespace access and explicit imports.
   - Same-namespace edges are derived from AST symbol references (calls, constructions, type references, module roots) instead of treating every file in a namespace as mutually dependent.
+  - Wildcard imports and namespace aliases now try to resolve only the owner files of actually used imported symbols instead of depending on every file in the imported namespace by default.
   - Supports explicit `body-only` vs `API` change classification and reverse-dependent impact tracking between builds.
 - **Semantic summary cache** (`.apexcache/semantic_summary/latest.json`):
   - Stores inferred function effect summaries and class mutating-method summaries from successful semantic passes.
+  - Stores both per-file ownership metadata and per-component summary membership.
   - Unchanged files can seed impacted-file type/borrow checking without re-walking all unaffected bodies.
+  - Entire unchanged dependency-graph components can now skip type checking and borrow checking even when some other project component changed in the same build.
 - **Object file cache** (`.apexcache/objects/*.{o|obj}` + `*.json`):
   - Stores per-file compiled objects keyed by semantic fingerprint + per-file rewrite-context fingerprint + build options (`opt_level`, `target`, compiler version, linker mode).
   - On incremental edits, unchanged files reuse cached object files and final build performs fast relink from cached + rebuilt objects.
@@ -66,6 +71,7 @@ This document describes the internal architecture of the Apex compiler.
 - **Impacted semantic view**:
   - Type checking and borrow checking now run with full bodies only for changed files and real API dependents.
   - Unchanged unaffected files participate through API projections plus cached semantic summaries.
+  - Unchanged connected components can now bypass semantic passes entirely when their component fingerprints still match the previous successful build.
 - **Lazy full-program assembly**:
   - Normal object-link builds no longer materialize the full combined rewritten AST up front.
   - Full-project merged AST construction is deferred to the `emit_llvm` path that actually needs a single monolithic IR module.
@@ -73,6 +79,9 @@ This document describes the internal architecture of the Apex compiler.
   - Multi-file project parsing now runs in parallel workers (file read + lex + parse/cache lookup).
   - Import checks and rewrite/cache resolution run in parallel per file.
   - Symbol map/collision resolution and final declaration merge still run deterministically.
+- **Codegen relevant-file pruning**:
+  - Per-file object rebuilds now feed LLVM only the files reached by the declaration closure walk, not the full transitive dependency file closure.
+  - This keeps object-miss program assembly closer to the set of declarations actually needed for the rebuilt unit.
 
 ## Recent Correctness Hardening
 

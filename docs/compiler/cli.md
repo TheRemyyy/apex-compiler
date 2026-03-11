@@ -43,6 +43,7 @@ apex <command> [arguments] [flags]
 | `--release` | `-r` | Builds with optimizations enabled. |
 | `--emit-llvm` | | Emits the LLVM IR (`.ll` file) instead of a binary. |
 | `--no-check` | | Skips type checking. **Warning: Unsafe.** |
+| `--timings` | | Prints internal project build phase timings plus per-phase reuse/rebuild counters (`parse`, `dependency graph`, `import check`, `rewrite`, `semantic`, `object cache probe`, `object codegen`, `final link`). |
 
 Optimization note:
 - In project mode, optimization level is controlled by `opt_level` in `apex.toml` (`0/1/2/3/s/z/fast`, default `3`).
@@ -56,6 +57,7 @@ Build cache note:
 - Rewritten AST cache is reused per unchanged file from `.apexcache/rewritten/`, reducing project rewrite overhead.
 - Object cache is reused per unchanged file from `.apexcache/objects/` and changed files are rebuilt as object-only, then relinked.
 - Multi-file project parse stage is parallelized to improve wall time on larger projects.
+- `apex build --timings` prints internal phase timings plus per-phase counters such as `considered`, `reused`, `parsed`, `checked`, and `rebuilt`, so hot/cold rebuild tuning can target the real bottleneck instead of guessing.
 
 ## Compile Command Flags
 

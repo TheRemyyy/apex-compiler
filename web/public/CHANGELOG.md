@@ -36,6 +36,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Tightened dependency-graph partial invalidation so direct API-neighbor changes also invalidate adjacent cached graph entries instead of only the file whose fingerprint changed.
 - Changed project codegen to precompute full transitive dependency closures once per build, probe object-cache hits in parallel, and build per-file codegen programs from an indexed rewritten-file map instead of rescanning every rewritten unit.
 - Reduced object-cache bookkeeping overhead by precomputing per-file object/meta cache paths once per build instead of rehashing them repeatedly during cache probes and object emission.
+- Changed semantic cache reuse from project-global all-or-nothing reuse to component-level reuse:
+  - unchanged dependency-graph components now skip type checking and borrow checking even when other components changed
+  - semantic summary cache now records component membership alongside per-file summary metadata
+- Tightened import/rewrite invalidation to prefer symbol-owner files over whole-namespace fingerprints when imports can be resolved precisely.
+- Tightened dependency graph resolution for wildcard imports and namespace aliases so used imported symbols point at concrete owner files instead of invalidating every file in a busy namespace whenever possible.
+- Tightened filtered object codegen so per-file rebuilds assemble programs from the declaration-closure file set instead of the full transitive dependency file closure.
+- Added `apex build --timings` / project-mode `apex run --timings` / `apex check --timings` phase timing output for parse, dependency graph, import check, rewrite, semantic, object cache probe, object codegen, and final link stages.
+- Extended `--timings` output with per-phase counters so incremental tuning can see how many files/components each phase considered, reused, checked, rewrote, or rebuilt.
 
 ### ⚡ Changed
 
