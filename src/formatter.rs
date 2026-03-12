@@ -542,11 +542,46 @@ impl Formatter {
                 }
             }
             Expr::StringInterp(parts) => self.format_string_interp(parts),
-            Expr::Try(expr) => format!("{}?", self.format_expr_with_prec(&expr.node, 8)),
-            Expr::Borrow(expr) => format!("&{}", self.format_expr_with_prec(&expr.node, 8)),
-            Expr::MutBorrow(expr) => format!("&mut {}", self.format_expr_with_prec(&expr.node, 8)),
-            Expr::Deref(expr) => format!("*{}", self.format_expr_with_prec(&expr.node, 8)),
-            Expr::Await(expr) => format!("await {}", self.format_expr_with_prec(&expr.node, 8)),
+            Expr::Try(expr) => {
+                let formatted = format!("{}?", self.format_expr_with_prec(&expr.node, 8));
+                if 8 < parent_prec {
+                    format!("({})", formatted)
+                } else {
+                    formatted
+                }
+            }
+            Expr::Borrow(expr) => {
+                let formatted = format!("&{}", self.format_expr_with_prec(&expr.node, 8));
+                if 8 < parent_prec {
+                    format!("({})", formatted)
+                } else {
+                    formatted
+                }
+            }
+            Expr::MutBorrow(expr) => {
+                let formatted = format!("&mut {}", self.format_expr_with_prec(&expr.node, 8));
+                if 8 < parent_prec {
+                    format!("({})", formatted)
+                } else {
+                    formatted
+                }
+            }
+            Expr::Deref(expr) => {
+                let formatted = format!("*{}", self.format_expr_with_prec(&expr.node, 8));
+                if 8 < parent_prec {
+                    format!("({})", formatted)
+                } else {
+                    formatted
+                }
+            }
+            Expr::Await(expr) => {
+                let formatted = format!("await {}", self.format_expr_with_prec(&expr.node, 8));
+                if 8 < parent_prec {
+                    format!("({})", formatted)
+                } else {
+                    formatted
+                }
+            }
             Expr::AsyncBlock(block) => {
                 let mut nested = Formatter::new();
                 nested.indent = 1;
@@ -565,7 +600,12 @@ impl Formatter {
                 if let Some(message) = message {
                     parts.push(self.format_expr(&message.node));
                 }
-                format!("require({})", parts.join(", "))
+                let formatted = format!("require({})", parts.join(", "));
+                if 8 < parent_prec {
+                    format!("({})", formatted)
+                } else {
+                    formatted
+                }
             }
             Expr::Range {
                 start,
@@ -573,7 +613,7 @@ impl Formatter {
                 inclusive,
             } => {
                 let sep = if *inclusive { "..=" } else { ".." };
-                format!(
+                let formatted = format!(
                     "{}{}{}",
                     start
                         .as_ref()
@@ -583,7 +623,12 @@ impl Formatter {
                     end.as_ref()
                         .map(|expr| self.format_expr(&expr.node))
                         .unwrap_or_default()
-                )
+                );
+                if 8 < parent_prec {
+                    format!("({})", formatted)
+                } else {
+                    formatted
+                }
             }
             Expr::IfExpr {
                 condition,
@@ -1176,6 +1221,40 @@ function main(): None {
 "#;
         let formatted = format_source(source).expect("format succeeds");
         assert!(formatted.contains("(match (1)"), "{formatted}");
+        let tokens = tokenize(&formatted).expect("formatted output should lex");
+        let mut parser = Parser::new(tokens);
+        parser
+            .parse_program()
+            .expect("formatted output should parse");
+    }
+
+    #[test]
+    fn wraps_deref_callee_for_roundtrip() {
+        let source = r#"
+function main(): None {
+    y: Integer = (*f)(2);
+    return None;
+}
+"#;
+        let formatted = format_source(source).expect("format succeeds");
+        assert!(formatted.contains("(*f)(2)"), "{formatted}");
+        let tokens = tokenize(&formatted).expect("formatted output should lex");
+        let mut parser = Parser::new(tokens);
+        parser
+            .parse_program()
+            .expect("formatted output should parse");
+    }
+
+    #[test]
+    fn wraps_try_callee_for_roundtrip() {
+        let source = r#"
+function main(): Result<None, String> {
+    y: Integer = (choose()?)(2);
+    return Result.ok(None);
+}
+"#;
+        let formatted = format_source(source).expect("format succeeds");
+        assert!(formatted.contains("(choose()?)(2)"), "{formatted}");
         let tokens = tokenize(&formatted).expect("formatted output should lex");
         let mut parser = Parser::new(tokens);
         parser
