@@ -126,6 +126,7 @@ pub struct ImportChecker<'a> {
 impl<'a> ImportChecker<'a> {
     pub fn new(
         function_namespaces: Arc<HashMap<String, String>>,
+        known_namespace_paths: Arc<HashSet<String>>,
         current_namespace: String,
         imports: Vec<ImportDecl>,
         stdlib: &'a StdLib,
@@ -138,6 +139,7 @@ impl<'a> ImportChecker<'a> {
             .values()
             .cloned()
             .chain(stdlib.get_functions().values().cloned())
+            .chain(known_namespace_paths.iter().cloned())
             .collect();
 
         for import in imports {
@@ -160,7 +162,11 @@ impl<'a> ImportChecker<'a> {
                         || stdlib
                             .get_namespace(symbol)
                             .is_some_and(|ns| ns == &symbol_ns)
-                        || Self::path_resolves_to_user_module(&function_namespaces, &path);
+                        || Self::path_resolves_to_user_module(
+                            &function_namespaces,
+                            &known_namespace_paths,
+                            &path,
+                        );
                     if is_known_symbol_alias {
                         namespace_aliases.insert(alias_name, path.clone());
                     } else {
@@ -295,8 +301,12 @@ impl<'a> ImportChecker<'a> {
 
     fn path_resolves_to_user_module(
         function_namespaces: &HashMap<String, String>,
+        known_namespace_paths: &HashSet<String>,
         path: &str,
     ) -> bool {
+        if known_namespace_paths.contains(path) {
+            return true;
+        }
         let namespaces: HashSet<&str> = function_namespaces.values().map(String::as_str).collect();
         for ns in namespaces {
             if path == ns {
@@ -717,6 +727,42 @@ pub fn extract_function_namespaces(program: &Program, namespace: &str) -> HashMa
     result
 }
 
+pub fn extract_known_namespace_paths(program: &Program, namespace: &str) -> HashSet<String> {
+    let mut result = HashSet::from([namespace.to_string()]);
+
+    fn walk_decl(
+        out: &mut HashSet<String>,
+        decl: &Decl,
+        namespace: &str,
+        module_prefix: Option<String>,
+    ) {
+        match decl {
+            Decl::Module(module) => {
+                let next_prefix = if let Some(prefix) = module_prefix {
+                    format!("{}.{}", prefix, module.name)
+                } else {
+                    format!("{}.{}", namespace, module.name)
+                };
+                out.insert(next_prefix.clone());
+                for inner in &module.declarations {
+                    walk_decl(out, &inner.node, namespace, Some(next_prefix.clone()));
+                }
+            }
+            Decl::Function(_)
+            | Decl::Class(_)
+            | Decl::Enum(_)
+            | Decl::Interface(_)
+            | Decl::Import(_) => {}
+        }
+    }
+
+    for decl in &program.declarations {
+        walk_decl(&mut result, &decl.node, namespace, None);
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -741,8 +787,10 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let function_namespaces = extract_function_namespaces(&program, &namespace);
+        let known_namespace_paths = extract_known_namespace_paths(&program, &namespace);
         let mut checker = ImportChecker::new(
             Arc::new(function_namespaces),
+            Arc::new(known_namespace_paths),
             namespace,
             imports,
             stdlib_registry(),

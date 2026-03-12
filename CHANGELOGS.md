@@ -44,7 +44,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed frontend support for `Option.some/none` and `Result.ok/error`, aligning typechecking with the existing backend/static-constructor lowering paths.
 - Fixed project-mode rewrite of bare function references used as values, so multi-file expressions like `return add1;` and `this.f = add1;` now mangle correctly.
 - Fixed namespace alias function values across project builds, so `import util as u; f = u.add1; y = u.add1(2);` now typechecks, rewrites, and codegens correctly instead of failing as `Undefined variable: u` / `Unknown variable: util__add1`.
+- Fixed nested namespace alias function values and calls, so paths like `u.M.add1` now rewrite and codegen correctly instead of leaking raw alias expressions into object codegen and failing as `Unknown variable: u`.
+- Fixed namespace alias class constructor calls, so `import util as u; u.Box(2);` now passes import-check, rewrite, dependency tracking, and filtered codegen instead of failing as unknown alias usage / unknown type.
 - Fixed filtered codegen declaration-closure seeding for qualified import paths, so namespace-alias references now pull the owning declaration files/symbols into object rebuilds instead of omitting reachable imported functions like `util__twice`.
+- Fixed import-check namespace alias discovery so class-only or enum-only namespaces can still be imported with `as` aliases even when they do not expose top-level functions.
 - Bumped rewrite cache schema to invalidate stale cached rewrites after function-reference rewrite changes.
 - Bumped typecheck summary cache schema to invalidate stale semantic/typecheck reuse after namespace-alias function-value resolution changes.
 - Changed project codegen to precompute full transitive dependency closures once per build, probe object-cache hits in parallel, and build per-file codegen programs from an indexed rewritten-file map instead of rescanning every rewritten unit.

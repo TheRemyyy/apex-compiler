@@ -1049,12 +1049,18 @@ fn declaration_symbols_for_unit(
             for path in &metadata.qualified_symbol_refs {
                 if path.first().is_some_and(|part| part == &import_key) {
                     let rest = &path[1..];
-                    if let Some((owner_ns, candidate)) = resolve_function_symbol_in_namespace_path(
+                    if let Some((owner_ns, candidate)) = resolve_symbol_in_namespace_path(
                         &import.path,
                         rest,
                         global_function_map,
+                        global_class_map,
+                        global_module_map,
                     ) {
-                        if let Some(owner_file) = global_function_file_map.get(&candidate) {
+                        let owner_file = global_function_file_map
+                            .get(&candidate)
+                            .or_else(|| global_class_file_map.get(&candidate))
+                            .or_else(|| global_module_file_map.get(&candidate));
+                        if let Some(owner_file) = owner_file {
                             if closure_files.contains(owner_file) {
                                 declaration_symbols.insert(mangle_project_symbol_for_codegen(
                                     &owner_ns,
@@ -1707,6 +1713,78 @@ fn resolve_function_symbol_in_namespace_path(
     None
 }
 
+fn resolve_symbol_in_namespace_path(
+    namespace_path: &str,
+    member_parts: &[String],
+    global_function_map: &HashMap<String, String>,
+    global_class_map: &HashMap<String, String>,
+    global_module_map: &HashMap<String, String>,
+) -> Option<(String, String)> {
+    if let Some(found) =
+        resolve_function_symbol_in_namespace_path(namespace_path, member_parts, global_function_map)
+    {
+        return Some(found);
+    }
+
+    if member_parts.is_empty() {
+        return None;
+    }
+
+    let candidate = member_parts.join("__");
+    if let Some(owner_ns) = global_class_map.get(&candidate) {
+        if owner_ns == namespace_path {
+            return Some((owner_ns.clone(), candidate));
+        }
+    }
+    if let Some(owner_ns) = global_module_map.get(&candidate) {
+        if owner_ns == namespace_path {
+            return Some((owner_ns.clone(), candidate));
+        }
+    }
+
+    None
+}
+
+fn resolve_owner_file_in_namespace_path(
+    namespace_path: &str,
+    member_parts: &[String],
+    global_function_map: &HashMap<String, String>,
+    global_function_file_map: &HashMap<String, PathBuf>,
+    global_class_map: &HashMap<String, String>,
+    global_class_file_map: &HashMap<String, PathBuf>,
+    global_module_map: &HashMap<String, String>,
+    global_module_file_map: &HashMap<String, PathBuf>,
+) -> Option<PathBuf> {
+    if let Some(file) = resolve_function_file_in_namespace_path(
+        namespace_path,
+        member_parts,
+        global_function_map,
+        global_function_file_map,
+    ) {
+        return Some(file);
+    }
+
+    if member_parts.is_empty() {
+        return None;
+    }
+
+    let candidate = member_parts.join("__");
+    if global_class_map
+        .get(&candidate)
+        .is_some_and(|owner_ns| owner_ns == namespace_path)
+    {
+        return global_class_file_map.get(&candidate).cloned();
+    }
+    if global_module_map
+        .get(&candidate)
+        .is_some_and(|owner_ns| owner_ns == namespace_path)
+    {
+        return global_module_file_map.get(&candidate).cloned();
+    }
+
+    None
+}
+
 fn resolve_symbol_owner_files_in_namespace(
     namespace: &str,
     referenced_symbols: &HashSet<String>,
@@ -1746,11 +1824,15 @@ fn resolve_symbol_owner_files_in_namespace(
     }
 
     for path in qualified_symbol_refs {
-        if let Some(file) = resolve_function_file_in_namespace_path(
+        if let Some(file) = resolve_owner_file_in_namespace_path(
             namespace,
             path,
             ctx.global_function_map,
             ctx.global_function_file_map,
+            ctx.global_class_map,
+            ctx.global_class_file_map,
+            ctx.global_module_map,
+            ctx.global_module_file_map,
         ) {
             deps.insert(file);
         }
@@ -1801,11 +1883,15 @@ fn resolve_import_dependency_files(
         for path in qualified_symbol_refs {
             if path.first().is_some_and(|part| part == &import_key) {
                 let rest = &path[1..];
-                if let Some(file) = resolve_function_file_in_namespace_path(
+                if let Some(file) = resolve_owner_file_in_namespace_path(
                     &import.path,
                     rest,
                     ctx.global_function_map,
                     ctx.global_function_file_map,
+                    ctx.global_class_map,
+                    ctx.global_class_file_map,
+                    ctx.global_module_map,
+                    ctx.global_module_file_map,
                 ) {
                     deps.insert(file);
                 }
@@ -4003,6 +4089,12 @@ fn build_project(
     if do_check {
         println!("{} Checking imports...", "→".cyan());
         let shared_function_map = Arc::new(global_function_map.clone());
+        let shared_known_namespace_paths = Arc::new(
+            namespace_files_map
+                .keys()
+                .cloned()
+                .collect::<HashSet<String>>(),
+        );
         let import_check_cache_hits = std::sync::atomic::AtomicUsize::new(0);
 
         let import_results: Vec<Result<(), String>> =
@@ -4030,6 +4122,7 @@ fn build_project(
 
                             let mut checker = ImportChecker::new(
                                 Arc::clone(&shared_function_map),
+                                Arc::clone(&shared_known_namespace_paths),
                                 unit.namespace.clone(),
                                 unit.imports.clone(),
                                 stdlib_registry(),
@@ -4884,8 +4977,11 @@ fn compile_source(
         let namespace = extract_namespace(&program);
         let imports = extract_imports(&program);
         let function_namespaces = import_check::extract_function_namespaces(&program, &namespace);
+        let known_namespace_paths =
+            import_check::extract_known_namespace_paths(&program, &namespace);
         let mut import_checker = ImportChecker::new(
             Arc::new(function_namespaces),
+            Arc::new(known_namespace_paths),
             namespace,
             imports,
             stdlib_registry(),
@@ -5361,8 +5457,10 @@ fn check_file(file: Option<&Path>) -> Result<(), String> {
     let namespace = extract_namespace(&program);
     let imports = extract_imports(&program);
     let function_namespaces = import_check::extract_function_namespaces(&program, &namespace);
+    let known_namespace_paths = import_check::extract_known_namespace_paths(&program, &namespace);
     let mut import_checker = ImportChecker::new(
         Arc::new(function_namespaces),
+        Arc::new(known_namespace_paths),
         namespace,
         imports,
         stdlib_registry(),
@@ -6530,6 +6628,64 @@ function main(): None {
         with_current_dir(&temp_root, || {
             build_project(false, false, true, false, false)
                 .expect("project build should support namespace alias function values");
+        });
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn project_build_supports_nested_namespace_alias_function_values() {
+        let temp_root = make_temp_project_root("function-value-nested-namespace-alias-project");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(
+            &temp_root,
+            &["src/main.apex", "src/lib.apex"],
+            "src/main.apex",
+            "smoke",
+        );
+        fs::write(
+            src_dir.join("lib.apex"),
+            "package util;\nmodule M { function add1(x: Integer): Integer { return x + 1; } }\n",
+        )
+        .expect("write lib");
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nimport util as u;\nfunction main(): None { f: (Integer) -> Integer = u.M.add1; x: Integer = u.M.add1(1); y: Integer = f(2); return None; }\n",
+        )
+        .expect("write main");
+
+        with_current_dir(&temp_root, || {
+            build_project(false, false, true, false, false)
+                .expect("project build should support nested namespace alias function values");
+        });
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn project_build_supports_namespace_alias_class_constructors() {
+        let temp_root = make_temp_project_root("class-constructor-namespace-alias-project");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(
+            &temp_root,
+            &["src/main.apex", "src/lib.apex"],
+            "src/main.apex",
+            "smoke",
+        );
+        fs::write(
+            src_dir.join("lib.apex"),
+            "package util;\nclass Box { value: Integer; constructor(v: Integer) { this.value = v; } }\n",
+        )
+        .expect("write lib");
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nimport util as u;\nfunction main(): None { u.Box(2); return None; }\n",
+        )
+        .expect("write main");
+
+        with_current_dir(&temp_root, || {
+            build_project(false, false, true, false, false)
+                .expect("project build should support namespace alias class constructors");
         });
 
         let _ = fs::remove_dir_all(temp_root);

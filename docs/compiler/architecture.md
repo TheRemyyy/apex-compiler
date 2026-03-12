@@ -74,6 +74,7 @@ This document describes the internal architecture of the Apex compiler.
   - Apex now computes a declaration closure from the changed file's active symbols plus transitive API-visible references of dependency files, so filtered codegen only predeclares symbols that can actually be reached.
   - Dependency API projection inputs are trimmed to that same closure, so object-miss codegen also stops carrying unrelated stub declarations through the front of the pipeline.
   - Qualified import paths used through namespace aliases (for example `import util as u; f = u.add1`) now seed that closure too, so imported function values and alias-qualified calls pull in the right owner declarations during filtered object rebuilds.
+  - Alias-qualified class/module references (for example `u.Box(...)`) now seed dependency edges and declaration closure entries too, so constructor/object codegen sees the owning type declarations instead of treating alias-rooted constructors as isolated files.
 - **Impacted semantic view**:
   - Type checking and borrow checking now run with full bodies only for changed files and real API dependents.
   - Unchanged unaffected files participate through API projections plus cached semantic summaries.
@@ -187,6 +188,8 @@ This document describes the internal architecture of the Apex compiler.
   - `src/codegen/core.rs` now allows non-identifier closure-valued expressions to go through the same indirect-call path as named function variables, so lambda callees compile instead of failing with `Invalid callee`.
   - `src/typeck.rs` and `src/codegen/core.rs` now distinguish function-valued fields from methods, so `obj.f(...)` routes through closure-call checking/lowering instead of member-method dispatch.
   - `src/typeck.rs`, `src/project_rewrite.rs`, and filtered project codegen now also treat namespace-alias function values as first-class functions, so expressions like `u.add1` and calls like `u.add1(2)` survive typecheck, rewrite, and object-only codegen consistently.
+  - The same alias rewrite/codegen path now handles nested module-qualified alias calls like `u.M.add1`, not just single-segment `u.func` lookups.
+  - Namespace alias constructor calls like `u.Box(2)` now lower through project rewrite into constructor expressions and carry matching dependency edges/import-check knowledge, so class-only namespaces work with alias-based construction too.
   - Higher-order generic methods that return closures now survive specialization and subsequent invocation without confusing generated method symbols for fields.
   - `src/typeck.rs` now parses function-type strings nested inside generic wrappers during normalization/substitution, so wrapper types containing function values compare correctly.
   - `src/typeck.rs` now recognizes `Option.some/none` and `Result.ok/error` as frontend static constructors instead of treating `Option`/`Result` as undefined variables.
