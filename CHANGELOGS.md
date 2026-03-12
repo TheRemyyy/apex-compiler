@@ -43,7 +43,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed nested function types inside generic wrappers so `List<(Integer) -> Integer>` and `Option<(Integer) -> Integer>` no longer fail as false type mismatches.
 - Fixed frontend support for `Option.some/none` and `Result.ok/error`, aligning typechecking with the existing backend/static-constructor lowering paths.
 - Fixed project-mode rewrite of bare function references used as values, so multi-file expressions like `return add1;` and `this.f = add1;` now mangle correctly.
+- Fixed namespace alias function values across project builds, so `import util as u; f = u.add1; y = u.add1(2);` now typechecks, rewrites, and codegens correctly instead of failing as `Undefined variable: u` / `Unknown variable: util__add1`.
+- Fixed filtered codegen declaration-closure seeding for qualified import paths, so namespace-alias references now pull the owning declaration files/symbols into object rebuilds instead of omitting reachable imported functions like `util__twice`.
 - Bumped rewrite cache schema to invalidate stale cached rewrites after function-reference rewrite changes.
+- Bumped typecheck summary cache schema to invalidate stale semantic/typecheck reuse after namespace-alias function-value resolution changes.
 - Changed project codegen to precompute full transitive dependency closures once per build, probe object-cache hits in parallel, and build per-file codegen programs from an indexed rewritten-file map instead of rescanning every rewritten unit.
 - Reduced object-cache bookkeeping overhead by precomputing per-file object/meta cache paths once per build instead of rehashing them repeatedly during cache probes and object emission.
 - Changed semantic cache reuse from project-global all-or-nothing reuse to component-level reuse:

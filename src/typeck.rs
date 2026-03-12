@@ -270,6 +270,28 @@ impl TypeChecker {
         None
     }
 
+    fn resolve_import_alias_module_candidate(
+        &self,
+        alias_ident: &str,
+        member_parts: &[String],
+    ) -> Option<String> {
+        if member_parts.is_empty() || self.lookup_variable(alias_ident).is_some() {
+            return None;
+        }
+        if self.resolve_import_alias_symbol(alias_ident).is_some() {
+            return None;
+        }
+        let path = self.import_aliases.get(alias_ident)?;
+        if path.ends_with(".*") {
+            return None;
+        }
+        Some(format!(
+            "{}__{}",
+            path.replace('.', "__"),
+            member_parts.join("__")
+        ))
+    }
+
     fn resolve_function_value_name<'a>(&'a self, name: &'a str) -> Option<&'a str> {
         if self.functions.contains_key(name) {
             return Some(name);
@@ -2381,6 +2403,34 @@ impl TypeChecker {
             } => self.check_call(&callee.node, args, type_args, span),
 
             Expr::Field { object, field } => {
+                if let Some(path_parts) = Self::flatten_field_chain(expr) {
+                    if path_parts.len() >= 2 {
+                        if let Some(candidate) = self
+                            .resolve_import_alias_module_candidate(&path_parts[0], &path_parts[1..])
+                        {
+                            let resolved = self
+                                .resolve_function_value_name(&candidate)
+                                .unwrap_or(&candidate);
+                            if let Some(sig) = self.functions.get(resolved).cloned() {
+                                return ResolvedType::Function(
+                                    sig.params.iter().map(|(_, ty)| ty.clone()).collect(),
+                                    Box::new(sig.return_type.clone()),
+                                );
+                            }
+                        }
+
+                        let mangled = path_parts.join("__");
+                        let resolved = self
+                            .resolve_function_value_name(&mangled)
+                            .unwrap_or(&mangled);
+                        if let Some(sig) = self.functions.get(resolved).cloned() {
+                            return ResolvedType::Function(
+                                sig.params.iter().map(|(_, ty)| ty.clone()).collect(),
+                                Box::new(sig.return_type.clone()),
+                            );
+                        }
+                    }
+                }
                 let obj_type = self.check_expr(&object.node, object.span.clone());
                 self.check_field_access(&obj_type, field, span)
             }
@@ -3052,6 +3102,63 @@ impl TypeChecker {
         if let Expr::Field { object, field } = callee {
             if let Some(path_parts) = Self::flatten_field_chain(callee) {
                 if path_parts.len() >= 2 {
+                    if let Some(candidate) =
+                        self.resolve_import_alias_module_candidate(&path_parts[0], &path_parts[1..])
+                    {
+                        let resolved = self
+                            .resolve_function_value_name(&candidate)
+                            .unwrap_or(&candidate)
+                            .to_string();
+                        if let Some(sig) = self.functions.get(&resolved).cloned() {
+                            self.enforce_call_effects(&sig, span.clone(), &resolved);
+                            let (inst_params, inst_return_type) = self
+                                .instantiate_signature_for_call(
+                                    &resolved,
+                                    &sig,
+                                    type_args,
+                                    span.clone(),
+                                );
+                            let expected = inst_params.len();
+                            let bad_arity = if sig.is_variadic {
+                                args.len() < expected
+                            } else {
+                                args.len() != expected
+                            };
+                            if bad_arity {
+                                self.error(
+                                    format!(
+                                        "Function '{}' expects {} arguments, got {}",
+                                        resolved,
+                                        if sig.is_variadic {
+                                            format!("at least {}", expected)
+                                        } else {
+                                            expected.to_string()
+                                        },
+                                        args.len()
+                                    ),
+                                    span.clone(),
+                                );
+                            } else {
+                                for (arg, (_, param_type)) in args.iter().zip(inst_params.iter()) {
+                                    let arg_type = self.check_expr(&arg.node, arg.span.clone());
+                                    if !self.types_compatible(param_type, &arg_type) {
+                                        self.error(
+                                            format!(
+                                                "Argument type mismatch: expected {}, got {}",
+                                                param_type, arg_type
+                                            ),
+                                            arg.span.clone(),
+                                        );
+                                    }
+                                }
+                                if sig.is_variadic && sig.is_extern {
+                                    self.check_variadic_ffi_tail_args(&resolved, args, expected);
+                                }
+                            }
+                            return inst_return_type;
+                        }
+                    }
+
                     let mangled = path_parts.join("__");
                     if let Some(sig) = self.functions.get(&mangled).cloned() {
                         self.enforce_call_effects(&sig, span.clone(), &mangled);
@@ -5293,6 +5400,23 @@ mod tests {
             }
         "#;
         check_source(src).expect("function-valued field calls should typecheck");
+    }
+
+    #[test]
+    fn module_alias_function_values_typecheck() {
+        let src = r#"
+            module util {
+                function add1(x: Integer): Integer { return x + 1; }
+                function twice(f: (Integer) -> Integer, x: Integer): Integer { return f(f(x)); }
+            }
+
+            function main(): None {
+                f: (Integer) -> Integer = util.add1;
+                y: Integer = util.twice(f, 1);
+                return None;
+            }
+        "#;
+        check_source(src).expect("module alias-style function values should typecheck");
     }
 
     #[test]

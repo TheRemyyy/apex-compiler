@@ -1340,6 +1340,58 @@ fn rewrite_expr_calls_for_project(
             )),
         },
         Expr::Field { object, field } => {
+            if let Expr::Ident(module_alias) = &object.node {
+                if !is_shadowed(module_alias, scopes) {
+                    if let Some((ns, symbol_name)) = imported_modules.get(module_alias) {
+                        let namespace_path = if symbol_name.is_empty() {
+                            ns.clone()
+                        } else {
+                            format!("{}.{}", ns, symbol_name)
+                        };
+                        if let Some(canonical) =
+                            stdlib_registry().resolve_alias_call(&namespace_path, field)
+                        {
+                            return if let Some((owner, method)) = canonical.split_once("__") {
+                                Expr::Field {
+                                    object: Box::new(ast::Spanned::new(
+                                        Expr::Ident(owner.to_string()),
+                                        object.span.clone(),
+                                    )),
+                                    field: method.to_string(),
+                                }
+                            } else {
+                                Expr::Ident(canonical)
+                            };
+                        }
+
+                        if symbol_name.is_empty() {
+                            if let Some(owner_ns) = global_function_map.get(field) {
+                                if owner_ns == ns {
+                                    return Expr::Ident(mangle_project_symbol(
+                                        owner_ns,
+                                        entry_namespace,
+                                        field,
+                                    ));
+                                }
+                            }
+                        } else if let Some((owner_ns, candidate)) =
+                            resolve_module_alias_function_candidate(
+                                ns,
+                                symbol_name,
+                                field,
+                                global_function_map,
+                            )
+                        {
+                            return Expr::Ident(mangle_project_symbol(
+                                &owner_ns,
+                                entry_namespace,
+                                &candidate,
+                            ));
+                        }
+                    }
+                }
+            }
+
             let rewritten_object = match &object.node {
                 Expr::Ident(name) if !is_shadowed(name, scopes) => {
                     if local_modules.contains(name) {
@@ -2393,9 +2445,14 @@ mod tests {
             &[],
         );
 
-        let Decl::Function(func) = &rewritten.declarations[1].node else {
-            panic!("expected function declaration");
-        };
+        let func = rewritten
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Decl::Function(func) if func.name == "main" => Some(func),
+                _ => None,
+            })
+            .expect("expected main function declaration");
         let Stmt::Let { value, .. } = &func.body[0].node else {
             panic!("expected let statement");
         };
@@ -2403,5 +2460,81 @@ mod tests {
             panic!("expected rewritten function reference ident");
         };
         assert_eq!(name, "app__add1");
+    }
+
+    #[test]
+    fn rewrites_module_alias_function_values_outside_call_positions() {
+        let program = Program {
+            package: Some("app".to_string()),
+            declarations: vec![
+                sp(Decl::Import(ast::ImportDecl {
+                    path: "util".to_string(),
+                    alias: Some("u".to_string()),
+                })),
+                sp(Decl::Function(ast::FunctionDecl {
+                    name: "main".to_string(),
+                    generic_params: vec![],
+                    params: vec![],
+                    is_variadic: false,
+                    extern_abi: None,
+                    extern_link_name: None,
+                    return_type: ast::Type::None,
+                    body: vec![sp(Stmt::Let {
+                        name: "f".to_string(),
+                        ty: ast::Type::Function(
+                            vec![ast::Type::Integer],
+                            Box::new(ast::Type::Integer),
+                        ),
+                        value: sp(Expr::Field {
+                            object: Box::new(sp(Expr::Ident("u".to_string()))),
+                            field: "add1".to_string(),
+                        }),
+                        mutable: false,
+                    })],
+                    is_async: false,
+                    is_extern: false,
+                    visibility: ast::Visibility::Private,
+                    attributes: vec![],
+                })),
+            ],
+        };
+
+        let rewritten = rewrite_program_for_project(
+            &program,
+            "app",
+            "app",
+            &HashMap::from([
+                ("app".to_string(), HashSet::from(["main".to_string()])),
+                ("util".to_string(), HashSet::from(["add1".to_string()])),
+            ]),
+            &HashMap::from([
+                ("main".to_string(), "app".to_string()),
+                ("add1".to_string(), "util".to_string()),
+            ]),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &[ImportDecl {
+                path: "util".to_string(),
+                alias: Some("u".to_string()),
+            }],
+        );
+
+        let func = rewritten
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Decl::Function(func) if func.name == "main" => Some(func),
+                _ => None,
+            })
+            .expect("expected main function declaration");
+        let Stmt::Let { value, .. } = &func.body[0].node else {
+            panic!("expected let statement");
+        };
+        let Expr::Ident(name) = &value.node else {
+            panic!("expected rewritten module alias function reference ident");
+        };
+        assert_eq!(name, "util__add1");
     }
 }

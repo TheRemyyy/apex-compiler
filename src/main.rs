@@ -458,7 +458,7 @@ fn save_semantic_cached_fingerprint(project_root: &Path, fingerprint: &str) -> R
 const PARSE_CACHE_SCHEMA: &str = "v6";
 const DEPENDENCY_GRAPH_CACHE_SCHEMA: &str = "v2";
 const SEMANTIC_SUMMARY_CACHE_SCHEMA: &str = "v2";
-const TYPECHECK_SUMMARY_CACHE_SCHEMA: &str = "v2";
+const TYPECHECK_SUMMARY_CACHE_SCHEMA: &str = "v3";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct FileMetadataStamp {
@@ -894,7 +894,9 @@ fn mangle_project_symbol_for_codegen(namespace: &str, entry_namespace: &str, nam
 
 #[derive(Debug, Clone)]
 struct CodegenReferenceMetadata {
+    imports: Vec<ImportDecl>,
     referenced_symbols: Vec<String>,
+    qualified_symbol_refs: Vec<Vec<String>>,
     api_referenced_symbols: Vec<String>,
 }
 
@@ -914,6 +916,55 @@ fn extend_declaration_symbols_for_reference(
 ) {
     let mut push_owner = |owner_ns: &str, owner_file: &Path| {
         if closure_files.contains(owner_file) {
+            declaration_symbols.insert(mangle_project_symbol_for_codegen(
+                owner_ns,
+                entry_namespace,
+                symbol,
+            ));
+            stack.push(owner_file.to_path_buf());
+        }
+    };
+
+    if let (Some(owner_ns), Some(owner_file)) = (
+        global_function_map.get(symbol),
+        global_function_file_map.get(symbol),
+    ) {
+        push_owner(owner_ns, owner_file);
+    }
+    if let (Some(owner_ns), Some(owner_file)) = (
+        global_class_map.get(symbol),
+        global_class_file_map.get(symbol),
+    ) {
+        push_owner(owner_ns, owner_file);
+    }
+    if let (Some(owner_ns), Some(owner_file)) = (
+        global_module_map.get(symbol),
+        global_module_file_map.get(symbol),
+    ) {
+        push_owner(owner_ns, owner_file);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn extend_declaration_symbols_for_exact_import(
+    import: &ImportDecl,
+    entry_namespace: &str,
+    declaration_symbols: &mut HashSet<String>,
+    stack: &mut Vec<PathBuf>,
+    closure_files: &HashSet<PathBuf>,
+    global_function_map: &HashMap<String, String>,
+    global_function_file_map: &HashMap<String, PathBuf>,
+    global_class_map: &HashMap<String, String>,
+    global_class_file_map: &HashMap<String, PathBuf>,
+    global_module_map: &HashMap<String, String>,
+    global_module_file_map: &HashMap<String, PathBuf>,
+) {
+    let Some((namespace, symbol)) = import.path.rsplit_once('.') else {
+        return;
+    };
+
+    let mut push_owner = |owner_ns: &str, owner_file: &Path| {
+        if owner_ns == namespace && closure_files.contains(owner_file) {
             declaration_symbols.insert(mangle_project_symbol_for_codegen(
                 owner_ns,
                 entry_namespace,
@@ -978,6 +1029,45 @@ fn declaration_symbols_for_unit(
         let Some(metadata) = reference_metadata.get(&file) else {
             continue;
         };
+
+        for import in &metadata.imports {
+            extend_declaration_symbols_for_exact_import(
+                import,
+                entry_namespace,
+                &mut declaration_symbols,
+                &mut stack,
+                &closure_files,
+                global_function_map,
+                global_function_file_map,
+                global_class_map,
+                global_class_file_map,
+                global_module_map,
+                global_module_file_map,
+            );
+
+            let import_key = import_lookup_key(import);
+            for path in &metadata.qualified_symbol_refs {
+                if path.first().is_some_and(|part| part == &import_key) {
+                    let rest = &path[1..];
+                    if let Some((owner_ns, candidate)) = resolve_function_symbol_in_namespace_path(
+                        &import.path,
+                        rest,
+                        global_function_map,
+                    ) {
+                        if let Some(owner_file) = global_function_file_map.get(&candidate) {
+                            if closure_files.contains(owner_file) {
+                                declaration_symbols.insert(mangle_project_symbol_for_codegen(
+                                    &owner_ns,
+                                    entry_namespace,
+                                    &candidate,
+                                ));
+                                stack.push(owner_file.to_path_buf());
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         let symbols = if file == root_file {
             &metadata.referenced_symbols
@@ -1284,7 +1374,7 @@ fn save_typecheck_summary_cache(
     write_cache_blob(&path, "typecheck summary cache", cache)
 }
 
-const REWRITE_CACHE_SCHEMA: &str = "v3";
+const REWRITE_CACHE_SCHEMA: &str = "v4";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RewrittenFileCacheEntry {
@@ -1561,6 +1651,56 @@ fn resolve_function_file_in_namespace_path(
             if let Some(file) = global_function_file_map.get(&candidate) {
                 return Some(file.clone());
             }
+        }
+    }
+
+    None
+}
+
+fn resolve_function_symbol_in_namespace_path(
+    namespace_path: &str,
+    member_parts: &[String],
+    global_function_map: &HashMap<String, String>,
+) -> Option<(String, String)> {
+    if member_parts.is_empty() {
+        return None;
+    }
+
+    let function_name = member_parts.last().expect("checked non-empty");
+    let module_tail = if member_parts.len() > 1 {
+        Some(member_parts[..member_parts.len() - 1].join("__"))
+    } else {
+        None
+    };
+
+    let mut owner_namespaces: HashSet<&str> = HashSet::new();
+    owner_namespaces.extend(global_function_map.values().map(String::as_str));
+
+    for owner_ns in owner_namespaces {
+        let imported_module_prefix = if namespace_path == owner_ns {
+            String::new()
+        } else if let Some(suffix) = namespace_path.strip_prefix(owner_ns) {
+            if let Some(rest) = suffix.strip_prefix('.') {
+                rest.replace('.', "__")
+            } else {
+                continue;
+            }
+        } else {
+            continue;
+        };
+
+        let candidate = match (&*imported_module_prefix, module_tail.as_deref()) {
+            ("", None) => function_name.clone(),
+            ("", Some(tail)) => format!("{}__{}", tail, function_name),
+            (prefix, None) => format!("{}__{}", prefix, function_name),
+            (prefix, Some(tail)) => format!("{}__{}__{}", prefix, tail, function_name),
+        };
+
+        if global_function_map
+            .get(&candidate)
+            .is_some_and(|owner| owner == owner_ns)
+        {
+            return Some((owner_ns.to_string(), candidate));
         }
     }
 
@@ -4333,7 +4473,9 @@ fn build_project(
                 (
                     unit.file.clone(),
                     CodegenReferenceMetadata {
+                        imports: unit.imports.clone(),
                         referenced_symbols: unit.referenced_symbols.clone(),
+                        qualified_symbol_refs: unit.qualified_symbol_refs.clone(),
                         api_referenced_symbols: unit.api_referenced_symbols.clone(),
                     },
                 )
@@ -5794,7 +5936,7 @@ fn bindgen_header(header: &Path, output: Option<&Path>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        api_program_fingerprint, build_file_dependency_graph_incremental,
+        api_program_fingerprint, build_file_dependency_graph_incremental, build_project,
         build_reverse_dependency_graph, check_command, codegen_program_for_unit, compile_source,
         component_fingerprint, compute_link_fingerprint, compute_namespace_api_fingerprints,
         compute_rewrite_context_fingerprint_for_unit, escape_response_file_arg, format_targets,
@@ -6330,6 +6472,64 @@ function main(): None {
 
         with_current_dir(&temp_root, || {
             check_command(None, false).expect("project check should support function value refs");
+        });
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn project_build_supports_imported_function_value_alias_references() {
+        let temp_root = make_temp_project_root("function-value-import-project");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(
+            &temp_root,
+            &["src/main.apex", "src/lib.apex"],
+            "src/main.apex",
+            "smoke",
+        );
+        fs::write(
+            src_dir.join("lib.apex"),
+            "package util;\nfunction add1(x: Integer): Integer { return x + 1; }\n",
+        )
+        .expect("write lib");
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nimport util.add1 as inc;\nfunction main(): None { f: (Integer) -> Integer = inc; o: Option<(Integer) -> Integer> = Option.some(inc); x: Integer = f(2); return None; }\n",
+        )
+        .expect("write main");
+
+        with_current_dir(&temp_root, || {
+            build_project(false, false, true, false, false)
+                .expect("project build should support imported function value aliases");
+        });
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn project_build_supports_namespace_alias_function_values() {
+        let temp_root = make_temp_project_root("function-value-namespace-alias-project");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(
+            &temp_root,
+            &["src/main.apex", "src/lib.apex"],
+            "src/main.apex",
+            "smoke",
+        );
+        fs::write(
+            src_dir.join("lib.apex"),
+            "package util;\nfunction add1(x: Integer): Integer { return x + 1; }\nfunction twice(f: (Integer) -> Integer, x: Integer): Integer { return f(f(x)); }\n",
+        )
+        .expect("write lib");
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nimport util as u;\nfunction main(): None { f: (Integer) -> Integer = u.add1; x: Integer = u.twice(f, 1); y: Integer = u.add1(2); return None; }\n",
+        )
+        .expect("write main");
+
+        with_current_dir(&temp_root, || {
+            build_project(false, false, true, false, false)
+                .expect("project build should support namespace alias function values");
         });
 
         let _ = fs::remove_dir_all(temp_root);
