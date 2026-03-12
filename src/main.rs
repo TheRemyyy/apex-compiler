@@ -7651,6 +7651,56 @@ function main(): None {
     }
 
     #[test]
+    fn compile_source_runs_set_contains_on_option_values() {
+        let temp_root = make_temp_project_root("set-option-contains-runtime");
+        let source_path = temp_root.join("set_option_contains_runtime.apex");
+        let output_path = temp_root.join("set_option_contains_runtime");
+        let source = r#"
+            function main(): Integer {
+                s: Set<Option<Integer>> = Set<Option<Integer>>();
+                s.add(Option.some(7));
+                return if (s.contains(Option.some(7))) { 1; } else { 2; };
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, false, true, None, None)
+            .expect("set option contains should codegen");
+
+        let status = std::process::Command::new(&output_path)
+            .status()
+            .expect("run compiled set-option contains binary");
+        assert_eq!(status.code(), Some(1));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn compile_source_runs_set_contains_on_result_values() {
+        let temp_root = make_temp_project_root("set-result-contains-runtime");
+        let source_path = temp_root.join("set_result_contains_runtime.apex");
+        let output_path = temp_root.join("set_result_contains_runtime");
+        let source = r#"
+            function main(): Integer {
+                s: Set<Result<Integer, Integer>> = Set<Result<Integer, Integer>>();
+                s.add(Result.ok(7));
+                return if (s.contains(Result.ok(7))) { 1; } else { 2; };
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, false, true, None, None)
+            .expect("set result contains should codegen");
+
+        let status = std::process::Command::new(&output_path)
+            .status()
+            .expect("run compiled set-result contains binary");
+        assert_eq!(status.code(), Some(1));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
     fn compile_source_runs_map_methods_on_call_results() {
         let temp_root = make_temp_project_root("map-call-method-runtime");
         let source_path = temp_root.join("map_call_method_runtime.apex");
@@ -7675,6 +7725,44 @@ function main(): None {
             .status()
             .expect("run compiled map-call method binary");
         assert_eq!(status.code(), Some(1));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn compile_source_runs_map_growth_past_initial_capacity() {
+        let temp_root = make_temp_project_root("map-growth-runtime");
+        let source_path = temp_root.join("map_growth_runtime.apex");
+        let output_path = temp_root.join("map_growth_runtime");
+        let source = r#"
+            function build(): Map<Integer, Integer> {
+                m: Map<Integer, Integer> = Map<Integer, Integer>();
+                m.set(0, 10);
+                m.set(1, 11);
+                m.set(2, 12);
+                m.set(3, 13);
+                m.set(4, 14);
+                m.set(5, 15);
+                m.set(6, 16);
+                m.set(7, 17);
+                m.set(8, 18);
+                return m;
+            }
+
+            function main(): Integer {
+                m: Map<Integer, Integer> = build();
+                return if (m.contains(8)) { m.get(8); } else { 99; };
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, false, true, None, None)
+            .expect("map growth should codegen");
+
+        let status = std::process::Command::new(&output_path)
+            .status()
+            .expect("run compiled map-growth binary");
+        assert_eq!(status.code(), Some(18));
 
         let _ = fs::remove_dir_all(temp_root);
     }

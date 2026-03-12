@@ -22,6 +22,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed `Set<T>` runtime method semantics in backend lowering:
   - `add`, `contains`, and `remove` are no longer hardcoded `false` stubs
   - returned sets now behave consistently for direct and expression-receiver calls such as `build().contains(7)` and `build().remove(7)`
+- Fixed generic container runtime storage/equality for non-scalar values:
+  - `Set<Option<T>>` / `Set<Result<T, E>>` membership checks now compare tagged values semantically instead of relying on unstable raw-byte equality
+  - `Map<K, V>` now grows past its initial capacity while preserving typed key/value storage sizes instead of overflowing small fixed buffers after 8 inserts
 - Fixed `apex test` handling for `@Ignore` without a reason:
   - tests marked with bare `@Ignore` are now skipped correctly instead of being executed
   - ignored tests are now counted in the final `Total` summary as well as `Ignored`

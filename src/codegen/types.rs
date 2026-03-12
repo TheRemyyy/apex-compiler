@@ -9,6 +9,376 @@ use inkwell::{AddressSpace, IntPredicate};
 use crate::codegen::core::{Codegen, CodegenError, Result};
 
 impl<'ctx> Codegen<'ctx> {
+    fn build_value_equality(
+        &mut self,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+        ty: &Type,
+        name: &str,
+    ) -> Result<IntValue<'ctx>> {
+        if let Type::Option(inner_ty) = ty {
+            let lhs_ptr =
+                self.materialize_value_pointer_for_type(lhs, ty, &format!("{name}_lhs_tmp"))?;
+            let rhs_ptr =
+                self.materialize_value_pointer_for_type(rhs, ty, &format!("{name}_rhs_tmp"))?;
+            let llvm_inner_ty = self.llvm_type(inner_ty);
+            let option_struct_type = self
+                .context
+                .struct_type(&[self.context.i8_type().into(), llvm_inner_ty], false);
+            let i32_type = self.context.i32_type();
+            let zero = i32_type.const_zero();
+            let one = i32_type.const_int(1, false);
+
+            let lhs_tag_ptr = unsafe {
+                self.builder
+                    .build_gep(
+                        option_struct_type.as_basic_type_enum(),
+                        lhs_ptr,
+                        &[zero, zero],
+                        &format!("{name}_lhs_tag_ptr"),
+                    )
+                    .unwrap()
+            };
+            let rhs_tag_ptr = unsafe {
+                self.builder
+                    .build_gep(
+                        option_struct_type.as_basic_type_enum(),
+                        rhs_ptr,
+                        &[zero, zero],
+                        &format!("{name}_rhs_tag_ptr"),
+                    )
+                    .unwrap()
+            };
+            let lhs_tag = self
+                .builder
+                .build_load(
+                    self.context.i8_type(),
+                    lhs_tag_ptr,
+                    &format!("{name}_lhs_tag"),
+                )
+                .unwrap()
+                .into_int_value();
+            let rhs_tag = self
+                .builder
+                .build_load(
+                    self.context.i8_type(),
+                    rhs_tag_ptr,
+                    &format!("{name}_rhs_tag"),
+                )
+                .unwrap()
+                .into_int_value();
+            let tags_eq = self
+                .builder
+                .build_int_compare(
+                    IntPredicate::EQ,
+                    lhs_tag,
+                    rhs_tag,
+                    &format!("{name}_tags_eq"),
+                )
+                .unwrap();
+            let lhs_some = self
+                .builder
+                .build_int_compare(
+                    IntPredicate::NE,
+                    lhs_tag,
+                    self.context.i8_type().const_zero(),
+                    &format!("{name}_lhs_some"),
+                )
+                .unwrap();
+            let lhs_value_ptr = unsafe {
+                self.builder
+                    .build_gep(
+                        option_struct_type.as_basic_type_enum(),
+                        lhs_ptr,
+                        &[zero, one],
+                        &format!("{name}_lhs_value_ptr"),
+                    )
+                    .unwrap()
+            };
+            let rhs_value_ptr = unsafe {
+                self.builder
+                    .build_gep(
+                        option_struct_type.as_basic_type_enum(),
+                        rhs_ptr,
+                        &[zero, one],
+                        &format!("{name}_rhs_value_ptr"),
+                    )
+                    .unwrap()
+            };
+            let lhs_value = self
+                .builder
+                .build_load(llvm_inner_ty, lhs_value_ptr, &format!("{name}_lhs_value"))
+                .unwrap();
+            let rhs_value = self
+                .builder
+                .build_load(llvm_inner_ty, rhs_value_ptr, &format!("{name}_rhs_value"))
+                .unwrap();
+            let inner_eq = self.build_value_equality(
+                lhs_value,
+                rhs_value,
+                inner_ty,
+                &format!("{name}_inner"),
+            )?;
+            let payload_eq_or_none = self
+                .builder
+                .build_select(
+                    lhs_some,
+                    inner_eq,
+                    self.context.bool_type().const_all_ones(),
+                    &format!("{name}_payload_eq_or_none"),
+                )
+                .unwrap()
+                .into_int_value();
+            return Ok(self
+                .builder
+                .build_and(tags_eq, payload_eq_or_none, name)
+                .unwrap());
+        }
+
+        if let Type::Result(ok_ty, err_ty) = ty {
+            let lhs_ptr =
+                self.materialize_value_pointer_for_type(lhs, ty, &format!("{name}_lhs_tmp"))?;
+            let rhs_ptr =
+                self.materialize_value_pointer_for_type(rhs, ty, &format!("{name}_rhs_tmp"))?;
+            let ok_llvm = self.llvm_type(ok_ty);
+            let err_llvm = self.llvm_type(err_ty);
+            let result_struct_type = self
+                .context
+                .struct_type(&[self.context.i8_type().into(), ok_llvm, err_llvm], false);
+            let i32_type = self.context.i32_type();
+            let zero = i32_type.const_zero();
+            let one = i32_type.const_int(1, false);
+            let two = i32_type.const_int(2, false);
+
+            let lhs_tag_ptr = unsafe {
+                self.builder
+                    .build_gep(
+                        result_struct_type.as_basic_type_enum(),
+                        lhs_ptr,
+                        &[zero, zero],
+                        &format!("{name}_lhs_tag_ptr"),
+                    )
+                    .unwrap()
+            };
+            let rhs_tag_ptr = unsafe {
+                self.builder
+                    .build_gep(
+                        result_struct_type.as_basic_type_enum(),
+                        rhs_ptr,
+                        &[zero, zero],
+                        &format!("{name}_rhs_tag_ptr"),
+                    )
+                    .unwrap()
+            };
+            let lhs_tag = self
+                .builder
+                .build_load(
+                    self.context.i8_type(),
+                    lhs_tag_ptr,
+                    &format!("{name}_lhs_tag"),
+                )
+                .unwrap()
+                .into_int_value();
+            let rhs_tag = self
+                .builder
+                .build_load(
+                    self.context.i8_type(),
+                    rhs_tag_ptr,
+                    &format!("{name}_rhs_tag"),
+                )
+                .unwrap()
+                .into_int_value();
+            let tags_eq = self
+                .builder
+                .build_int_compare(
+                    IntPredicate::EQ,
+                    lhs_tag,
+                    rhs_tag,
+                    &format!("{name}_tags_eq"),
+                )
+                .unwrap();
+            let lhs_ok = self
+                .builder
+                .build_int_compare(
+                    IntPredicate::NE,
+                    lhs_tag,
+                    self.context.i8_type().const_zero(),
+                    &format!("{name}_lhs_ok"),
+                )
+                .unwrap();
+
+            let lhs_ok_ptr = unsafe {
+                self.builder
+                    .build_gep(
+                        result_struct_type.as_basic_type_enum(),
+                        lhs_ptr,
+                        &[zero, one],
+                        &format!("{name}_lhs_ok_ptr"),
+                    )
+                    .unwrap()
+            };
+            let rhs_ok_ptr = unsafe {
+                self.builder
+                    .build_gep(
+                        result_struct_type.as_basic_type_enum(),
+                        rhs_ptr,
+                        &[zero, one],
+                        &format!("{name}_rhs_ok_ptr"),
+                    )
+                    .unwrap()
+            };
+            let lhs_err_ptr = unsafe {
+                self.builder
+                    .build_gep(
+                        result_struct_type.as_basic_type_enum(),
+                        lhs_ptr,
+                        &[zero, two],
+                        &format!("{name}_lhs_err_ptr"),
+                    )
+                    .unwrap()
+            };
+            let rhs_err_ptr = unsafe {
+                self.builder
+                    .build_gep(
+                        result_struct_type.as_basic_type_enum(),
+                        rhs_ptr,
+                        &[zero, two],
+                        &format!("{name}_rhs_err_ptr"),
+                    )
+                    .unwrap()
+            };
+            let ok_eq = self.build_value_equality(
+                self.builder
+                    .build_load(ok_llvm, lhs_ok_ptr, &format!("{name}_lhs_ok_value"))
+                    .unwrap(),
+                self.builder
+                    .build_load(ok_llvm, rhs_ok_ptr, &format!("{name}_rhs_ok_value"))
+                    .unwrap(),
+                ok_ty,
+                &format!("{name}_ok_eq"),
+            )?;
+            let err_eq = self.build_value_equality(
+                self.builder
+                    .build_load(err_llvm, lhs_err_ptr, &format!("{name}_lhs_err_value"))
+                    .unwrap(),
+                self.builder
+                    .build_load(err_llvm, rhs_err_ptr, &format!("{name}_rhs_err_value"))
+                    .unwrap(),
+                err_ty,
+                &format!("{name}_err_eq"),
+            )?;
+            let payload_eq = self
+                .builder
+                .build_select(lhs_ok, ok_eq, err_eq, &format!("{name}_payload_eq"))
+                .unwrap()
+                .into_int_value();
+            return Ok(self.builder.build_and(tags_eq, payload_eq, name).unwrap());
+        }
+
+        if matches!(ty, Type::String) {
+            let strcmp = self.get_or_declare_strcmp();
+            let cmp = self
+                .builder
+                .build_call(strcmp, &[lhs.into(), rhs.into()], &format!("{name}_strcmp"))
+                .unwrap();
+            let cmp_v = match cmp.try_as_basic_value() {
+                ValueKind::Basic(v) => v.into_int_value(),
+                _ => self.context.i32_type().const_int(1, false),
+            };
+            return Ok(self
+                .builder
+                .build_int_compare(
+                    IntPredicate::EQ,
+                    cmp_v,
+                    self.context.i32_type().const_zero(),
+                    name,
+                )
+                .unwrap());
+        }
+
+        if lhs.is_int_value() && rhs.is_int_value() {
+            return Ok(self
+                .builder
+                .build_int_compare(
+                    IntPredicate::EQ,
+                    lhs.into_int_value(),
+                    rhs.into_int_value(),
+                    name,
+                )
+                .unwrap());
+        }
+
+        if lhs.is_float_value() && rhs.is_float_value() {
+            return Ok(self
+                .builder
+                .build_float_compare(
+                    inkwell::FloatPredicate::OEQ,
+                    lhs.into_float_value(),
+                    rhs.into_float_value(),
+                    name,
+                )
+                .unwrap());
+        }
+
+        if lhs.is_pointer_value() && rhs.is_pointer_value() {
+            let lhs_i = self
+                .builder
+                .build_ptr_to_int(
+                    lhs.into_pointer_value(),
+                    self.context.i64_type(),
+                    &format!("{name}_lhs"),
+                )
+                .unwrap();
+            let rhs_i = self
+                .builder
+                .build_ptr_to_int(
+                    rhs.into_pointer_value(),
+                    self.context.i64_type(),
+                    &format!("{name}_rhs"),
+                )
+                .unwrap();
+            return Ok(self
+                .builder
+                .build_int_compare(IntPredicate::EQ, lhs_i, rhs_i, name)
+                .unwrap());
+        }
+
+        let llvm_ty = self.llvm_type(ty);
+        if llvm_ty.is_struct_type() {
+            let lhs_ptr =
+                self.materialize_value_pointer_for_type(lhs, ty, &format!("{name}_lhs_tmp"))?;
+            let rhs_ptr =
+                self.materialize_value_pointer_for_type(rhs, ty, &format!("{name}_rhs_tmp"))?;
+            let memcmp = self.get_or_declare_memcmp();
+            let size = llvm_ty
+                .size_of()
+                .ok_or_else(|| CodegenError::new("failed to size value for equality"))?;
+            let cmp = self
+                .builder
+                .build_call(
+                    memcmp,
+                    &[lhs_ptr.into(), rhs_ptr.into(), size.into()],
+                    &format!("{name}_memcmp"),
+                )
+                .unwrap();
+            let cmp_v = match cmp.try_as_basic_value() {
+                ValueKind::Basic(v) => v.into_int_value(),
+                _ => self.context.i32_type().const_int(1, false),
+            };
+            return Ok(self
+                .builder
+                .build_int_compare(
+                    IntPredicate::EQ,
+                    cmp_v,
+                    self.context.i32_type().const_zero(),
+                    name,
+                )
+                .unwrap());
+        }
+
+        Ok(self.context.bool_type().const_zero())
+    }
+
     pub(crate) fn materialize_value_pointer_for_type(
         &mut self,
         value: BasicValueEnum<'ctx>,
@@ -22,6 +392,12 @@ impl<'ctx> Codegen<'ctx> {
             .builder
             .build_alloca(self.llvm_type(ty), name)
             .map_err(|_| CodegenError::new("failed to allocate temporary value storage"))?;
+        let llvm_ty = self.llvm_type(ty);
+        if llvm_ty.is_struct_type() || llvm_ty.is_array_type() {
+            self.builder
+                .build_store(alloca, llvm_ty.const_zero())
+                .map_err(|_| CodegenError::new("failed to zero temporary value storage"))?;
+        }
         self.builder
             .build_store(alloca, value)
             .map_err(|_| CodegenError::new("failed to store temporary value"))?;
@@ -220,45 +596,7 @@ impl<'ctx> Codegen<'ctx> {
                     .builder
                     .build_load(elem_llvm_ty, typed_elem_ptr, "set_existing")
                     .unwrap();
-                let eq = if matches!(inner_ty, Type::String) {
-                    let strcmp = self.get_or_declare_strcmp();
-                    let cmp = self
-                        .builder
-                        .build_call(strcmp, &[existing.into(), needle.into()], "set_strcmp")
-                        .unwrap();
-                    let cmp_v = match cmp.try_as_basic_value() {
-                        ValueKind::Basic(v) => v.into_int_value(),
-                        _ => self.context.i32_type().const_int(1, false),
-                    };
-                    self.builder
-                        .build_int_compare(
-                            IntPredicate::EQ,
-                            cmp_v,
-                            self.context.i32_type().const_zero(),
-                            "set_eq",
-                        )
-                        .unwrap()
-                } else if existing.is_int_value() && needle.is_int_value() {
-                    self.builder
-                        .build_int_compare(
-                            IntPredicate::EQ,
-                            existing.into_int_value(),
-                            needle.into_int_value(),
-                            "set_eq",
-                        )
-                        .unwrap()
-                } else if existing.is_float_value() && needle.is_float_value() {
-                    self.builder
-                        .build_float_compare(
-                            inkwell::FloatPredicate::OEQ,
-                            existing.into_float_value(),
-                            needle.into_float_value(),
-                            "set_eq",
-                        )
-                        .unwrap()
-                } else {
-                    self.context.bool_type().const_zero()
-                };
+                let eq = self.build_value_equality(existing, needle, inner_ty, "set_eq")?;
                 let next_bb = self
                     .context
                     .append_basic_block(current_fn, "set_search.next");
@@ -399,6 +737,11 @@ impl<'ctx> Codegen<'ctx> {
                                 "set_append_typed_ptr",
                             )
                             .unwrap();
+                        if elem_llvm_ty.is_struct_type() || elem_llvm_ty.is_array_type() {
+                            self.builder
+                                .build_store(typed_elem_ptr, elem_llvm_ty.const_zero())
+                                .unwrap();
+                        }
                         self.builder.build_store(typed_elem_ptr, needle).unwrap();
                         let new_length = self
                             .builder
@@ -1506,6 +1849,13 @@ impl<'ctx> Codegen<'ctx> {
     // === Map<K,V> helpers ===
 
     pub fn create_empty_map(&mut self) -> Result<BasicValueEnum<'ctx>> {
+        self.create_empty_map_for_type(&Type::Map(Box::new(Type::Integer), Box::new(Type::Integer)))
+    }
+
+    pub fn create_empty_map_for_type(
+        &mut self,
+        map_expr_ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>> {
         // Map struct: { capacity: i64, length: i64, keys: ptr, values: ptr }
         let map_type = self.context.struct_type(
             &[
@@ -1557,14 +1907,32 @@ impl<'ctx> Codegen<'ctx> {
 
         // Allocate keys and values arrays
         let malloc = self.get_or_declare_malloc();
-        let size = self
+        let (key_ty, value_ty) = match map_expr_ty {
+            Type::Map(key, value) => (&**key, &**value),
+            _ => (&Type::Integer, &Type::Integer),
+        };
+        let key_size = self
+            .llvm_type(key_ty)
+            .size_of()
+            .and_then(|size| size.get_zero_extended_constant())
+            .unwrap_or(8);
+        let value_size = self
+            .llvm_type(value_ty)
+            .size_of()
+            .and_then(|size| size.get_zero_extended_constant())
+            .unwrap_or(8);
+        let keys_size = self
             .context
             .i64_type()
-            .const_int(initial_capacity * 8, false);
+            .const_int(initial_capacity * key_size, false);
+        let values_size = self
+            .context
+            .i64_type()
+            .const_int(initial_capacity * value_size, false);
 
         let keys_call = self
             .builder
-            .build_call(malloc, &[size.into()], "keys")
+            .build_call(malloc, &[keys_size.into()], "keys")
             .unwrap();
         let keys_ptr = match keys_call.try_as_basic_value() {
             ValueKind::Basic(val) => val,
@@ -1584,7 +1952,7 @@ impl<'ctx> Codegen<'ctx> {
 
         let values_call = self
             .builder
-            .build_call(malloc, &[size.into()], "values")
+            .build_call(malloc, &[values_size.into()], "values")
             .unwrap();
         let values_ptr = match values_call.try_as_basic_value() {
             ValueKind::Basic(val) => val,
@@ -1606,6 +1974,13 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     pub fn create_empty_set(&mut self) -> Result<BasicValueEnum<'ctx>> {
+        self.create_empty_set_for_type(&Type::Set(Box::new(Type::Integer)))
+    }
+
+    pub fn create_empty_set_for_type(
+        &mut self,
+        set_expr_ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>> {
         // Set struct: { capacity: i64, length: i64, data: ptr }
         let set_type = self.context.struct_type(
             &[
@@ -1656,10 +2031,18 @@ impl<'ctx> Codegen<'ctx> {
 
         // Allocate data - malloc(capacity * 8)
         let malloc = self.get_or_declare_malloc();
+        let elem_size = match set_expr_ty {
+            Type::Set(inner) => self
+                .llvm_type(inner)
+                .size_of()
+                .and_then(|size| size.get_zero_extended_constant())
+                .unwrap_or(8),
+            _ => 8,
+        };
         let size = self
             .context
             .i64_type()
-            .const_int(initial_capacity * 8, false);
+            .const_int(initial_capacity * elem_size, false);
         let call_result = self
             .builder
             .build_call(malloc, &[size.into()], "data")
@@ -2466,6 +2849,14 @@ impl<'ctx> Codegen<'ctx> {
         };
         let key_llvm = self.llvm_type(&key_ty);
         let val_llvm = self.llvm_type(&val_ty);
+        let key_size = key_llvm
+            .size_of()
+            .and_then(|size| size.get_zero_extended_constant())
+            .unwrap_or(8);
+        let val_size = val_llvm
+            .size_of()
+            .and_then(|size| size.get_zero_extended_constant())
+            .unwrap_or(8);
 
         let length_ptr = unsafe {
             self.builder
@@ -2566,7 +2957,7 @@ impl<'ctx> Codegen<'ctx> {
                 self.builder.position_at_end(body_bb);
                 let offset = self
                     .builder
-                    .build_int_mul(i, i64_type.const_int(8, false), "offset")
+                    .build_int_mul(i, i64_type.const_int(key_size, false), "offset")
                     .unwrap();
                 let key_slot = unsafe {
                     self.builder
@@ -2577,46 +2968,31 @@ impl<'ctx> Codegen<'ctx> {
                     .builder
                     .build_load(key_llvm, key_slot, "existing")
                     .unwrap();
-                let eq = if matches!(key_ty, Type::String) {
-                    let strcmp = self.get_or_declare_strcmp();
-                    let cmp = self
-                        .builder
-                        .build_call(strcmp, &[existing.into(), key.into()], "strcmp")
-                        .unwrap();
-                    let cmp_v = match cmp.try_as_basic_value() {
-                        ValueKind::Basic(v) => v.into_int_value(),
-                        _ => self.context.i32_type().const_int(1, false),
-                    };
-                    self.builder
-                        .build_int_compare(
-                            IntPredicate::EQ,
-                            cmp_v,
-                            self.context.i32_type().const_int(0, false),
-                            "eq",
-                        )
-                        .unwrap()
-                } else if existing.is_int_value() && key.is_int_value() {
-                    self.builder
-                        .build_int_compare(
-                            IntPredicate::EQ,
-                            existing.into_int_value(),
-                            key.into_int_value(),
-                            "eq",
-                        )
-                        .unwrap()
-                } else {
-                    self.context.bool_type().const_int(0, false)
-                };
+                let eq = self.build_value_equality(existing, key, &key_ty, "eq")?;
                 self.builder
                     .build_conditional_branch(eq, update_bb, cont_bb)
                     .unwrap();
 
                 self.builder.position_at_end(update_bb);
+                let value_offset = self
+                    .builder
+                    .build_int_mul(i, i64_type.const_int(val_size, false), "value_offset")
+                    .unwrap();
                 let val_slot = unsafe {
                     self.builder
-                        .build_gep(self.context.i8_type(), values_ptr, &[offset], "val_slot")
+                        .build_gep(
+                            self.context.i8_type(),
+                            values_ptr,
+                            &[value_offset],
+                            "val_slot",
+                        )
                         .unwrap()
                 };
+                if val_llvm.is_struct_type() || val_llvm.is_array_type() {
+                    self.builder
+                        .build_store(val_slot, val_llvm.const_zero())
+                        .unwrap();
+                }
                 self.builder.build_store(val_slot, value).unwrap();
                 self.builder.build_unconditional_branch(done_bb).unwrap();
 
@@ -2629,26 +3005,150 @@ impl<'ctx> Codegen<'ctx> {
                 self.builder.build_unconditional_branch(cond_bb).unwrap();
 
                 self.builder.position_at_end(append_bb);
+                let capacity_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            map_type.as_basic_type_enum(),
+                            map_ptr,
+                            &[zero, i32_type.const_int(0, false)],
+                            "capacity_ptr",
+                        )
+                        .unwrap()
+                };
+                let capacity = self
+                    .builder
+                    .build_load(i64_type, capacity_ptr, "capacity")
+                    .unwrap()
+                    .into_int_value();
+                let need_growth = self
+                    .builder
+                    .build_int_compare(IntPredicate::UGE, length, capacity, "need_growth")
+                    .unwrap();
+                let grow_bb = self.context.append_basic_block(current_fn, "map_set.grow");
+                let store_bb = self.context.append_basic_block(current_fn, "map_set.store");
+                self.builder
+                    .build_conditional_branch(need_growth, grow_bb, store_bb)
+                    .unwrap();
+
+                self.builder.position_at_end(grow_bb);
+                let realloc = self.get_or_declare_realloc();
+                let grown_capacity = self
+                    .builder
+                    .build_int_mul(capacity, i64_type.const_int(2, false), "grown_capacity")
+                    .unwrap();
+                let new_key_size = self
+                    .builder
+                    .build_int_mul(
+                        grown_capacity,
+                        i64_type.const_int(key_size, false),
+                        "new_key_size",
+                    )
+                    .unwrap();
+                let grown_keys = self
+                    .builder
+                    .build_call(
+                        realloc,
+                        &[keys_ptr.into(), new_key_size.into()],
+                        "grown_keys",
+                    )
+                    .unwrap()
+                    .try_as_basic_value();
+                let grown_keys = match grown_keys {
+                    ValueKind::Basic(BasicValueEnum::PointerValue(ptr)) => ptr,
+                    _ => return Err(CodegenError::new("realloc failed for Map key growth")),
+                };
+                let new_val_size = self
+                    .builder
+                    .build_int_mul(
+                        grown_capacity,
+                        i64_type.const_int(val_size, false),
+                        "new_val_size",
+                    )
+                    .unwrap();
+                let grown_vals = self
+                    .builder
+                    .build_call(
+                        realloc,
+                        &[values_ptr.into(), new_val_size.into()],
+                        "grown_vals",
+                    )
+                    .unwrap()
+                    .try_as_basic_value();
+                let grown_vals = match grown_vals {
+                    ValueKind::Basic(BasicValueEnum::PointerValue(ptr)) => ptr,
+                    _ => return Err(CodegenError::new("realloc failed for Map value growth")),
+                };
+                self.builder.build_store(keys_ptr_ptr, grown_keys).unwrap();
+                self.builder
+                    .build_store(values_ptr_ptr, grown_vals)
+                    .unwrap();
+                self.builder
+                    .build_store(capacity_ptr, grown_capacity)
+                    .unwrap();
+                self.builder.build_unconditional_branch(store_bb).unwrap();
+
+                self.builder.position_at_end(store_bb);
+                let active_keys_ptr = self
+                    .builder
+                    .build_load(
+                        self.context.ptr_type(AddressSpace::default()),
+                        keys_ptr_ptr,
+                        "active_keys",
+                    )
+                    .unwrap()
+                    .into_pointer_value();
+                let active_values_ptr = self
+                    .builder
+                    .build_load(
+                        self.context.ptr_type(AddressSpace::default()),
+                        values_ptr_ptr,
+                        "active_vals",
+                    )
+                    .unwrap()
+                    .into_pointer_value();
                 let offset = self
                     .builder
-                    .build_int_mul(length, i64_type.const_int(8, false), "append_off")
+                    .build_int_mul(length, i64_type.const_int(key_size, false), "append_off")
                     .unwrap();
                 let key_slot = unsafe {
                     self.builder
-                        .build_gep(self.context.i8_type(), keys_ptr, &[offset], "key_slot_new")
+                        .build_gep(
+                            self.context.i8_type(),
+                            active_keys_ptr,
+                            &[offset],
+                            "key_slot_new",
+                        )
                         .unwrap()
                 };
+                if key_llvm.is_struct_type() || key_llvm.is_array_type() {
+                    self.builder
+                        .build_store(key_slot, key_llvm.const_zero())
+                        .unwrap();
+                }
                 self.builder.build_store(key_slot, key).unwrap();
+                let value_offset = self
+                    .builder
+                    .build_int_mul(
+                        length,
+                        i64_type.const_int(val_size, false),
+                        "append_val_off",
+                    )
+                    .unwrap();
                 let val_slot = unsafe {
                     self.builder
                         .build_gep(
                             self.context.i8_type(),
-                            values_ptr,
-                            &[offset],
+                            active_values_ptr,
+                            &[value_offset],
                             "val_slot_new",
                         )
                         .unwrap()
                 };
+                if val_llvm.is_struct_type() || val_llvm.is_array_type() {
+                    self.builder
+                        .build_store(val_slot, val_llvm.const_zero())
+                        .unwrap();
+                }
                 self.builder.build_store(val_slot, value).unwrap();
                 let new_len = self
                     .builder
@@ -2718,7 +3218,7 @@ impl<'ctx> Codegen<'ctx> {
                 self.builder.position_at_end(body_bb);
                 let offset = self
                     .builder
-                    .build_int_mul(i, i64_type.const_int(8, false), "offset")
+                    .build_int_mul(i, i64_type.const_int(key_size, false), "offset")
                     .unwrap();
                 let key_slot = unsafe {
                     self.builder
@@ -2729,36 +3229,7 @@ impl<'ctx> Codegen<'ctx> {
                     .builder
                     .build_load(key_llvm, key_slot, "existing")
                     .unwrap();
-                let eq = if matches!(key_ty, Type::String) {
-                    let strcmp = self.get_or_declare_strcmp();
-                    let cmp = self
-                        .builder
-                        .build_call(strcmp, &[existing.into(), key.into()], "strcmp")
-                        .unwrap();
-                    let cmp_v = match cmp.try_as_basic_value() {
-                        ValueKind::Basic(v) => v.into_int_value(),
-                        _ => self.context.i32_type().const_int(1, false),
-                    };
-                    self.builder
-                        .build_int_compare(
-                            IntPredicate::EQ,
-                            cmp_v,
-                            self.context.i32_type().const_int(0, false),
-                            "eq",
-                        )
-                        .unwrap()
-                } else if existing.is_int_value() && key.is_int_value() {
-                    self.builder
-                        .build_int_compare(
-                            IntPredicate::EQ,
-                            existing.into_int_value(),
-                            key.into_int_value(),
-                            "eq",
-                        )
-                        .unwrap()
-                } else {
-                    self.context.bool_type().const_int(0, false)
-                };
+                let eq = self.build_value_equality(existing, key, &key_ty, "eq")?;
                 let next_bb = self.context.append_basic_block(current_fn, "map_get.next");
                 let found_bb = self.context.append_basic_block(current_fn, "map_get.found");
                 self.builder
@@ -2766,9 +3237,18 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap();
 
                 self.builder.position_at_end(found_bb);
+                let value_offset = self
+                    .builder
+                    .build_int_mul(i, i64_type.const_int(val_size, false), "value_offset")
+                    .unwrap();
                 let val_slot = unsafe {
                     self.builder
-                        .build_gep(self.context.i8_type(), values_ptr, &[offset], "val_slot")
+                        .build_gep(
+                            self.context.i8_type(),
+                            values_ptr,
+                            &[value_offset],
+                            "val_slot",
+                        )
                         .unwrap()
                 };
                 let found = self
@@ -2850,7 +3330,7 @@ impl<'ctx> Codegen<'ctx> {
                 self.builder.position_at_end(body_bb);
                 let offset = self
                     .builder
-                    .build_int_mul(i, i64_type.const_int(8, false), "offset")
+                    .build_int_mul(i, i64_type.const_int(key_size, false), "offset")
                     .unwrap();
                 let key_slot = unsafe {
                     self.builder
@@ -2861,36 +3341,7 @@ impl<'ctx> Codegen<'ctx> {
                     .builder
                     .build_load(key_llvm, key_slot, "existing")
                     .unwrap();
-                let eq = if matches!(key_ty, Type::String) {
-                    let strcmp = self.get_or_declare_strcmp();
-                    let cmp = self
-                        .builder
-                        .build_call(strcmp, &[existing.into(), key.into()], "strcmp")
-                        .unwrap();
-                    let cmp_v = match cmp.try_as_basic_value() {
-                        ValueKind::Basic(v) => v.into_int_value(),
-                        _ => self.context.i32_type().const_int(1, false),
-                    };
-                    self.builder
-                        .build_int_compare(
-                            IntPredicate::EQ,
-                            cmp_v,
-                            self.context.i32_type().const_int(0, false),
-                            "eq",
-                        )
-                        .unwrap()
-                } else if existing.is_int_value() && key.is_int_value() {
-                    self.builder
-                        .build_int_compare(
-                            IntPredicate::EQ,
-                            existing.into_int_value(),
-                            key.into_int_value(),
-                            "eq",
-                        )
-                        .unwrap()
-                } else {
-                    self.context.bool_type().const_int(0, false)
-                };
+                let eq = self.build_value_equality(existing, key, &key_ty, "eq")?;
                 let next_bb = self
                     .context
                     .append_basic_block(current_fn, "map_contains.next");

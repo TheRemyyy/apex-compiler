@@ -424,6 +424,19 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
+    pub fn get_or_declare_memcmp(&self) -> FunctionValue<'ctx> {
+        let name = "memcmp";
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let fn_type = self.context.i32_type().fn_type(
+            &[ptr.into(), ptr.into(), self.context.i64_type().into()],
+            false,
+        );
+        self.module.add_function(name, fn_type, None)
+    }
+
     pub fn get_or_declare_strcpy(&self) -> FunctionValue<'ctx> {
         let name = "strcpy";
         if let Some(f) = self.module.get_function(name) {

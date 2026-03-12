@@ -23,6 +23,7 @@ That object-type inference now also treats string concatenation and interpolatio
 The same inference layer now also preserves value types returned from built-in container getters such as `List.get()` and `Map.get()`, which keeps object field/method chains on those returned values valid during lowering.
 Built-in `Set<T>` lowering now also performs real membership/mutation work instead of placeholder boolean stubs, keeping `add`/`contains`/`remove` behavior aligned with the typechecked container API.
 The same built-in method tables are now kept aligned between typechecking and codegen for `Set<T>` as well, preventing frontend/backend drift where a method existed in one layer but not the other.
+Container runtime equality/storage now also handles non-scalar generic values correctly: tagged payloads like `Option<T>` and `Result<T, E>` are compared semantically in `Set<T>`, and `Map<K, V>` / `Set<T>` backing allocations use typed element sizes instead of assuming 8-byte slots.
 
 ## Build Caching
 

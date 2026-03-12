@@ -8010,7 +8010,9 @@ impl<'ctx> Codegen<'ctx> {
 
         // Handle Map<K,V> construction
         if ty == "Map" || ty.starts_with("Map<") {
-            return self.create_empty_map();
+            let map_ty = parse_type_source(ty)
+                .unwrap_or(Type::Map(Box::new(Type::Integer), Box::new(Type::Integer)));
+            return self.create_empty_map_for_type(&map_ty);
         }
 
         // Handle Option<T> construction (default to None)
@@ -8025,7 +8027,8 @@ impl<'ctx> Codegen<'ctx> {
 
         // Handle Set<T> construction
         if ty == "Set" || ty.starts_with("Set<") {
-            return self.create_empty_set();
+            let set_ty = parse_type_source(ty).unwrap_or(Type::Set(Box::new(Type::Integer)));
+            return self.create_empty_set_for_type(&set_ty);
         }
 
         // Handle Smart Pointer construction
