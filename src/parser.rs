@@ -2512,7 +2512,7 @@ impl<'src> Parser<'src> {
         Ok(Spanned::new(expr, start..end))
     }
 
-    fn parse_string_interp(&mut self, s: String) -> ParseResult<Expr> {
+    fn parse_string_interp(&self, s: String) -> ParseResult<Expr> {
         // Parse string interpolation: "Hello, {name}!"
         let mut parts = Vec::new();
         let mut current = String::new();

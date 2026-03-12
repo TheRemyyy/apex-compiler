@@ -2516,9 +2516,9 @@ impl<'ctx> Codegen<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>> {
         let range_ptr = match range_value {
             BasicValueEnum::PointerValue(ptr) => ptr,
-            _ => self
-                .materialize_value_pointer_for_type(range_value, range_expr_ty, "range_tmp")?
-                .into(),
+            _ => {
+                self.materialize_value_pointer_for_type(range_value, range_expr_ty, "range_tmp")?
+            }
         };
         let range_element_ty = match range_expr_ty {
             Type::Range(inner) => &**inner,

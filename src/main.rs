@@ -1565,6 +1565,7 @@ fn hash_file_api_fingerprint(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn import_path_owner_file<'a>(
     path: &str,
     global_function_map: &HashMap<String, String>,
@@ -1789,6 +1790,7 @@ fn resolve_symbol_in_namespace_path(
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_owner_file_in_namespace_path(
     namespace_path: &str,
     member_parts: &[String],

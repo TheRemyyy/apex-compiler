@@ -2639,7 +2639,8 @@ impl TypeChecker {
                 if let Some(var) = self.lookup_variable(name) {
                     var.ty.clone()
                 } else if let Some(function_name) = self.resolve_function_value_name(name) {
-                    self.function_value_type_or_error(&function_name.to_string(), span)
+                    let function_name = function_name.to_owned();
+                    self.function_value_type_or_error(&function_name, span)
                 } else {
                     self.error(format!("Undefined variable: {}", name), span);
                     ResolvedType::Unknown
@@ -2716,10 +2717,8 @@ impl TypeChecker {
                                 .resolve_function_value_name(&candidate)
                                 .unwrap_or(&candidate);
                             if self.functions.contains_key(resolved) {
-                                return self.function_value_type_or_error(
-                                    &resolved.to_string(),
-                                    span.clone(),
-                                );
+                                let resolved = resolved.to_owned();
+                                return self.function_value_type_or_error(&resolved, span.clone());
                             }
                         }
 
@@ -2728,8 +2727,8 @@ impl TypeChecker {
                             .resolve_function_value_name(&mangled)
                             .unwrap_or(&mangled);
                         if self.functions.contains_key(resolved) {
-                            return self
-                                .function_value_type_or_error(&resolved.to_string(), span.clone());
+                            let resolved = resolved.to_owned();
+                            return self.function_value_type_or_error(&resolved, span.clone());
                         }
                     }
                 }

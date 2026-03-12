@@ -52,7 +52,7 @@ impl<'ctx> Codegen<'ctx> {
 
     // === C Library Definitions ===
 
-    pub fn get_or_declare_fopen(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_fopen(&self) -> FunctionValue<'ctx> {
         let name = "fopen";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -63,7 +63,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_fclose(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_fclose(&self) -> FunctionValue<'ctx> {
         let name = "fclose";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -74,7 +74,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_fputs(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_fputs(&self) -> FunctionValue<'ctx> {
         let name = "fputs";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -88,7 +88,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_fseek(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_fseek(&self) -> FunctionValue<'ctx> {
         let name = "fseek";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -106,7 +106,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_ftell(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_ftell(&self) -> FunctionValue<'ctx> {
         let name = "ftell";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -117,7 +117,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_rewind(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_rewind(&self) -> FunctionValue<'ctx> {
         let name = "rewind";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -128,7 +128,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_fread(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_fread(&self) -> FunctionValue<'ctx> {
         let name = "fread";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -148,7 +148,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_remove(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_remove(&self) -> FunctionValue<'ctx> {
         let name = "remove";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -159,7 +159,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_rand(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_rand(&self) -> FunctionValue<'ctx> {
         let name = "rand";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -168,7 +168,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_toupper(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_toupper(&self) -> FunctionValue<'ctx> {
         let name = "toupper";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -180,7 +180,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_tolower(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_tolower(&self) -> FunctionValue<'ctx> {
         let name = "tolower";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -192,7 +192,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_isspace(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_isspace(&self) -> FunctionValue<'ctx> {
         let name = "isspace";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -204,7 +204,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_strstr(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_strstr(&self) -> FunctionValue<'ctx> {
         let name = "strstr";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -214,7 +214,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_strncpy(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_strncpy(&self) -> FunctionValue<'ctx> {
         let name = "strncpy";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -225,7 +225,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_create_empty_string(&mut self) -> inkwell::values::PointerValue<'ctx> {
+    pub fn get_or_create_empty_string(&self) -> inkwell::values::PointerValue<'ctx> {
         let name = "empty_string_const";
         if let Some(g) = self.module.get_global(name) {
             return g.as_pointer_value();
@@ -238,7 +238,7 @@ impl<'ctx> Codegen<'ctx> {
         global.as_pointer_value()
     }
 
-    pub fn get_or_declare_time(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_time(&self) -> FunctionValue<'ctx> {
         let name = "time";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -248,7 +248,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_localtime(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_localtime(&self) -> FunctionValue<'ctx> {
         let name = "localtime";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -258,7 +258,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_strftime(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_strftime(&self) -> FunctionValue<'ctx> {
         let name = "strftime";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -269,7 +269,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_sleep_win(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_sleep_win(&self) -> FunctionValue<'ctx> {
         let name = "Sleep";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -281,7 +281,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_usleep(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_usleep(&self) -> FunctionValue<'ctx> {
         let name = "usleep";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -293,7 +293,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_getenv(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_getenv(&self) -> FunctionValue<'ctx> {
         let name = "getenv";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -303,7 +303,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_system(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_system(&self) -> FunctionValue<'ctx> {
         let name = "system";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -313,7 +313,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_popen(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_popen(&self) -> FunctionValue<'ctx> {
         #[cfg(windows)]
         let name = "_popen";
         #[cfg(not(windows))]
@@ -327,7 +327,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_pclose(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_pclose(&self) -> FunctionValue<'ctx> {
         #[cfg(windows)]
         let name = "_pclose";
         #[cfg(not(windows))]
@@ -341,7 +341,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_getcwd(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_getcwd(&self) -> FunctionValue<'ctx> {
         #[cfg(windows)]
         let name = "_getcwd";
         #[cfg(not(windows))]
@@ -355,11 +355,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_math_func(
-        &mut self,
-        name: &str,
-        single_arg: bool,
-    ) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_math_func(&self, name: &str, single_arg: bool) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function(name) {
             return f;
         }
@@ -385,7 +381,7 @@ impl<'ctx> Codegen<'ctx> {
         self.get_or_declare_math_func(name, false)
     }
 
-    pub fn get_or_declare_strlen(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_strlen(&self) -> FunctionValue<'ctx> {
         let name = "strlen";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -397,7 +393,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_strcmp(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_strcmp(&self) -> FunctionValue<'ctx> {
         let name = "strcmp";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -412,7 +408,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_strncmp(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_strncmp(&self) -> FunctionValue<'ctx> {
         let name = "strncmp";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -428,7 +424,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_strcpy(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_strcpy(&self) -> FunctionValue<'ctx> {
         let name = "strcpy";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -443,7 +439,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_strcat(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_strcat(&self) -> FunctionValue<'ctx> {
         let name = "strcat";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -458,7 +454,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_fgets(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_fgets(&self) -> FunctionValue<'ctx> {
         let name = "fgets";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -474,7 +470,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, fn_type, None)
     }
 
-    pub fn get_or_declare_stdin(&mut self) -> PointerValue<'ctx> {
+    pub fn get_or_declare_stdin(&self) -> PointerValue<'ctx> {
         let name = "__acrt_iob_func";
         let func = if let Some(f) = self.module.get_function(name) {
             f
@@ -497,7 +493,7 @@ impl<'ctx> Codegen<'ctx> {
         self.extract_call_value(call).into_pointer_value()
     }
 
-    pub fn get_or_declare_exit(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_exit(&self) -> FunctionValue<'ctx> {
         let name = "exit";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -1467,7 +1463,7 @@ impl<'ctx> Codegen<'ctx> {
             .unwrap_or(false)
     }
 
-    pub fn get_or_declare_printf(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_printf(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("printf") {
             return f;
         }
@@ -1919,17 +1915,12 @@ impl<'ctx> Codegen<'ctx> {
                     }
                 }
                 if let Some(else_branch) = else_branch {
-                    let mut else_ty = Type::None;
                     for stmt in else_branch {
                         if let Stmt::Expr(expr) = &stmt.node {
-                            else_ty = self.infer_expr_type(&expr.node, params);
+                            let _ = self.infer_expr_type(&expr.node, params);
                         }
                     }
-                    if then_ty == else_ty {
-                        then_ty
-                    } else {
-                        then_ty
-                    }
+                    then_ty
                 } else {
                     Type::None
                 }
@@ -1986,7 +1977,7 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
-    pub fn get_or_declare_malloc(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_malloc(&self) -> FunctionValue<'ctx> {
         let name = "malloc";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -1999,7 +1990,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, malloc_type, None)
     }
 
-    pub fn get_or_declare_realloc(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_realloc(&self) -> FunctionValue<'ctx> {
         let name = "realloc";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -2015,7 +2006,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, realloc_type, None)
     }
 
-    pub fn get_or_declare_pthread_create(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_pthread_create(&self) -> FunctionValue<'ctx> {
         let name = "pthread_create";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -2029,7 +2020,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, pthread_create_type, None)
     }
 
-    pub fn get_or_declare_pthread_join(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_pthread_join(&self) -> FunctionValue<'ctx> {
         let name = "pthread_join";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -2043,7 +2034,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, pthread_join_type, None)
     }
 
-    pub fn get_or_declare_pthread_cancel(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_pthread_cancel(&self) -> FunctionValue<'ctx> {
         let name = "pthread_cancel";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -2056,7 +2047,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, pthread_cancel_type, None)
     }
 
-    pub fn get_or_declare_pthread_timedjoin_np(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_pthread_timedjoin_np(&self) -> FunctionValue<'ctx> {
         let name = "pthread_timedjoin_np";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -2070,7 +2061,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, pthread_timedjoin_type, None)
     }
 
-    pub fn get_or_declare_create_thread_win(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_create_thread_win(&self) -> FunctionValue<'ctx> {
         let name = "CreateThread";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -2092,7 +2083,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, create_thread_type, None)
     }
 
-    pub fn get_or_declare_wait_for_single_object_win(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_wait_for_single_object_win(&self) -> FunctionValue<'ctx> {
         let name = "WaitForSingleObject";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -2106,7 +2097,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, wait_type, None)
     }
 
-    pub fn get_or_declare_terminate_thread_win(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_terminate_thread_win(&self) -> FunctionValue<'ctx> {
         let name = "TerminateThread";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -2120,7 +2111,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, terminate_type, None)
     }
 
-    pub fn get_or_declare_close_handle_win(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_close_handle_win(&self) -> FunctionValue<'ctx> {
         let name = "CloseHandle";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -2131,7 +2122,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, close_type, None)
     }
 
-    pub fn get_or_declare_clock_gettime(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_clock_gettime(&self) -> FunctionValue<'ctx> {
         let name = "clock_gettime";
         if let Some(f) = self.module.get_function(name) {
             return f;
@@ -2145,7 +2136,7 @@ impl<'ctx> Codegen<'ctx> {
         self.module.add_function(name, clock_gettime_type, None)
     }
 
-    pub fn get_or_declare_sprintf(&mut self) -> FunctionValue<'ctx> {
+    pub fn get_or_declare_sprintf(&self) -> FunctionValue<'ctx> {
         let name = "sprintf";
         if let Some(f) = self.module.get_function(name) {
             return f;

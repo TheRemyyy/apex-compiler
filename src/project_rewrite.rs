@@ -6,6 +6,18 @@ use crate::stdlib::stdlib_registry;
 
 type ImportedMap = HashMap<String, (String, String)>;
 
+struct RewriteTypeContext<'a> {
+    current_namespace: &'a str,
+    local_classes: &'a HashSet<String>,
+    imported_classes: &'a ImportedMap,
+    global_class_map: &'a HashMap<String, String>,
+    local_enums: &'a HashSet<String>,
+    imported_enums: &'a ImportedMap,
+    global_enum_map: &'a HashMap<String, String>,
+    imported_modules: &'a ImportedMap,
+    entry_namespace: &'a str,
+}
+
 fn alias_qualified_symbol_name(alias: &str, symbol_name: &str) -> String {
     format!("{}.{}", alias, symbol_name.replace("__", "."))
 }
@@ -85,19 +97,19 @@ fn rewrite_construct_type_name_for_project(
     imported_modules: &ImportedMap,
     entry_namespace: &str,
 ) -> String {
+    let ctx = RewriteTypeContext {
+        current_namespace,
+        local_classes,
+        imported_classes,
+        global_class_map,
+        local_enums,
+        imported_enums,
+        global_enum_map,
+        imported_modules,
+        entry_namespace,
+    };
     match parse_type_source(ty) {
-        Ok(parsed) => format_type_string(&rewrite_type_for_project(
-            &parsed,
-            current_namespace,
-            local_classes,
-            imported_classes,
-            global_class_map,
-            local_enums,
-            imported_enums,
-            global_enum_map,
-            imported_modules,
-            entry_namespace,
-        )),
+        Ok(parsed) => format_type_string(&rewrite_type_for_project_with_ctx(&parsed, &ctx)),
         Err(_) => ty.to_string(),
     }
 }
@@ -466,6 +478,122 @@ fn mangle_project_symbol(namespace: &str, entry_namespace: &str, name: &str) -> 
     }
 }
 
+fn rewrite_type_for_project_with_ctx(ty: &ast::Type, ctx: &RewriteTypeContext<'_>) -> ast::Type {
+    fn rewrite_named_type_name_for_project(name: &str, ctx: &RewriteTypeContext<'_>) -> String {
+        if ctx.local_classes.contains(name) {
+            return mangle_project_symbol(ctx.current_namespace, ctx.entry_namespace, name);
+        }
+        if let Some((ns, symbol_name)) = ctx.imported_classes.get(name) {
+            return mangle_project_symbol(ns, ctx.entry_namespace, symbol_name);
+        }
+        if let Some(ns) = ctx.global_class_map.get(name) {
+            return mangle_project_symbol(ns, ctx.entry_namespace, name);
+        }
+        if ctx.local_enums.contains(name) {
+            return mangle_project_symbol(ctx.current_namespace, ctx.entry_namespace, name);
+        }
+        if let Some((ns, symbol_name)) = ctx.imported_enums.get(name) {
+            return mangle_project_symbol(ns, ctx.entry_namespace, symbol_name);
+        }
+        if let Some(ns) = ctx.global_enum_map.get(name) {
+            return mangle_project_symbol(ns, ctx.entry_namespace, name);
+        }
+
+        let Some((alias, rest)) = name.split_once('.') else {
+            return name.to_string();
+        };
+        let Some((ns, symbol_name)) = ctx.imported_modules.get(alias) else {
+            return name.to_string();
+        };
+        let member_parts = rest
+            .split('.')
+            .map(|part| part.to_string())
+            .collect::<Vec<_>>();
+
+        if let Some((owner_ns, class_name)) = resolve_module_alias_class_candidate(
+            ns,
+            symbol_name,
+            &member_parts,
+            ctx.global_class_map,
+        ) {
+            return mangle_project_symbol(&owner_ns, ctx.entry_namespace, &class_name);
+        }
+
+        let enum_name = if symbol_name.is_empty() {
+            member_parts.join("__")
+        } else {
+            format!("{}__{}", symbol_name, member_parts.join("__"))
+        };
+        if let Some(owner_ns) = ctx.global_enum_map.get(&enum_name) {
+            if owner_ns == ns {
+                return mangle_project_symbol(owner_ns, ctx.entry_namespace, &enum_name);
+            }
+        }
+
+        name.to_string()
+    }
+
+    match ty {
+        ast::Type::Named(name) => ast::Type::Named(rewrite_named_type_name_for_project(name, ctx)),
+        ast::Type::Generic(name, args) => ast::Type::Generic(
+            rewrite_named_type_name_for_project(name, ctx),
+            args.iter()
+                .map(|a| rewrite_type_for_project_with_ctx(a, ctx))
+                .collect(),
+        ),
+        ast::Type::Function(params, ret) => ast::Type::Function(
+            params
+                .iter()
+                .map(|p| rewrite_type_for_project_with_ctx(p, ctx))
+                .collect(),
+            Box::new(rewrite_type_for_project_with_ctx(ret, ctx)),
+        ),
+        ast::Type::Option(inner) => {
+            ast::Type::Option(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+        }
+        ast::Type::Result(ok, err) => ast::Type::Result(
+            Box::new(rewrite_type_for_project_with_ctx(ok, ctx)),
+            Box::new(rewrite_type_for_project_with_ctx(err, ctx)),
+        ),
+        ast::Type::List(inner) => {
+            ast::Type::List(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+        }
+        ast::Type::Map(k, v) => ast::Type::Map(
+            Box::new(rewrite_type_for_project_with_ctx(k, ctx)),
+            Box::new(rewrite_type_for_project_with_ctx(v, ctx)),
+        ),
+        ast::Type::Set(inner) => {
+            ast::Type::Set(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+        }
+        ast::Type::Ref(inner) => {
+            ast::Type::Ref(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+        }
+        ast::Type::MutRef(inner) => {
+            ast::Type::MutRef(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+        }
+        ast::Type::Box(inner) => {
+            ast::Type::Box(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+        }
+        ast::Type::Rc(inner) => {
+            ast::Type::Rc(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+        }
+        ast::Type::Arc(inner) => {
+            ast::Type::Arc(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+        }
+        ast::Type::Ptr(inner) => {
+            ast::Type::Ptr(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+        }
+        ast::Type::Task(inner) => {
+            ast::Type::Task(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+        }
+        ast::Type::Range(inner) => {
+            ast::Type::Range(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+        }
+        _ => ty.clone(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn rewrite_type_for_project(
     ty: &ast::Type,
     current_namespace: &str,
@@ -478,328 +606,18 @@ fn rewrite_type_for_project(
     imported_modules: &ImportedMap,
     entry_namespace: &str,
 ) -> ast::Type {
-    fn rewrite_named_type_name_for_project(
-        name: &str,
-        current_namespace: &str,
-        local_classes: &HashSet<String>,
-        imported_classes: &ImportedMap,
-        global_class_map: &HashMap<String, String>,
-        local_enums: &HashSet<String>,
-        imported_enums: &ImportedMap,
-        global_enum_map: &HashMap<String, String>,
-        imported_modules: &ImportedMap,
-        entry_namespace: &str,
-    ) -> String {
-        if local_classes.contains(name) {
-            return mangle_project_symbol(current_namespace, entry_namespace, name);
-        }
-        if let Some((ns, symbol_name)) = imported_classes.get(name) {
-            return mangle_project_symbol(ns, entry_namespace, symbol_name);
-        }
-        if let Some(ns) = global_class_map.get(name) {
-            return mangle_project_symbol(ns, entry_namespace, name);
-        }
-        if local_enums.contains(name) {
-            return mangle_project_symbol(current_namespace, entry_namespace, name);
-        }
-        if let Some((ns, symbol_name)) = imported_enums.get(name) {
-            return mangle_project_symbol(ns, entry_namespace, symbol_name);
-        }
-        if let Some(ns) = global_enum_map.get(name) {
-            return mangle_project_symbol(ns, entry_namespace, name);
-        }
-
-        let Some((alias, rest)) = name.split_once('.') else {
-            return name.to_string();
-        };
-        let Some((ns, symbol_name)) = imported_modules.get(alias) else {
-            return name.to_string();
-        };
-        let member_parts = rest
-            .split('.')
-            .map(|part| part.to_string())
-            .collect::<Vec<_>>();
-
-        if let Some((owner_ns, class_name)) =
-            resolve_module_alias_class_candidate(ns, symbol_name, &member_parts, global_class_map)
-        {
-            return mangle_project_symbol(&owner_ns, entry_namespace, &class_name);
-        }
-
-        let enum_name = if symbol_name.is_empty() {
-            member_parts.join("__")
-        } else {
-            format!("{}__{}", symbol_name, member_parts.join("__"))
-        };
-        if let Some(owner_ns) = global_enum_map.get(&enum_name) {
-            if owner_ns == ns {
-                return mangle_project_symbol(owner_ns, entry_namespace, &enum_name);
-            }
-        }
-
-        name.to_string()
-    }
-
-    match ty {
-        ast::Type::Named(name) => ast::Type::Named(rewrite_named_type_name_for_project(
-            name,
-            current_namespace,
-            local_classes,
-            imported_classes,
-            global_class_map,
-            local_enums,
-            imported_enums,
-            global_enum_map,
-            imported_modules,
-            entry_namespace,
-        )),
-        ast::Type::Generic(name, args) => ast::Type::Generic(
-            rewrite_named_type_name_for_project(
-                name,
-                current_namespace,
-                local_classes,
-                imported_classes,
-                global_class_map,
-                local_enums,
-                imported_enums,
-                global_enum_map,
-                imported_modules,
-                entry_namespace,
-            ),
-            args.iter()
-                .map(|a| {
-                    rewrite_type_for_project(
-                        a,
-                        current_namespace,
-                        local_classes,
-                        imported_classes,
-                        global_class_map,
-                        local_enums,
-                        imported_enums,
-                        global_enum_map,
-                        imported_modules,
-                        entry_namespace,
-                    )
-                })
-                .collect(),
-        ),
-        ast::Type::Function(params, ret) => ast::Type::Function(
-            params
-                .iter()
-                .map(|p| {
-                    rewrite_type_for_project(
-                        p,
-                        current_namespace,
-                        local_classes,
-                        imported_classes,
-                        global_class_map,
-                        local_enums,
-                        imported_enums,
-                        global_enum_map,
-                        imported_modules,
-                        entry_namespace,
-                    )
-                })
-                .collect(),
-            Box::new(rewrite_type_for_project(
-                ret,
-                current_namespace,
-                local_classes,
-                imported_classes,
-                global_class_map,
-                local_enums,
-                imported_enums,
-                global_enum_map,
-                imported_modules,
-                entry_namespace,
-            )),
-        ),
-        ast::Type::Option(inner) => ast::Type::Option(Box::new(rewrite_type_for_project(
-            inner,
-            current_namespace,
-            local_classes,
-            imported_classes,
-            global_class_map,
-            local_enums,
-            imported_enums,
-            global_enum_map,
-            imported_modules,
-            entry_namespace,
-        ))),
-        ast::Type::Result(ok, err) => ast::Type::Result(
-            Box::new(rewrite_type_for_project(
-                ok,
-                current_namespace,
-                local_classes,
-                imported_classes,
-                global_class_map,
-                local_enums,
-                imported_enums,
-                global_enum_map,
-                imported_modules,
-                entry_namespace,
-            )),
-            Box::new(rewrite_type_for_project(
-                err,
-                current_namespace,
-                local_classes,
-                imported_classes,
-                global_class_map,
-                local_enums,
-                imported_enums,
-                global_enum_map,
-                imported_modules,
-                entry_namespace,
-            )),
-        ),
-        ast::Type::List(inner) => ast::Type::List(Box::new(rewrite_type_for_project(
-            inner,
-            current_namespace,
-            local_classes,
-            imported_classes,
-            global_class_map,
-            local_enums,
-            imported_enums,
-            global_enum_map,
-            imported_modules,
-            entry_namespace,
-        ))),
-        ast::Type::Map(k, v) => ast::Type::Map(
-            Box::new(rewrite_type_for_project(
-                k,
-                current_namespace,
-                local_classes,
-                imported_classes,
-                global_class_map,
-                local_enums,
-                imported_enums,
-                global_enum_map,
-                imported_modules,
-                entry_namespace,
-            )),
-            Box::new(rewrite_type_for_project(
-                v,
-                current_namespace,
-                local_classes,
-                imported_classes,
-                global_class_map,
-                local_enums,
-                imported_enums,
-                global_enum_map,
-                imported_modules,
-                entry_namespace,
-            )),
-        ),
-        ast::Type::Set(inner) => ast::Type::Set(Box::new(rewrite_type_for_project(
-            inner,
-            current_namespace,
-            local_classes,
-            imported_classes,
-            global_class_map,
-            local_enums,
-            imported_enums,
-            global_enum_map,
-            imported_modules,
-            entry_namespace,
-        ))),
-        ast::Type::Ref(inner) => ast::Type::Ref(Box::new(rewrite_type_for_project(
-            inner,
-            current_namespace,
-            local_classes,
-            imported_classes,
-            global_class_map,
-            local_enums,
-            imported_enums,
-            global_enum_map,
-            imported_modules,
-            entry_namespace,
-        ))),
-        ast::Type::MutRef(inner) => ast::Type::MutRef(Box::new(rewrite_type_for_project(
-            inner,
-            current_namespace,
-            local_classes,
-            imported_classes,
-            global_class_map,
-            local_enums,
-            imported_enums,
-            global_enum_map,
-            imported_modules,
-            entry_namespace,
-        ))),
-        ast::Type::Box(inner) => ast::Type::Box(Box::new(rewrite_type_for_project(
-            inner,
-            current_namespace,
-            local_classes,
-            imported_classes,
-            global_class_map,
-            local_enums,
-            imported_enums,
-            global_enum_map,
-            imported_modules,
-            entry_namespace,
-        ))),
-        ast::Type::Rc(inner) => ast::Type::Rc(Box::new(rewrite_type_for_project(
-            inner,
-            current_namespace,
-            local_classes,
-            imported_classes,
-            global_class_map,
-            local_enums,
-            imported_enums,
-            global_enum_map,
-            imported_modules,
-            entry_namespace,
-        ))),
-        ast::Type::Arc(inner) => ast::Type::Arc(Box::new(rewrite_type_for_project(
-            inner,
-            current_namespace,
-            local_classes,
-            imported_classes,
-            global_class_map,
-            local_enums,
-            imported_enums,
-            global_enum_map,
-            imported_modules,
-            entry_namespace,
-        ))),
-        ast::Type::Ptr(inner) => ast::Type::Ptr(Box::new(rewrite_type_for_project(
-            inner,
-            current_namespace,
-            local_classes,
-            imported_classes,
-            global_class_map,
-            local_enums,
-            imported_enums,
-            global_enum_map,
-            imported_modules,
-            entry_namespace,
-        ))),
-        ast::Type::Task(inner) => ast::Type::Task(Box::new(rewrite_type_for_project(
-            inner,
-            current_namespace,
-            local_classes,
-            imported_classes,
-            global_class_map,
-            local_enums,
-            imported_enums,
-            global_enum_map,
-            imported_modules,
-            entry_namespace,
-        ))),
-        ast::Type::Range(inner) => ast::Type::Range(Box::new(rewrite_type_for_project(
-            inner,
-            current_namespace,
-            local_classes,
-            imported_classes,
-            global_class_map,
-            local_enums,
-            imported_enums,
-            global_enum_map,
-            imported_modules,
-            entry_namespace,
-        ))),
-        _ => ty.clone(),
-    }
+    let ctx = RewriteTypeContext {
+        current_namespace,
+        local_classes,
+        imported_classes,
+        global_class_map,
+        local_enums,
+        imported_enums,
+        global_enum_map,
+        imported_modules,
+        entry_namespace,
+    };
+    rewrite_type_for_project_with_ctx(ty, &ctx)
 }
 
 fn is_shadowed(name: &str, scopes: &[HashSet<String>]) -> bool {
@@ -2483,16 +2301,14 @@ fn rewrite_expr_calls_for_project(
                             };
                         }
 
-                        if symbol_name.is_empty() {
-                            if member_parts.len() == 1 {
-                                if let Some(owner_ns) = global_function_map.get(field) {
-                                    if owner_ns == ns {
-                                        return Expr::Ident(mangle_project_symbol(
-                                            owner_ns,
-                                            entry_namespace,
-                                            field,
-                                        ));
-                                    }
+                        if symbol_name.is_empty() && member_parts.len() == 1 {
+                            if let Some(owner_ns) = global_function_map.get(field) {
+                                if owner_ns == ns {
+                                    return Expr::Ident(mangle_project_symbol(
+                                        owner_ns,
+                                        entry_namespace,
+                                        field,
+                                    ));
                                 }
                             }
                         }
