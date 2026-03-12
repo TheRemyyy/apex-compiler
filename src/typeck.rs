@@ -2209,6 +2209,10 @@ impl TypeChecker {
 
     /// Check a pattern in match
     fn check_pattern(&mut self, pattern: &Pattern, expected_type: &ResolvedType, span: Span) {
+        fn pattern_variant_leaf(name: &str) -> &str {
+            name.rsplit('.').next().unwrap_or(name)
+        }
+
         match pattern {
             Pattern::Wildcard => {}
             Pattern::Ident(name) => {
@@ -2227,20 +2231,21 @@ impl TypeChecker {
                 }
             }
             Pattern::Variant(name, bindings) => {
+                let variant_name = pattern_variant_leaf(name);
                 match expected_type {
                     ResolvedType::Option(inner) => {
-                        if name == "Some" && bindings.len() == 1 {
+                        if variant_name == "Some" && bindings.len() == 1 {
                             self.declare_variable(&bindings[0], (**inner).clone(), false, span);
-                        } else if name == "None" && bindings.is_empty() {
+                        } else if variant_name == "None" && bindings.is_empty() {
                             // OK
                         } else {
                             self.error(format!("Invalid Option pattern: {}", name), span);
                         }
                     }
                     ResolvedType::Result(ok, err) => {
-                        if name == "Ok" && bindings.len() == 1 {
+                        if variant_name == "Ok" && bindings.len() == 1 {
                             self.declare_variable(&bindings[0], (**ok).clone(), false, span);
-                        } else if name == "Error" && bindings.len() == 1 {
+                        } else if variant_name == "Error" && bindings.len() == 1 {
                             self.declare_variable(&bindings[0], (**err).clone(), false, span);
                         } else {
                             self.error(format!("Invalid Result pattern: {}", name), span);
@@ -2248,12 +2253,12 @@ impl TypeChecker {
                     }
                     ResolvedType::Class(enum_name) => {
                         if let Some(enum_info) = self.enums.get(enum_name).cloned() {
-                            if let Some(field_tys) = enum_info.variants.get(name) {
+                            if let Some(field_tys) = enum_info.variants.get(variant_name) {
                                 if field_tys.len() != bindings.len() {
                                     self.error(
                                         format!(
                                             "Pattern '{}' expects {} binding(s), got {}",
-                                            name,
+                                            variant_name,
                                             field_tys.len(),
                                             bindings.len()
                                         ),
@@ -2322,21 +2327,21 @@ impl TypeChecker {
                 has_true && has_false
             }
             ResolvedType::Option(_) => {
-                let has_some = arms
-                    .iter()
-                    .any(|arm| matches!(arm.pattern, Pattern::Variant(ref n, _) if n == "Some"));
-                let has_none = arms
-                    .iter()
-                    .any(|arm| matches!(arm.pattern, Pattern::Variant(ref n, _) if n == "None"));
+                let has_some = arms.iter().any(|arm| {
+                    matches!(&arm.pattern, Pattern::Variant(n, _) if n.rsplit('.').next().is_some_and(|leaf| leaf == "Some"))
+                });
+                let has_none = arms.iter().any(|arm| {
+                    matches!(&arm.pattern, Pattern::Variant(n, _) if n.rsplit('.').next().is_some_and(|leaf| leaf == "None"))
+                });
                 has_some && has_none
             }
             ResolvedType::Result(_, _) => {
-                let has_ok = arms
-                    .iter()
-                    .any(|arm| matches!(arm.pattern, Pattern::Variant(ref n, _) if n == "Ok"));
-                let has_err = arms
-                    .iter()
-                    .any(|arm| matches!(arm.pattern, Pattern::Variant(ref n, _) if n == "Error"));
+                let has_ok = arms.iter().any(|arm| {
+                    matches!(&arm.pattern, Pattern::Variant(n, _) if n.rsplit('.').next().is_some_and(|leaf| leaf == "Ok"))
+                });
+                let has_err = arms.iter().any(|arm| {
+                    matches!(&arm.pattern, Pattern::Variant(n, _) if n.rsplit('.').next().is_some_and(|leaf| leaf == "Error"))
+                });
                 has_ok && has_err
             }
             _ => false,
@@ -5722,6 +5727,27 @@ mod tests {
             .filter(|e| e.message.contains("Undefined variable: y"))
             .count();
         assert_eq!(undef_count, 1, "{:?}", errors);
+    }
+
+    #[test]
+    fn qualified_enum_patterns_typecheck_against_leaf_variant_names() {
+        let src = r#"
+            enum E {
+                A(Integer),
+                B(Integer)
+            }
+
+            function main(): None {
+                value: E = E.A(1);
+                match (value) {
+                    Enum.A(v) => { require(v == 1); }
+                    util.E.B(w) => { require(w == 2); }
+                    _ => { }
+                }
+                return None;
+            }
+        "#;
+        check_source(src).expect("qualified enum patterns should typecheck");
     }
 
     #[test]

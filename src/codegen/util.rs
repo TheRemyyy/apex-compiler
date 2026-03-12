@@ -846,6 +846,10 @@ impl<'ctx> Codegen<'ctx> {
         expr: &Expr,
         arms: &[MatchArm],
     ) -> Result<BasicValueEnum<'ctx>> {
+        fn pattern_variant_leaf(name: &str) -> &str {
+            name.rsplit('.').next().unwrap_or(name)
+        }
+
         let val = self.compile_expr(expr)?;
         let func = self.current_function.unwrap();
         let merge_bb = self.context.append_basic_block(func, "match.expr.merge");
@@ -927,8 +931,9 @@ impl<'ctx> Codegen<'ctx> {
                         .unwrap();
                 }
                 Pattern::Variant(variant_name, _) => {
-                    if matches!(variant_name.as_str(), "Some" | "None" | "Ok" | "Error") {
-                        let expected_tag = match variant_name.as_str() {
+                    let variant_leaf = pattern_variant_leaf(variant_name);
+                    if matches!(variant_leaf, "Some" | "None" | "Ok" | "Error") {
+                        let expected_tag = match variant_leaf {
                             "Some" | "Ok" => 1u64,
                             _ => 0u64,
                         };
@@ -951,7 +956,7 @@ impl<'ctx> Codegen<'ctx> {
                             .unwrap();
                     } else if let Some(enum_name) = &enum_match_name {
                         if let Some(enum_info) = self.enums.get(enum_name) {
-                            if let Some(variant_info) = enum_info.variants.get(variant_name) {
+                            if let Some(variant_info) = enum_info.variants.get(variant_leaf) {
                                 let tag = self
                                     .builder
                                     .build_extract_value(val.into_struct_value(), 0, "tag")
@@ -997,7 +1002,8 @@ impl<'ctx> Codegen<'ctx> {
                     );
                 }
                 Pattern::Variant(variant_name, bindings) => {
-                    if variant_name == "Some" && !bindings.is_empty() {
+                    let variant_leaf = pattern_variant_leaf(variant_name);
+                    if variant_leaf == "Some" && !bindings.is_empty() {
                         let inner = self
                             .builder
                             .build_extract_value(val.into_struct_value(), 1, "some_inner")
@@ -1014,7 +1020,7 @@ impl<'ctx> Codegen<'ctx> {
                                 ty: option_inner_ty.clone().unwrap_or(Type::Integer),
                             },
                         );
-                    } else if variant_name == "Ok" && !bindings.is_empty() {
+                    } else if variant_leaf == "Ok" && !bindings.is_empty() {
                         let inner = self
                             .builder
                             .build_extract_value(val.into_struct_value(), 1, "ok_inner")
@@ -1034,7 +1040,7 @@ impl<'ctx> Codegen<'ctx> {
                                     .unwrap_or(Type::Integer),
                             },
                         );
-                    } else if variant_name == "Error" && !bindings.is_empty() {
+                    } else if variant_leaf == "Error" && !bindings.is_empty() {
                         let inner = self
                             .builder
                             .build_extract_value(val.into_struct_value(), 2, "err_inner")
@@ -1056,7 +1062,7 @@ impl<'ctx> Codegen<'ctx> {
                         );
                     } else if let Some(enum_name) = &enum_match_name {
                         if let Some(enum_info) = self.enums.get(enum_name) {
-                            if let Some(variant_info) = enum_info.variants.get(variant_name) {
+                            if let Some(variant_info) = enum_info.variants.get(variant_leaf) {
                                 for (idx, binding) in bindings.iter().enumerate() {
                                     if let Some(field_ty) = variant_info.fields.get(idx) {
                                         let raw = self
@@ -1651,6 +1657,25 @@ impl<'ctx> Codegen<'ctx> {
             },
             Expr::Call { callee, .. } => match &callee.node {
                 Expr::Ident(name) if name == "println" => Type::None,
+                Expr::Field { object, field } => {
+                    if let Expr::Ident(owner_name) = &object.node {
+                        let resolved_owner = self.resolve_module_alias(owner_name);
+                        if self
+                            .enums
+                            .get(&resolved_owner)
+                            .and_then(|info| info.variants.get(field))
+                            .is_some()
+                        {
+                            return Type::Named(resolved_owner);
+                        }
+                    }
+                    let callee_ty = self.infer_expr_type(&callee.node, params);
+                    if let Type::Function(_, ret_ty) = callee_ty {
+                        *ret_ty
+                    } else {
+                        Type::Integer
+                    }
+                }
                 _ => {
                     let callee_ty = self.infer_expr_type(&callee.node, params);
                     if let Type::Function(_, ret_ty) = callee_ty {

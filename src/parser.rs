@@ -1689,8 +1689,14 @@ impl<'src> Parser<'src> {
                 Ok(Pattern::Wildcard)
             }
             Some(Token::Ident(name)) => {
-                let name = name.to_string();
+                let mut name = name.to_string();
                 self.advance();
+                while self.check(&Token::Dot) {
+                    self.advance();
+                    let segment = self.parse_ident()?;
+                    name.push('.');
+                    name.push_str(&segment);
+                }
 
                 if self.check(&Token::LParen) {
                     self.advance();
@@ -3607,6 +3613,31 @@ mod tests {
                 .contains("Trailing comma is not allowed in pattern binding lists"),
             "{}",
             err.message
+        );
+    }
+
+    #[test]
+    fn test_parse_qualified_enum_patterns() {
+        let source = r#"
+            function main(): None {
+                match (x) {
+                    Enum.A(v) => { return None; },
+                    util.E.B(w) => { return None; }
+                }
+            }
+        "#;
+        let program = parse_source(source).expect("qualified enum patterns should parse");
+        let Decl::Function(func) = &program.declarations[0].node else {
+            panic!("expected function declaration");
+        };
+        let Stmt::Match { arms, .. } = &func.body[0].node else {
+            panic!("expected match statement");
+        };
+        assert!(
+            matches!(&arms[0].pattern, Pattern::Variant(name, bindings) if name == "Enum.A" && bindings == &vec!["v".to_string()])
+        );
+        assert!(
+            matches!(&arms[1].pattern, Pattern::Variant(name, bindings) if name == "util.E.B" && bindings == &vec!["w".to_string()])
         );
     }
 

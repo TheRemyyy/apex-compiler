@@ -191,6 +191,7 @@ This document describes the internal architecture of the Apex compiler.
   - The same alias rewrite/codegen path now handles nested module-qualified alias calls like `u.M.add1`, not just single-segment `u.func` lookups.
   - Namespace alias constructor calls like `u.Box(2)` now lower through project rewrite into constructor expressions and carry matching dependency edges/import-check knowledge, so class-only namespaces work with alias-based construction too.
   - Aliased constructors now work on all currently supported paths: namespace-alias enum variants like `u.E.A(1)`, exact imported enum aliases like `import util.E as Enum; Enum.A(1)`, and exact imported class constructor aliases like `import util.Box as B; B(1)`.
+  - Match patterns now also accept qualified enum variant names, so forms like `Enum.A(v)` and `util.E.B(w)` survive parse, typecheck, formatting, and codegen instead of failing on the first `.` token or dropping payload bindings in backend lowering.
   - Higher-order generic methods that return closures now survive specialization and subsequent invocation without confusing generated method symbols for fields.
   - `src/typeck.rs` now parses function-type strings nested inside generic wrappers during normalization/substitution, so wrapper types containing function values compare correctly.
   - `src/typeck.rs` now recognizes `Option.some/none` and `Result.ok/error` as frontend static constructors instead of treating `Option`/`Result` as undefined variables.

@@ -78,13 +78,15 @@ pub fn rewrite_program_for_project(
                     .get(source_name)
                     .is_some_and(|owner_ns| owner_ns == &ns)
                 {
-                    imported_classes.insert(import_key.clone(), (ns.clone(), source_name.to_string()));
+                    imported_classes
+                        .insert(import_key.clone(), (ns.clone(), source_name.to_string()));
                 }
                 if global_enum_map
                     .get(source_name)
                     .is_some_and(|owner_ns| owner_ns == &ns)
                 {
-                    imported_enums.insert(import_key.clone(), (ns.clone(), source_name.to_string()));
+                    imported_enums
+                        .insert(import_key.clone(), (ns.clone(), source_name.to_string()));
                 }
                 imported_modules.insert(import_key, (ns, source_name.to_string()));
             }
@@ -1301,7 +1303,8 @@ fn rewrite_expr_calls_for_project(
                                     )),
                                     field: field.clone(),
                                 }
-                            } else if let Some((ns, symbol_name)) = imported_modules.get(module_alias)
+                            } else if let Some((ns, symbol_name)) =
+                                imported_modules.get(module_alias)
                             {
                                 if member_parts.is_empty() {
                                     return rewrite_expr_calls_for_project(
@@ -2220,7 +2223,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
-&imports,
+            &imports,
         );
 
         let Decl::Function(func) = &rewritten.declarations[0].node else {
@@ -2937,7 +2940,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
-&imports,
+            &imports,
         );
 
         let Decl::Function(func) = &rewritten.declarations[0].node else {
@@ -3007,7 +3010,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
-&imports,
+            &imports,
         );
 
         let Decl::Function(func) = &rewritten.declarations[0].node else {
@@ -3074,7 +3077,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
-&imports,
+            &imports,
         );
 
         let Decl::Function(func) = &rewritten.declarations[0].node else {
@@ -3147,7 +3150,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
-&imports,
+            &imports,
         );
 
         let Decl::Function(func) = &rewritten.declarations[0].node else {
@@ -3220,7 +3223,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
-&imports,
+            &imports,
         );
 
         let Decl::Function(func) = &rewritten.declarations[0].node else {
@@ -3298,7 +3301,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
-&imports,
+            &imports,
         );
 
         let Decl::Function(func) = &rewritten.declarations[0].node else {
@@ -3403,7 +3406,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
-&[],
+            &[],
         );
 
         let func = rewritten
@@ -3478,7 +3481,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
-&[ImportDecl {
+            &[ImportDecl {
                 path: "util".to_string(),
                 alias: Some("u".to_string()),
             }],
@@ -3556,7 +3559,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
-&[ImportDecl {
+            &[ImportDecl {
                 path: "util".to_string(),
                 alias: Some("u".to_string()),
             }],

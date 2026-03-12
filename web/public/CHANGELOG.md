@@ -46,6 +46,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed namespace alias function values across project builds, so `import util as u; f = u.add1; y = u.add1(2);` now typechecks, rewrites, and codegens correctly instead of failing as `Undefined variable: u` / `Unknown variable: util__add1`.
 - Fixed nested namespace alias function values and calls, so paths like `u.M.add1` now rewrite and codegen correctly instead of leaking raw alias expressions into object codegen and failing as `Unknown variable: u`.
 - Fixed namespace alias class constructor calls, so `import util as u; u.Box(2);` now passes import-check, rewrite, dependency tracking, and filtered codegen instead of failing as unknown alias usage / unknown type.
+- Fixed aliased constructors across project rewrite/import-check paths, so namespace alias enum variant constructors (`u.E.A(1)`), exact imported enum aliases (`import util.E as Enum; Enum.A(1)`), and exact imported class constructor aliases (`import util.Box as B; B(1)`) now compile end to end.
+- Fixed qualified enum match patterns such as `Enum.A(v)` and `util.E.B(w)` across parser, typechecker, and codegen, including aliased exact enum imports in project mode.
 - Fixed filtered codegen declaration-closure seeding for qualified import paths, so namespace-alias references now pull the owning declaration files/symbols into object rebuilds instead of omitting reachable imported functions like `util__twice`.
 - Fixed import-check namespace alias discovery so class-only or enum-only namespaces can still be imported with `as` aliases even when they do not expose top-level functions.
 - Bumped rewrite cache schema to invalidate stale cached rewrites after function-reference rewrite changes.
@@ -790,7 +792,6 @@ This release introduces a complete multi-file project system with Java-style nam
 ### 🐛 Fixed
 
 - **Borrow Checker**: Fixed a bug where standard library calls would incorrectly mark string variables as moved.
-- **Aliased Constructors**: Fixed project import-check and rewrite paths for aliased constructors. Namespace alias enum variant constructors (`u.E.A(1)`), exact imported enum aliases (`import util.E as Enum; Enum.A(1)`), and exact imported class constructor aliases (`import util.Box as B; B(1)`) now compile end to end.
 
 ## [1.1.2] - 2025-12-28
 
