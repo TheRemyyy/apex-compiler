@@ -6808,6 +6808,136 @@ function main(): None {
     }
 
     #[test]
+    fn project_build_supports_if_expression_function_value_callees() {
+        let temp_root = make_temp_project_root("ifexpr-function-callee-project");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(&temp_root, &["src/main.apex"], "src/main.apex", "smoke");
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nfunction inc(x: Integer): Integer { return x + 1; }\nfunction dec(x: Integer): Integer { return x - 1; }\nfunction main(): None { x: Integer = (if (true) { inc; } else { dec; })(1); require(x == 2); return None; }\n",
+        )
+        .expect("write main");
+
+        with_current_dir(&temp_root, || {
+            build_project(false, false, true, false, false)
+                .expect("project build should support if-expression function-value callees");
+        });
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn project_build_supports_unit_enum_variant_values() {
+        let temp_root = make_temp_project_root("unit-enum-variant-project");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(&temp_root, &["src/main.apex"], "src/main.apex", "smoke");
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nenum E { A, B }\nfunction main(): None { e: E = E.A; match (e) { E.A => { } E.B => { } } return None; }\n",
+        )
+        .expect("write main");
+
+        with_current_dir(&temp_root, || {
+            build_project(false, false, true, false, false)
+                .expect("project build should support unit enum variant values");
+        });
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn project_build_supports_async_block_import_alias_calls() {
+        let temp_root = make_temp_project_root("async-block-import-alias-project");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(
+            &temp_root,
+            &["src/main.apex", "src/lib.apex"],
+            "src/main.apex",
+            "smoke",
+        );
+        fs::write(
+            src_dir.join("lib.apex"),
+            "package util;\nfunction add1(x: Integer): Integer { return x + 1; }\n",
+        )
+        .expect("write lib");
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nimport util.add1 as inc;\nfunction main(): None { task: Task<Integer> = async { return inc(1); }; value: Integer = await(task); require(value == 2); return None; }\n",
+        )
+        .expect("write main");
+
+        with_current_dir(&temp_root, || {
+            build_project(false, false, true, false, false)
+                .expect("project build should support async-block import alias calls");
+        });
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn project_build_supports_namespace_alias_unit_enum_values() {
+        let temp_root = make_temp_project_root("namespace-alias-unit-enum-project");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(
+            &temp_root,
+            &["src/main.apex", "src/lib.apex"],
+            "src/main.apex",
+            "smoke",
+        );
+        fs::write(src_dir.join("lib.apex"), "package util;\nenum E { A, B }\n").expect("write lib");
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nimport util as u;\nfunction main(): None { e: u.E = u.E.A; match (e) { u.E.A => { } u.E.B => { } } return None; }\n",
+        )
+        .expect("write main");
+
+        with_current_dir(&temp_root, || {
+            build_project(false, false, true, false, false)
+                .expect("project build should support namespace alias unit enum values");
+        });
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn project_build_supports_try_expression_function_value_callees() {
+        let temp_root = make_temp_project_root("try-function-callee-project");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(&temp_root, &["src/main.apex"], "src/main.apex", "smoke");
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nfunction inc(x: Integer): Integer { return x + 1; }\nfunction choose(): Result<(Integer) -> Integer, String> { return Result.ok(inc); }\nfunction main(): Result<None, String> { value: Integer = (choose()?)(1); require(value == 2); return Result.ok(None); }\n",
+        )
+        .expect("write main");
+
+        with_current_dir(&temp_root, || {
+            build_project(false, false, true, false, false)
+                .expect("project build should support try-expression function-value callees");
+        });
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn project_build_supports_dereferenced_function_value_callees() {
+        let temp_root = make_temp_project_root("deref-function-callee-project");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(&temp_root, &["src/main.apex"], "src/main.apex", "smoke");
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nfunction inc(x: Integer): Integer { return x + 1; }\nfunction main(): None { f: &(Integer) -> Integer = &inc; value: Integer = (*f)(1); require(value == 2); return None; }\n",
+        )
+        .expect("write main");
+
+        with_current_dir(&temp_root, || {
+            build_project(false, false, true, false, false)
+                .expect("project build should support dereferenced function-value callees");
+        });
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
     fn cli_check_command_succeeds_for_temp_project() {
         let temp_root = make_temp_project_root("cli-check");
         let src_dir = temp_root.join("src");
@@ -6927,6 +7057,55 @@ function main(): None {
         fs::write(&source_path, source).expect("write source");
         compile_source(source, &source_path, &output_path, true, true, None, None)
             .expect("lambda callee codegen should succeed");
+        assert!(output_path.with_extension("ll").exists());
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn compile_source_supports_indexed_function_value_callees() {
+        let temp_root = make_temp_project_root("indexed-function-callee-codegen");
+        let source_path = temp_root.join("indexed_function_callee.apex");
+        let output_path = temp_root.join("indexed_function_callee");
+        let source = r#"
+            function inc(x: Integer): Integer { return x + 1; }
+            function dec(x: Integer): Integer { return x - 1; }
+
+            function main(): None {
+                fs: List<(Integer) -> Integer> = List<(Integer) -> Integer>();
+                fs.push(inc);
+                fs.push(dec);
+                x: Integer = fs[0](1);
+                return None;
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, true, true, None, None)
+            .expect("indexed function-value callee should codegen");
+        assert!(output_path.with_extension("ll").exists());
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn compile_source_supports_if_expression_function_value_callees() {
+        let temp_root = make_temp_project_root("ifexpr-function-callee-codegen");
+        let source_path = temp_root.join("ifexpr_function_callee.apex");
+        let output_path = temp_root.join("ifexpr_function_callee");
+        let source = r#"
+            function inc(x: Integer): Integer { return x + 1; }
+            function dec(x: Integer): Integer { return x - 1; }
+
+            function main(): None {
+                x: Integer = (if (true) { inc; } else { dec; })(1);
+                return None;
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, true, true, None, None)
+            .expect("if-expression function-value callee should codegen");
         assert!(output_path.with_extension("ll").exists());
 
         let _ = fs::remove_dir_all(temp_root);

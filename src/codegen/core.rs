@@ -2073,7 +2073,7 @@ impl<'ctx> Codegen<'ctx> {
         name.to_string()
     }
 
-    fn resolve_function_alias(&self, name: &str) -> String {
+    pub(crate) fn resolve_function_alias(&self, name: &str) -> String {
         let Some(path) = self.import_aliases.get(name) else {
             return name.to_string();
         };
@@ -6450,6 +6450,21 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     pub fn compile_field(&mut self, object: &Expr, field: &str) -> Result<BasicValueEnum<'ctx>> {
+        if let Expr::Ident(owner_name) = object {
+            let resolved_owner = self.resolve_module_alias(owner_name);
+            if let Some(enum_info) = self.enums.get(&resolved_owner) {
+                if let Some(variant_info) = enum_info.variants.get(field).cloned() {
+                    if variant_info.fields.is_empty() {
+                        return self.build_enum_value(&resolved_owner, &variant_info, &[]);
+                    }
+                    return Err(CodegenError::new(format!(
+                        "Enum variant '{}.{}' requires constructor arguments",
+                        resolved_owner, field
+                    )));
+                }
+            }
+        }
+
         let obj_ptr = self.compile_expr(object)?.into_pointer_value();
 
         // Get class name using type inference
@@ -6551,10 +6566,10 @@ impl<'ctx> Codegen<'ctx> {
                 .map_err(|_| CodegenError::new("Invalid list value for index access"))?
                 .into_pointer_value();
             let elem_ty = match self.infer_object_type(object) {
-                Some(Type::List(inner)) if matches!(*inner, Type::Boolean) => {
-                    self.context.bool_type().as_basic_type_enum()
+                Some(list_ty @ Type::List(_)) => {
+                    self.list_element_layout_from_list_type(&list_ty).0
                 }
-                _ => self.context.i64_type().as_basic_type_enum(),
+                _ => self.list_element_layout_default().0,
             };
             let typed_data_ptr = self
                 .builder
@@ -6574,10 +6589,8 @@ impl<'ctx> Codegen<'ctx> {
 
         let obj_ptr = obj_val.into_pointer_value();
         let elem_ty = match self.infer_object_type(object) {
-            Some(Type::List(inner)) if matches!(*inner, Type::Boolean) => {
-                self.context.bool_type().as_basic_type_enum()
-            }
-            _ => self.context.i64_type().as_basic_type_enum(),
+            Some(list_ty @ Type::List(_)) => self.list_element_layout_from_list_type(&list_ty).0,
+            _ => self.list_element_layout_default().0,
         };
         let elem_ptr = unsafe {
             self.builder

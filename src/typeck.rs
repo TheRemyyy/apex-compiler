@@ -1684,6 +1684,21 @@ impl TypeChecker {
         }
     }
 
+    fn enum_payload_supported_for_codegen(ty: &ResolvedType) -> bool {
+        matches!(
+            ty,
+            ResolvedType::Integer
+                | ResolvedType::Boolean
+                | ResolvedType::Char
+                | ResolvedType::Float
+                | ResolvedType::String
+                | ResolvedType::Class(_)
+                | ResolvedType::Ref(_)
+                | ResolvedType::MutRef(_)
+                | ResolvedType::Ptr(_)
+        )
+    }
+
     /// Check a declaration
     fn check_decl_with_prefix(&mut self, decl: &Decl, span: Span, module_prefix: Option<&str>) {
         match decl {
@@ -1692,6 +1707,22 @@ impl TypeChecker {
                 self.check_function(func, span, key.as_deref());
             }
             Decl::Class(class) => self.check_class(class, span),
+            Decl::Enum(en) => {
+                for variant in &en.variants {
+                    for field in &variant.fields {
+                        let ty = self.resolve_type(&field.ty);
+                        if !Self::enum_payload_supported_for_codegen(&ty) {
+                            self.error(
+                                format!(
+                                    "Enum payload type '{}' is not supported yet; only primitive scalars, strings, class/enum references, refs, mut refs, and raw pointers are supported in enum variants",
+                                    ty
+                                ),
+                                span.clone(),
+                            );
+                        }
+                    }
+                }
+            }
             Decl::Interface(interface) => self.check_interface(interface, span),
             Decl::Module(module) => {
                 let next_prefix = if let Some(prefix) = module_prefix {
@@ -2436,6 +2467,28 @@ impl TypeChecker {
             } => self.check_call(&callee.node, args, type_args, span),
 
             Expr::Field { object, field } => {
+                if let Expr::Ident(owner_name) = &object.node {
+                    let resolved_owner = self
+                        .resolve_import_alias_symbol(owner_name)
+                        .unwrap_or_else(|| owner_name.clone());
+                    if let Some(enum_info) = self.enums.get(&resolved_owner) {
+                        if let Some(variant_fields) = enum_info.variants.get(field) {
+                            if variant_fields.is_empty() {
+                                return ResolvedType::Class(resolved_owner);
+                            }
+                            self.error(
+                                format!(
+                                    "Enum variant '{}.{}' requires {} argument(s)",
+                                    resolved_owner,
+                                    field,
+                                    variant_fields.len()
+                                ),
+                                span.clone(),
+                            );
+                            return ResolvedType::Unknown;
+                        }
+                    }
+                }
                 if let Some(path_parts) = Self::flatten_field_chain(expr) {
                     if path_parts.len() >= 2 {
                         if let Some(candidate) = self
@@ -5816,6 +5869,64 @@ mod tests {
             joined.contains("extern function 'puts' cannot be used as a first-class value"),
             "{joined}"
         );
+    }
+
+    #[test]
+    fn rejects_unsupported_enum_payload_types_during_typecheck() {
+        let src = r#"
+            class C {
+                value: Integer;
+                constructor(v: Integer) { this.value = v; }
+            }
+
+            enum EF {
+                A((Integer) -> Integer)
+            }
+
+            enum EL {
+                A(List<Integer>)
+            }
+
+            enum EO {
+                A(Option<C>)
+            }
+
+            function inc(x: Integer): Integer { return x + 1; }
+
+            function main(): None {
+                ef: EF = EF.A(inc);
+                el: EL = EL.A(List<Integer>());
+                eo: EO = EO.A(Option.some(C(1)));
+                return None;
+            }
+        "#;
+        let errors =
+            check_source(src).expect_err("unsupported enum payload types should fail early");
+        let joined = errors
+            .iter()
+            .map(|e| e.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("Enum payload type '(Integer) -> Integer' is not supported yet"));
+        assert!(joined.contains("Enum payload type 'List<Integer>' is not supported yet"));
+        assert!(joined.contains("Enum payload type 'Option<C>' is not supported yet"));
+    }
+
+    #[test]
+    fn supports_unit_enum_variant_values() {
+        let src = r#"
+            enum E { A, B }
+
+            function main(): None {
+                e: E = E.A;
+                match (e) {
+                    E.A => { }
+                    E.B => { }
+                }
+                return None;
+            }
+        "#;
+        check_source(src).expect("unit enum variants should typecheck as values");
     }
 
     #[test]

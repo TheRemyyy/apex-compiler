@@ -9,19 +9,22 @@ use inkwell::{AddressSpace, IntPredicate};
 use crate::codegen::core::{Codegen, CodegenError, Result};
 
 impl<'ctx> Codegen<'ctx> {
-    fn list_element_layout_from_list_type(
+    pub(crate) fn list_element_layout_from_list_type(
         &self,
         list_ty: &Type,
     ) -> (inkwell::types::BasicTypeEnum<'ctx>, u64) {
         if let Type::List(inner) = list_ty {
-            if matches!(**inner, Type::Boolean) {
-                return (self.context.bool_type().into(), 1);
-            }
+            let elem_llvm_ty = self.llvm_type(inner);
+            let elem_size = elem_llvm_ty
+                .size_of()
+                .and_then(|size| size.get_zero_extended_constant())
+                .unwrap_or(8);
+            return (elem_llvm_ty, elem_size);
         }
         (self.context.i64_type().into(), 8)
     }
 
-    fn list_element_layout_default(&self) -> (inkwell::types::BasicTypeEnum<'ctx>, u64) {
+    pub(crate) fn list_element_layout_default(&self) -> (inkwell::types::BasicTypeEnum<'ctx>, u64) {
         (self.context.i64_type().into(), 8)
     }
 

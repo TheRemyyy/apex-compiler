@@ -2088,6 +2088,38 @@ fn rewrite_expr_calls_for_project(
                 let member_parts = &path_parts[1..];
                 if !member_parts.is_empty() && !is_shadowed(module_alias, scopes) {
                     if let Some((ns, symbol_name)) = imported_modules.get(module_alias) {
+                        if let Some((owner_ns, enum_name, variant_name)) =
+                            resolve_module_alias_enum_candidate(
+                                ns,
+                                symbol_name,
+                                member_parts,
+                                global_enum_map,
+                            )
+                        {
+                            return Expr::Field {
+                                object: Box::new(ast::Spanned::new(
+                                    Expr::Ident(mangle_project_symbol(
+                                        &owner_ns,
+                                        entry_namespace,
+                                        &enum_name,
+                                    )),
+                                    object.span.clone(),
+                                )),
+                                field: variant_name,
+                            };
+                        }
+                        if let Some((owner_ns, class_name)) = resolve_module_alias_class_candidate(
+                            ns,
+                            symbol_name,
+                            member_parts,
+                            global_class_map,
+                        ) {
+                            return Expr::Ident(mangle_project_symbol(
+                                &owner_ns,
+                                entry_namespace,
+                                &class_name,
+                            ));
+                        }
                         let field = member_parts.last().expect("non-empty member parts");
                         let namespace_path = if symbol_name.is_empty() {
                             ns.clone()
@@ -2142,6 +2174,24 @@ fn rewrite_expr_calls_for_project(
             if let Expr::Ident(module_alias) = &object.node {
                 if !is_shadowed(module_alias, scopes) {
                     if let Some((ns, symbol_name)) = imported_modules.get(module_alias) {
+                        if let Some((owner_ns, enum_name)) = imported_enums.get(module_alias) {
+                            if field == enum_name {
+                                return Expr::Ident(mangle_project_symbol(
+                                    owner_ns,
+                                    entry_namespace,
+                                    enum_name,
+                                ));
+                            }
+                        }
+                        if let Some((owner_ns, class_name)) = imported_classes.get(module_alias) {
+                            if field == class_name {
+                                return Expr::Ident(mangle_project_symbol(
+                                    owner_ns,
+                                    entry_namespace,
+                                    class_name,
+                                ));
+                            }
+                        }
                         let namespace_path = if symbol_name.is_empty() {
                             ns.clone()
                         } else {
@@ -2374,6 +2424,389 @@ fn rewrite_expr_calls_for_project(
                 body: Box::new(ast::Spanned::new(rewritten_body, body.span.clone())),
             }
         }
+        Expr::Block(stmts) => Expr::Block(rewrite_block_calls_for_project(
+            stmts,
+            current_namespace,
+            entry_namespace,
+            local_functions,
+            imported_map,
+            global_function_map,
+            local_classes,
+            imported_classes,
+            global_class_map,
+            imported_enums,
+            global_enum_map,
+            local_modules,
+            imported_modules,
+            global_module_map,
+            scopes,
+        )),
+        Expr::IfExpr {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            let condition = Box::new(ast::Spanned::new(
+                rewrite_expr_calls_for_project(
+                    &condition.node,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    imported_enums,
+                    global_enum_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
+                ),
+                condition.span.clone(),
+            ));
+            push_scope(scopes);
+            let then_branch = rewrite_block_calls_for_project(
+                then_branch,
+                current_namespace,
+                entry_namespace,
+                local_functions,
+                imported_map,
+                global_function_map,
+                local_classes,
+                imported_classes,
+                global_class_map,
+                imported_enums,
+                global_enum_map,
+                local_modules,
+                imported_modules,
+                global_module_map,
+                scopes,
+            );
+            pop_scope(scopes);
+            let else_branch = else_branch.as_ref().map(|branch| {
+                push_scope(scopes);
+                let rewritten = rewrite_block_calls_for_project(
+                    branch,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    imported_enums,
+                    global_enum_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
+                );
+                pop_scope(scopes);
+                rewritten
+            });
+            Expr::IfExpr {
+                condition,
+                then_branch,
+                else_branch,
+            }
+        }
+        Expr::Match { expr, arms } => Expr::Match {
+            expr: Box::new(ast::Spanned::new(
+                rewrite_expr_calls_for_project(
+                    &expr.node,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    imported_enums,
+                    global_enum_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
+                ),
+                expr.span.clone(),
+            )),
+            arms: arms
+                .iter()
+                .map(|arm| {
+                    push_scope(scopes);
+                    if let Some(scope) = scopes.last_mut() {
+                        bind_pattern_locals(&arm.pattern, scope);
+                    }
+                    let body = rewrite_block_calls_for_project(
+                        &arm.body,
+                        current_namespace,
+                        entry_namespace,
+                        local_functions,
+                        imported_map,
+                        global_function_map,
+                        local_classes,
+                        imported_classes,
+                        global_class_map,
+                        imported_enums,
+                        global_enum_map,
+                        local_modules,
+                        imported_modules,
+                        global_module_map,
+                        scopes,
+                    );
+                    pop_scope(scopes);
+                    ast::MatchArm {
+                        pattern: arm.pattern.clone(),
+                        body,
+                    }
+                })
+                .collect(),
+        },
+        Expr::Await(inner) => Expr::Await(Box::new(ast::Spanned::new(
+            rewrite_expr_calls_for_project(
+                &inner.node,
+                current_namespace,
+                entry_namespace,
+                local_functions,
+                imported_map,
+                global_function_map,
+                local_classes,
+                imported_classes,
+                global_class_map,
+                imported_enums,
+                global_enum_map,
+                local_modules,
+                imported_modules,
+                global_module_map,
+                scopes,
+            ),
+            inner.span.clone(),
+        ))),
+        Expr::Try(inner) => Expr::Try(Box::new(ast::Spanned::new(
+            rewrite_expr_calls_for_project(
+                &inner.node,
+                current_namespace,
+                entry_namespace,
+                local_functions,
+                imported_map,
+                global_function_map,
+                local_classes,
+                imported_classes,
+                global_class_map,
+                imported_enums,
+                global_enum_map,
+                local_modules,
+                imported_modules,
+                global_module_map,
+                scopes,
+            ),
+            inner.span.clone(),
+        ))),
+        Expr::Borrow(inner) => Expr::Borrow(Box::new(ast::Spanned::new(
+            rewrite_expr_calls_for_project(
+                &inner.node,
+                current_namespace,
+                entry_namespace,
+                local_functions,
+                imported_map,
+                global_function_map,
+                local_classes,
+                imported_classes,
+                global_class_map,
+                imported_enums,
+                global_enum_map,
+                local_modules,
+                imported_modules,
+                global_module_map,
+                scopes,
+            ),
+            inner.span.clone(),
+        ))),
+        Expr::MutBorrow(inner) => Expr::MutBorrow(Box::new(ast::Spanned::new(
+            rewrite_expr_calls_for_project(
+                &inner.node,
+                current_namespace,
+                entry_namespace,
+                local_functions,
+                imported_map,
+                global_function_map,
+                local_classes,
+                imported_classes,
+                global_class_map,
+                imported_enums,
+                global_enum_map,
+                local_modules,
+                imported_modules,
+                global_module_map,
+                scopes,
+            ),
+            inner.span.clone(),
+        ))),
+        Expr::Deref(inner) => Expr::Deref(Box::new(ast::Spanned::new(
+            rewrite_expr_calls_for_project(
+                &inner.node,
+                current_namespace,
+                entry_namespace,
+                local_functions,
+                imported_map,
+                global_function_map,
+                local_classes,
+                imported_classes,
+                global_class_map,
+                imported_enums,
+                global_enum_map,
+                local_modules,
+                imported_modules,
+                global_module_map,
+                scopes,
+            ),
+            inner.span.clone(),
+        ))),
+        Expr::StringInterp(parts) => Expr::StringInterp(
+            parts
+                .iter()
+                .map(|part| match part {
+                    ast::StringPart::Literal(text) => ast::StringPart::Literal(text.clone()),
+                    ast::StringPart::Expr(expr) => ast::StringPart::Expr(ast::Spanned::new(
+                        rewrite_expr_calls_for_project(
+                            &expr.node,
+                            current_namespace,
+                            entry_namespace,
+                            local_functions,
+                            imported_map,
+                            global_function_map,
+                            local_classes,
+                            imported_classes,
+                            global_class_map,
+                            imported_enums,
+                            global_enum_map,
+                            local_modules,
+                            imported_modules,
+                            global_module_map,
+                            scopes,
+                        ),
+                        expr.span.clone(),
+                    )),
+                })
+                .collect(),
+        ),
+        Expr::AsyncBlock(body) => Expr::AsyncBlock(rewrite_block_calls_for_project(
+            body,
+            current_namespace,
+            entry_namespace,
+            local_functions,
+            imported_map,
+            global_function_map,
+            local_classes,
+            imported_classes,
+            global_class_map,
+            imported_enums,
+            global_enum_map,
+            local_modules,
+            imported_modules,
+            global_module_map,
+            scopes,
+        )),
+        Expr::Require { condition, message } => Expr::Require {
+            condition: Box::new(ast::Spanned::new(
+                rewrite_expr_calls_for_project(
+                    &condition.node,
+                    current_namespace,
+                    entry_namespace,
+                    local_functions,
+                    imported_map,
+                    global_function_map,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    imported_enums,
+                    global_enum_map,
+                    local_modules,
+                    imported_modules,
+                    global_module_map,
+                    scopes,
+                ),
+                condition.span.clone(),
+            )),
+            message: message.as_ref().map(|expr| {
+                Box::new(ast::Spanned::new(
+                    rewrite_expr_calls_for_project(
+                        &expr.node,
+                        current_namespace,
+                        entry_namespace,
+                        local_functions,
+                        imported_map,
+                        global_function_map,
+                        local_classes,
+                        imported_classes,
+                        global_class_map,
+                        imported_enums,
+                        global_enum_map,
+                        local_modules,
+                        imported_modules,
+                        global_module_map,
+                        scopes,
+                    ),
+                    expr.span.clone(),
+                ))
+            }),
+        },
+        Expr::Range {
+            start,
+            end,
+            inclusive,
+        } => Expr::Range {
+            start: start.as_ref().map(|expr| {
+                Box::new(ast::Spanned::new(
+                    rewrite_expr_calls_for_project(
+                        &expr.node,
+                        current_namespace,
+                        entry_namespace,
+                        local_functions,
+                        imported_map,
+                        global_function_map,
+                        local_classes,
+                        imported_classes,
+                        global_class_map,
+                        imported_enums,
+                        global_enum_map,
+                        local_modules,
+                        imported_modules,
+                        global_module_map,
+                        scopes,
+                    ),
+                    expr.span.clone(),
+                ))
+            }),
+            end: end.as_ref().map(|expr| {
+                Box::new(ast::Spanned::new(
+                    rewrite_expr_calls_for_project(
+                        &expr.node,
+                        current_namespace,
+                        entry_namespace,
+                        local_functions,
+                        imported_map,
+                        global_function_map,
+                        local_classes,
+                        imported_classes,
+                        global_class_map,
+                        imported_enums,
+                        global_enum_map,
+                        local_modules,
+                        imported_modules,
+                        global_module_map,
+                        scopes,
+                    ),
+                    expr.span.clone(),
+                ))
+            }),
+            inclusive: *inclusive,
+        },
+        Expr::This => Expr::This,
         Expr::Ident(name) => {
             if is_shadowed(name, scopes) {
                 Expr::Ident(name.clone())
@@ -4123,6 +4556,140 @@ mod tests {
             panic!("expected rewritten function reference ident");
         };
         assert_eq!(name, "app__add1");
+    }
+
+    #[test]
+    fn rewrites_if_expression_function_value_branches() {
+        let program = Program {
+            package: Some("app".to_string()),
+            declarations: vec![
+                sp(Decl::Function(ast::FunctionDecl {
+                    name: "inc".to_string(),
+                    generic_params: vec![],
+                    params: vec![ast::Parameter {
+                        name: "x".to_string(),
+                        ty: ast::Type::Integer,
+                        mutable: false,
+                        mode: ast::ParamMode::Owned,
+                    }],
+                    is_variadic: false,
+                    extern_abi: None,
+                    extern_link_name: None,
+                    return_type: ast::Type::Integer,
+                    body: vec![sp(Stmt::Return(Some(sp(Expr::Ident("x".to_string())))))],
+                    is_async: false,
+                    is_extern: false,
+                    visibility: ast::Visibility::Private,
+                    attributes: vec![],
+                })),
+                sp(Decl::Function(ast::FunctionDecl {
+                    name: "dec".to_string(),
+                    generic_params: vec![],
+                    params: vec![ast::Parameter {
+                        name: "x".to_string(),
+                        ty: ast::Type::Integer,
+                        mutable: false,
+                        mode: ast::ParamMode::Owned,
+                    }],
+                    is_variadic: false,
+                    extern_abi: None,
+                    extern_link_name: None,
+                    return_type: ast::Type::Integer,
+                    body: vec![sp(Stmt::Return(Some(sp(Expr::Ident("x".to_string())))))],
+                    is_async: false,
+                    is_extern: false,
+                    visibility: ast::Visibility::Private,
+                    attributes: vec![],
+                })),
+                sp(Decl::Function(ast::FunctionDecl {
+                    name: "main".to_string(),
+                    generic_params: vec![],
+                    params: vec![],
+                    is_variadic: false,
+                    extern_abi: None,
+                    extern_link_name: None,
+                    return_type: ast::Type::None,
+                    body: vec![sp(Stmt::Let {
+                        name: "f".to_string(),
+                        ty: ast::Type::Function(
+                            vec![ast::Type::Integer],
+                            Box::new(ast::Type::Integer),
+                        ),
+                        value: sp(Expr::IfExpr {
+                            condition: Box::new(sp(Expr::Literal(ast::Literal::Boolean(true)))),
+                            then_branch: vec![sp(Stmt::Expr(sp(Expr::Ident("inc".to_string()))))],
+                            else_branch: Some(vec![sp(Stmt::Expr(sp(Expr::Ident(
+                                "dec".to_string(),
+                            ))))]),
+                        }),
+                        mutable: false,
+                    })],
+                    is_async: false,
+                    is_extern: false,
+                    visibility: ast::Visibility::Private,
+                    attributes: vec![],
+                })),
+            ],
+        };
+
+        let rewritten = rewrite_program_for_project(
+            &program,
+            "app",
+            "app",
+            &HashMap::from([(
+                "app".to_string(),
+                HashSet::from(["inc".to_string(), "dec".to_string(), "main".to_string()]),
+            )]),
+            &HashMap::from([
+                ("inc".to_string(), "app".to_string()),
+                ("dec".to_string(), "app".to_string()),
+                ("main".to_string(), "app".to_string()),
+            ]),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &[],
+        );
+
+        let func = rewritten
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Decl::Function(func) if func.name == "app__main" || func.name == "main" => {
+                    Some(func)
+                }
+                _ => None,
+            })
+            .expect("expected rewritten main function");
+        let Stmt::Let { value, .. } = &func.body[0].node else {
+            panic!("expected let statement");
+        };
+        let Expr::IfExpr {
+            then_branch,
+            else_branch,
+            ..
+        } = &value.node
+        else {
+            panic!("expected rewritten if expression");
+        };
+        let Stmt::Expr(expr) = &then_branch[0].node else {
+            panic!("expected then branch expr");
+        };
+        let Expr::Ident(name) = &expr.node else {
+            panic!("expected rewritten then branch function ident");
+        };
+        assert_eq!(name, "app__inc");
+        let else_branch = else_branch.as_ref().expect("expected else branch");
+        let Stmt::Expr(expr) = &else_branch[0].node else {
+            panic!("expected else branch expr");
+        };
+        let Expr::Ident(name) = &expr.node else {
+            panic!("expected rewritten else branch function ident");
+        };
+        assert_eq!(name, "app__dec");
     }
 
     #[test]

@@ -615,20 +615,33 @@ impl<'ctx> Codegen<'ctx> {
     // === Borrow/Deref ===
 
     pub fn compile_borrow(&mut self, expr: &Expr) -> Result<BasicValueEnum<'ctx>> {
-        // Get pointer to the lvalue
-        let ptr = self.compile_lvalue(expr)?;
-        Ok(ptr.into())
+        if let Ok(ptr) = self.compile_lvalue(expr) {
+            return Ok(ptr.into());
+        }
+
+        // Materialize non-lvalue values into a temporary slot so first-class
+        // functions and other expression results can still be borrowed.
+        let value = self.compile_expr(expr)?;
+        let value_ty = self.infer_expr_type(expr, &[]);
+        let alloca = self
+            .builder
+            .build_alloca(self.llvm_type(&value_ty), "borrow_tmp")
+            .unwrap();
+        self.builder.build_store(alloca, value).unwrap();
+        Ok(alloca.into())
     }
 
     pub fn compile_deref(&mut self, expr: &Expr) -> Result<BasicValueEnum<'ctx>> {
         // Compile the expression to get a pointer value
         let ptr_val = self.compile_expr(expr)?.into_pointer_value();
 
-        // For now, assume i64 as the default dereferenced type
-        // A full implementation would track the reference type
+        let pointee_ty = match self.infer_expr_type(expr, &[]) {
+            Type::Ref(inner) | Type::MutRef(inner) | Type::Ptr(inner) => self.llvm_type(&inner),
+            _ => self.context.i64_type().into(),
+        };
         let val = self
             .builder
-            .build_load(self.context.i64_type(), ptr_val, "deref")
+            .build_load(pointee_ty, ptr_val, "deref")
             .unwrap();
         Ok(val)
     }
@@ -1638,6 +1651,12 @@ impl<'ctx> Codegen<'ctx> {
                 if let Some((_, ty)) = self.functions.get(name) {
                     return ty.clone();
                 }
+                let resolved_name = self.resolve_function_alias(name);
+                if resolved_name != *name {
+                    if let Some((_, ty)) = self.functions.get(&resolved_name) {
+                        return ty.clone();
+                    }
+                }
                 Type::Integer
             }
             Expr::Binary { op, left, .. } => match op {
@@ -1702,12 +1721,68 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 Type::Integer
             }
+            Expr::Index { object, .. } => match self.infer_expr_type(&object.node, params) {
+                Type::List(inner) => *inner,
+                Type::Map(_, value) => *value,
+                Type::String => Type::Char,
+                _ => Type::Integer,
+            },
             Expr::Lambda { params, body } => {
                 let ret_ty = self.infer_expr_type(&body.node, params);
                 Type::Function(
                     params.iter().map(|p| p.ty.clone()).collect(),
                     Box::new(ret_ty),
                 )
+            }
+            Expr::Block(stmts) => {
+                let mut ret = Type::None;
+                for stmt in stmts {
+                    if let Stmt::Expr(expr) = &stmt.node {
+                        ret = self.infer_expr_type(&expr.node, params);
+                    }
+                }
+                ret
+            }
+            Expr::IfExpr {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let mut then_ty = Type::None;
+                for stmt in then_branch {
+                    if let Stmt::Expr(expr) = &stmt.node {
+                        then_ty = self.infer_expr_type(&expr.node, params);
+                    }
+                }
+                if let Some(else_branch) = else_branch {
+                    let mut else_ty = Type::None;
+                    for stmt in else_branch {
+                        if let Stmt::Expr(expr) = &stmt.node {
+                            else_ty = self.infer_expr_type(&expr.node, params);
+                        }
+                    }
+                    if then_ty == else_ty {
+                        then_ty
+                    } else {
+                        then_ty
+                    }
+                } else {
+                    Type::None
+                }
+            }
+            Expr::Match { arms, .. } => {
+                let mut ret = Type::None;
+                for arm in arms {
+                    for stmt in &arm.body {
+                        if let Stmt::Expr(expr) = &stmt.node {
+                            ret = self.infer_expr_type(&expr.node, params);
+                        }
+                    }
+                    if ret != Type::None {
+                        break;
+                    }
+                }
+                ret
             }
             Expr::Await(inner) => {
                 let inner_ty = self.infer_expr_type(&inner.node, params);
@@ -1717,6 +1792,20 @@ impl<'ctx> Codegen<'ctx> {
                     Type::Integer
                 }
             }
+            Expr::Try(inner) => match self.infer_expr_type(&inner.node, params) {
+                Type::Option(inner) => *inner,
+                Type::Result(ok, _) => *ok,
+                _ => Type::Integer,
+            },
+            Expr::Borrow(inner) => Type::Ref(Box::new(self.infer_expr_type(&inner.node, params))),
+            Expr::MutBorrow(inner) => {
+                Type::MutRef(Box::new(self.infer_expr_type(&inner.node, params)))
+            }
+            Expr::Deref(inner) => match self.infer_expr_type(&inner.node, params) {
+                Type::Ref(inner) | Type::MutRef(inner) => *inner,
+                _ => Type::Integer,
+            },
+            Expr::StringInterp(_) => Type::String,
             Expr::AsyncBlock(stmts) => {
                 let mut ret = Type::None;
                 for stmt in stmts {
@@ -1727,6 +1816,8 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 Type::Task(Box::new(ret))
             }
+            Expr::Require { .. } => Type::None,
+            Expr::Range { .. } => Type::Range(Box::new(Type::Integer)),
             _ => Type::Integer,
         }
     }
