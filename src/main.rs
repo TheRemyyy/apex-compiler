@@ -1406,7 +1406,7 @@ fn save_typecheck_summary_cache(
     write_cache_blob(&path, "typecheck summary cache", cache)
 }
 
-const REWRITE_CACHE_SCHEMA: &str = "v6";
+const REWRITE_CACHE_SCHEMA: &str = "v8";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RewrittenFileCacheEntry {

@@ -50,11 +50,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed qualified enum match patterns such as `Enum.A(v)` and `util.E.B(w)` across parser, typechecker, and codegen, including aliased exact enum imports in project mode.
 - Fixed exact imported enum aliases in type positions, so project-mode code like `import util.E as Enum; e: Enum = Enum.A(1)` now rewrites and typechecks correctly instead of failing as a stale raw alias type.
 - Fixed local enum type annotations and local enum variant constructor paths inside function bodies in project mode, so code like `e: E = E.A(1)` and lambda params typed as `E` now rewrite consistently instead of leaking raw enum names into typecheck.
+- Fixed qualified type syntax in the parser, so type annotations like `u.Box`, `u.E`, and `u.Box<Integer>` now parse in type positions instead of failing on the first `.` token.
+- Fixed namespace-alias qualified types in project rewrite, so declarations like `b: u.Box` and `e: u.E` rewrite to their mangled owner types instead of staying as raw alias-qualified names.
+- Fixed constructor type-string rewriting for generic constructor-like calls, so expressions like `List<u.Box>()` now rewrite their embedded type arguments consistently instead of producing mismatched `List<u.Box>` vs `List<util__Box>` types.
+- Fixed extern function values to fail during typechecking instead of later in codegen, so assignments like `f = puts` now report a direct semantic error instead of a late `Codegen error`.
 - Fixed filtered codegen declaration-closure seeding for qualified import paths, so namespace-alias references now pull the owning declaration files/symbols into object rebuilds instead of omitting reachable imported functions like `util__twice`.
 - Fixed import-check namespace alias discovery so class-only or enum-only namespaces can still be imported with `as` aliases even when they do not expose top-level functions.
 - Bumped rewrite cache schema to invalidate stale cached rewrites after function-reference rewrite changes.
 - Bumped rewrite cache schema again to invalidate stale cached rewrites after exact imported enum alias type rewriting changed.
 - Bumped rewrite cache schema again to invalidate stale cached rewrites after local enum body/type rewriting changed.
+- Bumped rewrite cache schema again to invalidate stale cached rewrites after qualified alias type and constructor-type-string rewriting changed.
 - Bumped typecheck summary cache schema to invalidate stale semantic/typecheck reuse after namespace-alias function-value resolution changes.
 - Changed project codegen to precompute full transitive dependency closures once per build, probe object-cache hits in parallel, and build per-file codegen programs from an indexed rewritten-file map instead of rescanning every rewritten unit.
 - Reduced object-cache bookkeeping overhead by precomputing per-file object/meta cache paths once per build instead of rehashing them repeatedly during cache probes and object emission.

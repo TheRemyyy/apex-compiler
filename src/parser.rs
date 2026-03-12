@@ -1010,15 +1010,28 @@ impl<'src> Parser<'src> {
 
     /// Parse type from already parsed identifier
     fn parse_type_from_ident(&mut self, name: &str) -> ParseResult<Type> {
+        let mut qualified_name = name.to_string();
+        while self.check(&Token::Dot) || self.check(&Token::DotDot) {
+            if self.check(&Token::DotDot) {
+                return Err(ParseError::new(
+                    "Type path cannot contain '..'",
+                    self.current_span(),
+                ));
+            }
+            self.advance();
+            qualified_name.push('.');
+            qualified_name.push_str(&self.parse_ident()?);
+        }
+
         // Check for generic params
         if self.check(&Token::Lt) {
             let span = self.current_span();
             self.advance();
             let type_args = self.parse_type_arg_list()?;
             self.eat(&Token::Gt)?;
-            self.finish_named_type(name.to_string(), type_args, span)
+            self.finish_named_type(qualified_name, type_args, span)
         } else {
-            Ok(Type::Named(name.to_string()))
+            Ok(Type::Named(qualified_name))
         }
     }
 
@@ -1285,17 +1298,7 @@ impl<'src> Parser<'src> {
             Some(Token::Ident(name)) => {
                 let name = name.to_string();
                 self.advance();
-
-                // Check for generic params
-                if self.check(&Token::Lt) {
-                    let span = self.current_span();
-                    self.advance();
-                    let type_args = self.parse_type_arg_list()?;
-                    self.eat(&Token::Gt)?;
-                    self.finish_named_type(name, type_args, span)?
-                } else {
-                    Type::Named(name)
-                }
+                self.parse_type_from_ident(&name)?
             }
             _ => {
                 return Err(ParseError::new(
@@ -2612,6 +2615,19 @@ fn decode_escaped_string(raw: &str) -> String {
     }
 
     decoded
+}
+
+pub fn parse_type_source(source: &str) -> Result<Type, ParseError> {
+    let tokens = crate::lexer::tokenize(source).map_err(|e| ParseError::new(e, 0..0))?;
+    let mut parser = Parser::new(tokens);
+    let ty = parser.parse_type()?;
+    if !parser.is_at_end() {
+        return Err(ParseError::new(
+            format!("Unexpected trailing tokens in type: {:?}", parser.current()),
+            parser.current_span(),
+        ));
+    }
+    Ok(ty)
 }
 
 #[cfg(test)]
@@ -3931,6 +3947,34 @@ mod tests {
         assert!(err
             .message
             .contains("Trailing comma is not allowed in generic type arguments"));
+    }
+
+    #[test]
+    fn test_qualified_types_parse_in_type_positions() {
+        let source = r#"
+            function main(): None {
+                b: u.Box = make_box();
+                e: u.E = make_enum();
+                f: u.Box<Integer> = make_generic_box();
+                return None;
+            }
+        "#;
+        let program = parse_source(source).expect("qualified types should parse");
+        let Decl::Function(func) = &program.declarations[0].node else {
+            panic!("expected function declaration");
+        };
+        let Stmt::Let { ty, .. } = &func.body[0].node else {
+            panic!("expected first let statement");
+        };
+        assert_eq!(ty, &Type::Named("u.Box".to_string()));
+        let Stmt::Let { ty, .. } = &func.body[1].node else {
+            panic!("expected second let statement");
+        };
+        assert_eq!(ty, &Type::Named("u.E".to_string()));
+        let Stmt::Let { ty, .. } = &func.body[2].node else {
+            panic!("expected third let statement");
+        };
+        assert_eq!(ty, &Type::Generic("u.Box".to_string(), vec![Type::Integer]));
     }
 
     #[test]

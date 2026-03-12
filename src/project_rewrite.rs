@@ -1,9 +1,91 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{self, Decl, Expr, ImportDecl, Program, Stmt};
+use crate::parser::parse_type_source;
 use crate::stdlib::stdlib_registry;
 
 type ImportedMap = HashMap<String, (String, String)>;
+
+fn alias_qualified_symbol_name(alias: &str, symbol_name: &str) -> String {
+    format!("{}.{}", alias, symbol_name.replace("__", "."))
+}
+
+fn format_type_string(ty: &ast::Type) -> String {
+    match ty {
+        ast::Type::Integer => "Integer".to_string(),
+        ast::Type::Float => "Float".to_string(),
+        ast::Type::Boolean => "Boolean".to_string(),
+        ast::Type::String => "String".to_string(),
+        ast::Type::Char => "Char".to_string(),
+        ast::Type::None => "None".to_string(),
+        ast::Type::Named(name) => name.clone(),
+        ast::Type::Option(inner) => format!("Option<{}>", format_type_string(inner)),
+        ast::Type::Result(ok, err) => {
+            format!(
+                "Result<{}, {}>",
+                format_type_string(ok),
+                format_type_string(err)
+            )
+        }
+        ast::Type::List(inner) => format!("List<{}>", format_type_string(inner)),
+        ast::Type::Map(k, v) => {
+            format!("Map<{}, {}>", format_type_string(k), format_type_string(v))
+        }
+        ast::Type::Set(inner) => format!("Set<{}>", format_type_string(inner)),
+        ast::Type::Ref(inner) => format!("&{}", format_type_string(inner)),
+        ast::Type::MutRef(inner) => format!("&mut {}", format_type_string(inner)),
+        ast::Type::Box(inner) => format!("Box<{}>", format_type_string(inner)),
+        ast::Type::Rc(inner) => format!("Rc<{}>", format_type_string(inner)),
+        ast::Type::Arc(inner) => format!("Arc<{}>", format_type_string(inner)),
+        ast::Type::Ptr(inner) => format!("Ptr<{}>", format_type_string(inner)),
+        ast::Type::Task(inner) => format!("Task<{}>", format_type_string(inner)),
+        ast::Type::Range(inner) => format!("Range<{}>", format_type_string(inner)),
+        ast::Type::Function(params, ret) => {
+            let params_str = params
+                .iter()
+                .map(format_type_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("({}) -> {}", params_str, format_type_string(ret))
+        }
+        ast::Type::Generic(name, args) => {
+            let args_str = args
+                .iter()
+                .map(format_type_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{}<{}>", name, args_str)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rewrite_construct_type_name_for_project(
+    ty: &str,
+    current_namespace: &str,
+    local_classes: &HashSet<String>,
+    imported_classes: &ImportedMap,
+    global_class_map: &HashMap<String, String>,
+    local_enums: &HashSet<String>,
+    imported_enums: &ImportedMap,
+    global_enum_map: &HashMap<String, String>,
+    entry_namespace: &str,
+) -> String {
+    match parse_type_source(ty) {
+        Ok(parsed) => format_type_string(&rewrite_type_for_project(
+            &parsed,
+            current_namespace,
+            local_classes,
+            imported_classes,
+            global_class_map,
+            local_enums,
+            imported_enums,
+            global_enum_map,
+            entry_namespace,
+        )),
+        Err(_) => ty.to_string(),
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn rewrite_program_for_project(
@@ -97,7 +179,23 @@ pub fn rewrite_program_for_project(
         {
             // Namespace import without explicit symbol (e.g. `import math_utils as mu`)
             // should allow `mu.someFunction()` rewrite resolution.
-            imported_modules.insert(import_key, (import.path.clone(), String::new()));
+            imported_modules.insert(import_key.clone(), (import.path.clone(), String::new()));
+            for (symbol_name, owner_ns) in global_class_map {
+                if owner_ns == &import.path {
+                    imported_classes.insert(
+                        alias_qualified_symbol_name(&import_key, symbol_name),
+                        (import.path.clone(), symbol_name.clone()),
+                    );
+                }
+            }
+            for (symbol_name, owner_ns) in global_enum_map {
+                if owner_ns == &import.path {
+                    imported_enums.insert(
+                        alias_qualified_symbol_name(&import_key, symbol_name),
+                        (import.path.clone(), symbol_name.clone()),
+                    );
+                }
+            }
         }
     }
 
@@ -1900,7 +1998,22 @@ fn rewrite_expr_calls_for_project(
                         )
                     })
                     .collect(),
-                type_args: type_args.clone(),
+                type_args: type_args
+                    .iter()
+                    .map(|ty| {
+                        rewrite_type_for_project(
+                            ty,
+                            current_namespace,
+                            local_classes,
+                            imported_classes,
+                            global_class_map,
+                            &collect_local_enum_names(global_enum_map, current_namespace),
+                            imported_enums,
+                            global_enum_map,
+                            entry_namespace,
+                        )
+                    })
+                    .collect(),
             }
         }
         Expr::Binary { op, left, right } => Expr::Binary {
@@ -2176,15 +2289,17 @@ fn rewrite_expr_calls_for_project(
             )),
         },
         Expr::Construct { ty, args } => Expr::Construct {
-            ty: if local_classes.contains(ty) {
-                mangle_project_symbol(current_namespace, entry_namespace, ty)
-            } else if let Some((ns, symbol_name)) = imported_classes.get(ty) {
-                mangle_project_symbol(ns, entry_namespace, symbol_name)
-            } else if let Some(ns) = global_class_map.get(ty) {
-                mangle_project_symbol(ns, entry_namespace, ty)
-            } else {
-                ty.clone()
-            },
+            ty: rewrite_construct_type_name_for_project(
+                ty,
+                current_namespace,
+                local_classes,
+                imported_classes,
+                global_class_map,
+                &collect_local_enum_names(global_enum_map, current_namespace),
+                imported_enums,
+                global_enum_map,
+                entry_namespace,
+            ),
             args: args
                 .iter()
                 .map(|a| {
@@ -2964,6 +3079,251 @@ mod tests {
             panic!("expected lambda expression");
         };
         assert_eq!(params[0].ty, ast::Type::Named("app__E".to_string()));
+    }
+
+    #[test]
+    fn rewrites_namespace_alias_qualified_types() {
+        let program = Program {
+            package: Some("app".to_string()),
+            declarations: vec![
+                sp(Decl::Import(ast::ImportDecl {
+                    path: "util".to_string(),
+                    alias: Some("u".to_string()),
+                })),
+                sp(Decl::Function(ast::FunctionDecl {
+                    name: "main".to_string(),
+                    generic_params: vec![],
+                    params: vec![],
+                    is_variadic: false,
+                    extern_abi: None,
+                    extern_link_name: None,
+                    return_type: ast::Type::None,
+                    body: vec![
+                        sp(Stmt::Let {
+                            name: "b".to_string(),
+                            ty: ast::Type::Named("u.Box".to_string()),
+                            value: sp(Expr::Call {
+                                callee: Box::new(sp(Expr::Field {
+                                    object: Box::new(sp(Expr::Ident("u".to_string()))),
+                                    field: "Box".to_string(),
+                                })),
+                                args: vec![sp(Expr::Literal(ast::Literal::Integer(1)))],
+                                type_args: vec![],
+                            }),
+                            mutable: false,
+                        }),
+                        sp(Stmt::Let {
+                            name: "e".to_string(),
+                            ty: ast::Type::Named("u.E".to_string()),
+                            value: sp(Expr::Call {
+                                callee: Box::new(sp(Expr::Field {
+                                    object: Box::new(sp(Expr::Field {
+                                        object: Box::new(sp(Expr::Ident("u".to_string()))),
+                                        field: "E".to_string(),
+                                    })),
+                                    field: "A".to_string(),
+                                })),
+                                args: vec![sp(Expr::Literal(ast::Literal::Integer(1)))],
+                                type_args: vec![],
+                            }),
+                            mutable: false,
+                        }),
+                    ],
+                    is_async: false,
+                    is_extern: false,
+                    visibility: ast::Visibility::Private,
+                    attributes: vec![],
+                })),
+            ],
+        };
+
+        let rewritten = rewrite_program_for_project(
+            &program,
+            "app",
+            "app",
+            &HashMap::from([("app".to_string(), HashSet::from(["main".to_string()]))]),
+            &HashMap::new(),
+            &HashMap::from([("util".to_string(), HashSet::from(["Box".to_string()]))]),
+            &HashMap::from([("Box".to_string(), "util".to_string())]),
+            &HashMap::from([("util".to_string(), HashSet::from(["E".to_string()]))]),
+            &HashMap::from([("E".to_string(), "util".to_string())]),
+            &HashMap::new(),
+            &HashMap::new(),
+            &[ImportDecl {
+                path: "util".to_string(),
+                alias: Some("u".to_string()),
+            }],
+        );
+
+        let func = rewritten
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Decl::Function(func) if func.name == "main" => Some(func),
+                _ => None,
+            })
+            .expect("expected main function declaration");
+
+        let Stmt::Let { ty, .. } = &func.body[0].node else {
+            panic!("expected first let statement");
+        };
+        assert_eq!(ty, &ast::Type::Named("util__Box".to_string()));
+
+        let Stmt::Let { ty, .. } = &func.body[1].node else {
+            panic!("expected second let statement");
+        };
+        assert_eq!(ty, &ast::Type::Named("util__E".to_string()));
+    }
+
+    #[test]
+    fn rewrites_namespace_alias_qualified_call_type_args() {
+        let program = Program {
+            package: Some("app".to_string()),
+            declarations: vec![
+                sp(Decl::Import(ast::ImportDecl {
+                    path: "util".to_string(),
+                    alias: Some("u".to_string()),
+                })),
+                sp(Decl::Function(ast::FunctionDecl {
+                    name: "main".to_string(),
+                    generic_params: vec![],
+                    params: vec![],
+                    is_variadic: false,
+                    extern_abi: None,
+                    extern_link_name: None,
+                    return_type: ast::Type::None,
+                    body: vec![sp(Stmt::Let {
+                        name: "g".to_string(),
+                        ty: ast::Type::Generic(
+                            "List".to_string(),
+                            vec![ast::Type::Named("u.Box".to_string())],
+                        ),
+                        value: sp(Expr::Call {
+                            callee: Box::new(sp(Expr::Ident("List".to_string()))),
+                            args: vec![],
+                            type_args: vec![ast::Type::Named("u.Box".to_string())],
+                        }),
+                        mutable: false,
+                    })],
+                    is_async: false,
+                    is_extern: false,
+                    visibility: ast::Visibility::Private,
+                    attributes: vec![],
+                })),
+            ],
+        };
+
+        let rewritten = rewrite_program_for_project(
+            &program,
+            "app",
+            "app",
+            &HashMap::from([("app".to_string(), HashSet::from(["main".to_string()]))]),
+            &HashMap::new(),
+            &HashMap::from([("util".to_string(), HashSet::from(["Box".to_string()]))]),
+            &HashMap::from([("Box".to_string(), "util".to_string())]),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &[ImportDecl {
+                path: "util".to_string(),
+                alias: Some("u".to_string()),
+            }],
+        );
+
+        let func = rewritten
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Decl::Function(func) if func.name == "main" => Some(func),
+                _ => None,
+            })
+            .expect("expected main function declaration");
+
+        let Stmt::Let { ty, value, .. } = &func.body[0].node else {
+            panic!("expected let statement");
+        };
+        assert_eq!(
+            ty,
+            &ast::Type::Generic(
+                "List".to_string(),
+                vec![ast::Type::Named("util__Box".to_string())],
+            )
+        );
+        let Expr::Call { type_args, .. } = &value.node else {
+            panic!("expected call expression");
+        };
+        assert_eq!(type_args, &vec![ast::Type::Named("util__Box".to_string())]);
+    }
+
+    #[test]
+    fn rewrites_namespace_alias_qualified_construct_type_strings() {
+        let program = Program {
+            package: Some("app".to_string()),
+            declarations: vec![
+                sp(Decl::Import(ast::ImportDecl {
+                    path: "util".to_string(),
+                    alias: Some("u".to_string()),
+                })),
+                sp(Decl::Function(ast::FunctionDecl {
+                    name: "main".to_string(),
+                    generic_params: vec![],
+                    params: vec![],
+                    is_variadic: false,
+                    extern_abi: None,
+                    extern_link_name: None,
+                    return_type: ast::Type::None,
+                    body: vec![sp(Stmt::Let {
+                        name: "g".to_string(),
+                        ty: ast::Type::List(Box::new(ast::Type::Named("u.Box".to_string()))),
+                        value: sp(Expr::Construct {
+                            ty: "List<u.Box>".to_string(),
+                            args: vec![],
+                        }),
+                        mutable: false,
+                    })],
+                    is_async: false,
+                    is_extern: false,
+                    visibility: ast::Visibility::Private,
+                    attributes: vec![],
+                })),
+            ],
+        };
+
+        let rewritten = rewrite_program_for_project(
+            &program,
+            "app",
+            "app",
+            &HashMap::from([("app".to_string(), HashSet::from(["main".to_string()]))]),
+            &HashMap::new(),
+            &HashMap::from([("util".to_string(), HashSet::from(["Box".to_string()]))]),
+            &HashMap::from([("Box".to_string(), "util".to_string())]),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &[ImportDecl {
+                path: "util".to_string(),
+                alias: Some("u".to_string()),
+            }],
+        );
+
+        let func = rewritten
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Decl::Function(func) if func.name == "main" => Some(func),
+                _ => None,
+            })
+            .expect("expected main function declaration");
+
+        let Stmt::Let { value, .. } = &func.body[0].node else {
+            panic!("expected let statement");
+        };
+        let Expr::Construct { ty, .. } = &value.node else {
+            panic!("expected construct expression");
+        };
+        assert_eq!(ty, "List<util__Box>");
     }
 
     #[test]

@@ -2362,6 +2362,25 @@ impl TypeChecker {
         }
     }
 
+    fn function_value_type_or_error(&mut self, function_name: &str, span: Span) -> ResolvedType {
+        let sig = &self.functions[function_name];
+        if sig.is_extern {
+            self.error(
+                format!(
+                    "extern function '{}' cannot be used as a first-class value",
+                    function_name
+                ),
+                span,
+            );
+            ResolvedType::Unknown
+        } else {
+            ResolvedType::Function(
+                sig.params.iter().map(|(_, t)| t.clone()).collect(),
+                Box::new(sig.return_type.clone()),
+            )
+        }
+    }
+
     /// Check an expression and return its type
     fn check_expr(&mut self, expr: &Expr, span: Span) -> ResolvedType {
         match expr {
@@ -2371,12 +2390,7 @@ impl TypeChecker {
                 if let Some(var) = self.lookup_variable(name) {
                     var.ty.clone()
                 } else if let Some(function_name) = self.resolve_function_value_name(name) {
-                    // Function reference
-                    let sig = &self.functions[function_name];
-                    ResolvedType::Function(
-                        sig.params.iter().map(|(_, t)| t.clone()).collect(),
-                        Box::new(sig.return_type.clone()),
-                    )
+                    self.function_value_type_or_error(&function_name.to_string(), span)
                 } else {
                     self.error(format!("Undefined variable: {}", name), span);
                     ResolvedType::Unknown
@@ -2430,10 +2444,10 @@ impl TypeChecker {
                             let resolved = self
                                 .resolve_function_value_name(&candidate)
                                 .unwrap_or(&candidate);
-                            if let Some(sig) = self.functions.get(resolved).cloned() {
-                                return ResolvedType::Function(
-                                    sig.params.iter().map(|(_, ty)| ty.clone()).collect(),
-                                    Box::new(sig.return_type.clone()),
+                            if self.functions.contains_key(resolved) {
+                                return self.function_value_type_or_error(
+                                    &resolved.to_string(),
+                                    span.clone(),
                                 );
                             }
                         }
@@ -2442,11 +2456,9 @@ impl TypeChecker {
                         let resolved = self
                             .resolve_function_value_name(&mangled)
                             .unwrap_or(&mangled);
-                        if let Some(sig) = self.functions.get(resolved).cloned() {
-                            return ResolvedType::Function(
-                                sig.params.iter().map(|(_, ty)| ty.clone()).collect(),
-                                Box::new(sig.return_type.clone()),
-                            );
+                        if self.functions.contains_key(resolved) {
+                            return self
+                                .function_value_type_or_error(&resolved.to_string(), span.clone());
                         }
                     }
                 }
@@ -5781,6 +5793,29 @@ mod tests {
             }
         "#;
         check_source(src).expect("single-variant enum match should be exhaustive");
+    }
+
+    #[test]
+    fn rejects_extern_function_values_during_typecheck() {
+        let src = r#"
+            extern(c, "puts") function puts(s: String): Integer;
+
+            function main(): None {
+                f: (String) -> Integer = puts;
+                return None;
+            }
+        "#;
+        let errors =
+            check_source(src).expect_err("extern function value should fail during typecheck");
+        let joined = errors
+            .iter()
+            .map(|e| e.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("extern function 'puts' cannot be used as a first-class value"),
+            "{joined}"
+        );
     }
 
     #[test]
