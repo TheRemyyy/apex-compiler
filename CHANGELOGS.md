@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### 🐛 Fixed
 
+- Fixed remaining built-in expression-receiver backend gaps:
+  - `Map<K, V>` methods like `length`, `contains`, `get`, and `set` now lower correctly on non-local receivers such as `build().contains(1)` instead of failing to infer the object type
+  - `Option.is_some()` and `Result.is_ok()` now return real LLVM booleans in conditional positions instead of raw `i8` tags that could break branching IR
+- Fixed accidental semantic acceptance of undocumented `Task.result_type()`:
+  - the typechecker no longer accepts `Task.result_type()` as if it were a real runtime method
+  - code that used the stray method now fails early during semantic analysis instead of surviving until backend lowering
+- Fixed string method dispatch in backend lowering:
+  - `String.length()` now works on real expression receivers such as string literals instead of failing late with `Cannot determine object type for method call`
 - Fixed `apex test` handling for `@Ignore` without a reason:
   - tests marked with bare `@Ignore` are now skipped correctly instead of being executed
   - ignored tests are now counted in the final `Total` summary as well as `Ignored`
@@ -84,6 +92,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed object-type inference for expression-valued object producers (`if`, `match`, and block/async block tails), so direct chains like `(if (...) { ... }).get()` and `(match (...) { ... }).value` now lower correctly.
 - Fixed object-type inference for indexed object values, so chains like `xs[0].get()` and `xs[0].value` now lower correctly when `xs` is a `List<T>` of objects.
 - Fixed method-return inference for non-identifier special-method/object chains, so expressions like `choose().unwrap().get()` can flow through `Option`/`Result`/class method dispatch without failing late in codegen.
+- Fixed container special-method dispatch on expression receivers, so calls like `make().length()` for `List` and `mk().has_next()` for `Range` now lower correctly instead of requiring a named local receiver.
+- Fixed `Set<T>` method support across frontend and backend expression receivers, so `add`, `contains`, `remove`, and `length` now typecheck consistently and calls like `build().contains(7)` no longer fail after returning a set from a function.
 - Tightened dependency graph resolution for wildcard imports and namespace aliases so used imported symbols point at concrete owner files instead of invalidating every file in a busy namespace whenever possible.
 - Tightened filtered object codegen so per-file rebuilds assemble programs from the declaration-closure file set instead of the full transitive dependency file closure.
 - Added `apex build --timings` / project-mode `apex run --timings` / `apex check --timings` phase timing output for parse, dependency graph, import check, rewrite, semantic, object cache probe, object codegen, and final link stages.

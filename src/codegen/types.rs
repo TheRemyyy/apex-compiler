@@ -9,7 +9,7 @@ use inkwell::{AddressSpace, IntPredicate};
 use crate::codegen::core::{Codegen, CodegenError, Result};
 
 impl<'ctx> Codegen<'ctx> {
-    fn materialize_value_pointer_for_type(
+    pub(crate) fn materialize_value_pointer_for_type(
         &mut self,
         value: BasicValueEnum<'ctx>,
         ty: &Type,
@@ -55,8 +55,20 @@ impl<'ctx> Codegen<'ctx> {
         method: &str,
         _args: &[Spanned<Expr>],
     ) -> Result<BasicValueEnum<'ctx>> {
-        let var = self.variables.get(set_name).unwrap();
-        let set_ptr = var.ptr;
+        let (set_ptr, set_ty) = {
+            let var = self.variables.get(set_name).unwrap();
+            (var.ptr, var.ty.clone())
+        };
+        self.compile_set_method_on_value(set_ptr.into(), &set_ty, method)
+    }
+
+    pub fn compile_set_method_on_value(
+        &mut self,
+        set_value: BasicValueEnum<'ctx>,
+        set_ty: &Type,
+        method: &str,
+    ) -> Result<BasicValueEnum<'ctx>> {
+        let set_ptr = self.materialize_value_pointer_for_type(set_value, set_ty, "set_tmp")?;
         let set_type = self.context.struct_type(
             &[
                 self.context.i64_type().into(),
@@ -147,8 +159,18 @@ impl<'ctx> Codegen<'ctx> {
                 let is_some = self
                     .builder
                     .build_load(self.context.i8_type(), is_some_ptr, "is_some")
+                    .unwrap()
+                    .into_int_value();
+                let is_some_bool = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        is_some,
+                        self.context.i8_type().const_int(0, false),
+                        "is_some_bool",
+                    )
                     .unwrap();
-                Ok(is_some)
+                Ok(is_some_bool.into())
             }
             "is_none" => {
                 let is_some_ptr = unsafe {
@@ -315,8 +337,18 @@ impl<'ctx> Codegen<'ctx> {
                 let tag = self
                     .builder
                     .build_load(self.context.i8_type(), tag_ptr, "tag")
+                    .unwrap()
+                    .into_int_value();
+                let is_ok = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        tag,
+                        self.context.i8_type().const_int(0, false),
+                        "is_ok",
+                    )
                     .unwrap();
-                Ok(tag)
+                Ok(is_ok.into())
             }
             "is_error" => {
                 let tag_ptr = unsafe {
@@ -1260,9 +1292,22 @@ impl<'ctx> Codegen<'ctx> {
         method: &str,
         args: &[Spanned<Expr>],
     ) -> Result<BasicValueEnum<'ctx>> {
-        let var = self.variables.get(list_name).unwrap();
-        let list_ptr = var.ptr;
-        let (elem_llvm_ty, elem_size) = self.list_element_layout_from_list_type(&var.ty);
+        let (list_ptr, list_ty) = {
+            let var = self.variables.get(list_name).unwrap();
+            (var.ptr, var.ty.clone())
+        };
+        self.compile_list_method_ptr(list_ptr, &list_ty, method, args)
+    }
+
+    pub fn compile_list_method_on_value(
+        &mut self,
+        list_value: BasicValueEnum<'ctx>,
+        list_ty: &Type,
+        method: &str,
+        args: &[Spanned<Expr>],
+    ) -> Result<BasicValueEnum<'ctx>> {
+        let list_ptr = self.materialize_value_pointer_for_type(list_value, list_ty, "list_tmp")?;
+        let (elem_llvm_ty, elem_size) = self.list_element_layout_from_list_type(list_ty);
         let list_type = self.context.struct_type(
             &[
                 self.context.i64_type().into(),
@@ -1950,8 +1995,21 @@ impl<'ctx> Codegen<'ctx> {
         method: &str,
         args: &[Spanned<Expr>],
     ) -> Result<BasicValueEnum<'ctx>> {
-        let var = self.variables.get(map_name).unwrap();
-        let map_ptr = var.ptr;
+        let (map_ptr, map_ty) = {
+            let var = self.variables.get(map_name).unwrap();
+            (var.ptr.into(), var.ty.clone())
+        };
+        self.compile_map_method_on_value(map_ptr, &map_ty, method, args)
+    }
+
+    pub fn compile_map_method_on_value(
+        &mut self,
+        map_value: BasicValueEnum<'ctx>,
+        map_expr_ty: &Type,
+        method: &str,
+        args: &[Spanned<Expr>],
+    ) -> Result<BasicValueEnum<'ctx>> {
+        let map_ptr = self.materialize_value_pointer_for_type(map_value, map_expr_ty, "map_tmp")?;
         let map_type = self.context.struct_type(
             &[
                 self.context.i64_type().into(),
@@ -1965,9 +2023,9 @@ impl<'ctx> Codegen<'ctx> {
         let i32_type = self.context.i32_type();
         let i64_type = self.context.i64_type();
         let zero = i32_type.const_int(0, false);
-        let (key_ty, val_ty) = match &var.ty {
+        let (key_ty, val_ty) = match map_expr_ty {
             Type::Map(k, v) => ((**k).clone(), (**v).clone()),
-            _ => (Type::Integer, Type::Integer),
+            _ => return Err(CodegenError::new("Expected Map type")),
         };
         let key_llvm = self.llvm_type(&key_ty);
         let val_llvm = self.llvm_type(&val_ty);
@@ -2008,7 +2066,7 @@ impl<'ctx> Codegen<'ctx> {
                 .builder
                 .build_load(i64_type, length_ptr, "len")
                 .unwrap()),
-            "insert" => self.compile_map_method(map_name, "set", args),
+            "insert" => self.compile_map_method_on_value(map_value, map_expr_ty, "set", args),
             "set" => {
                 let key = self.compile_expr(&args[0].node)?;
                 let value = self.compile_expr(&args[1].node)?;
@@ -2437,22 +2495,37 @@ impl<'ctx> Codegen<'ctx> {
         method: &str,
         _args: &[Spanned<Expr>],
     ) -> Result<BasicValueEnum<'ctx>> {
-        let var = self.variables.get(range_name).unwrap();
-        let var_ptr = var.ptr;
-        let ptr_type = self.context.ptr_type(AddressSpace::default());
-        let range_element_ty = match &var.ty {
+        let (range_ptr, range_ty) = {
+            let var = self.variables.get(range_name).unwrap();
+            let ptr_type = self.context.ptr_type(AddressSpace::default());
+            let range_ptr = self
+                .builder
+                .build_load(ptr_type, var.ptr, "range_ptr")
+                .unwrap()
+                .into_pointer_value();
+            (range_ptr, var.ty.clone())
+        };
+        self.compile_range_method_on_value(range_ptr.into(), &range_ty, method)
+    }
+
+    pub fn compile_range_method_on_value(
+        &mut self,
+        range_value: BasicValueEnum<'ctx>,
+        range_expr_ty: &Type,
+        method: &str,
+    ) -> Result<BasicValueEnum<'ctx>> {
+        let range_ptr = match range_value {
+            BasicValueEnum::PointerValue(ptr) => ptr,
+            _ => self
+                .materialize_value_pointer_for_type(range_value, range_expr_ty, "range_tmp")?
+                .into(),
+        };
+        let range_element_ty = match range_expr_ty {
             Type::Range(inner) => &**inner,
             _ => return Err(CodegenError::new("Expected Range type")),
         };
         let element_llvm_ty = self.llvm_type(range_element_ty);
         let range_type = self.get_range_type(element_llvm_ty)?;
-
-        // Load the range pointer from the variable alloca
-        let range_ptr = self
-            .builder
-            .build_load(ptr_type, var_ptr, "range_ptr")
-            .unwrap()
-            .into_pointer_value();
         let i32_type = self.context.i32_type();
         let zero = i32_type.const_int(0, false);
         let one = i32_type.const_int(1, false);

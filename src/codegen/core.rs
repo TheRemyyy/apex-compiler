@@ -7104,7 +7104,6 @@ impl<'ctx> Codegen<'ctx> {
         if let Some(ref ty) = obj_ty {
             match ty {
                 Type::List(_) => {
-                    // Get pointer to the list
                     let list_ptr = match object {
                         Expr::Ident(name) => self.variables.get(name).map(|v| v.ptr),
                         Expr::Field { object: obj, field } => {
@@ -7116,16 +7115,22 @@ impl<'ctx> Codegen<'ctx> {
                     if let Some(ptr) = list_ptr {
                         return self.compile_list_method_ptr(ptr, ty, method, args);
                     }
+                    let list_val = self.compile_expr(object)?;
+                    return self.compile_list_method_on_value(list_val, ty, method, args);
                 }
                 Type::Map(_, _) => {
                     if let Expr::Ident(name) = object {
                         return self.compile_map_method(name, method, args);
                     }
+                    let map_val = self.compile_expr(object)?;
+                    return self.compile_map_method_on_value(map_val, ty, method, args);
                 }
                 Type::Set(_) => {
                     if let Expr::Ident(name) = object {
                         return self.compile_set_method(name, method, args);
                     }
+                    let set_val = self.compile_expr(object)?;
+                    return self.compile_set_method_on_value(set_val, ty, method);
                 }
                 Type::Option(_) => {
                     let option_val = self.compile_expr(object)?;
@@ -7139,9 +7144,28 @@ impl<'ctx> Codegen<'ctx> {
                     if let Expr::Ident(name) = object {
                         return self.compile_range_method(name, method, args);
                     }
+                    let range_val = self.compile_expr(object)?;
+                    return self.compile_range_method_on_value(range_val, ty, method);
                 }
                 Type::Task(inner) => {
                     return self.compile_task_method(object, inner, method, args);
+                }
+                Type::String => {
+                    if method == "length" {
+                        if !args.is_empty() {
+                            return Err(CodegenError::new(format!(
+                                "String.length() expects 0 argument(s), got {}",
+                                args.len()
+                            )));
+                        }
+                        let s = self.compile_expr(object)?;
+                        let strlen_fn = self.get_or_declare_strlen();
+                        let call = self
+                            .builder
+                            .build_call(strlen_fn, &[s.into()], "strlen")
+                            .unwrap();
+                        return Ok(self.extract_call_value(call));
+                    }
                 }
                 _ => {}
             }

@@ -4446,7 +4446,7 @@ impl TypeChecker {
                 }
             },
             ResolvedType::Map(key_type, val_type) => match method {
-                "insert" => {
+                "insert" | "set" => {
                     self.check_arg_count(method, args, 2, span.clone());
                     if args.len() >= 2 {
                         let k = self.check_expr(&args[0].node, args[0].span.clone());
@@ -4486,6 +4486,32 @@ impl TypeChecker {
                 }
                 _ => {
                     self.error(format!("Unknown Map method: {}", method), span);
+                    ResolvedType::Unknown
+                }
+            },
+            ResolvedType::Set(inner) => match method {
+                "add" | "contains" | "remove" => {
+                    self.check_arg_count(method, args, 1, span.clone());
+                    if !args.is_empty() {
+                        let arg_type = self.check_expr(&args[0].node, args[0].span.clone());
+                        if !self.types_compatible(inner, &arg_type) {
+                            self.error(
+                                format!(
+                                    "Set.{}() type mismatch: expected {}, got {}",
+                                    method, inner, arg_type
+                                ),
+                                args[0].span.clone(),
+                            );
+                        }
+                    }
+                    ResolvedType::Boolean
+                }
+                "length" => {
+                    self.check_arg_count(method, args, 0, span);
+                    ResolvedType::Integer
+                }
+                _ => {
+                    self.error(format!("Unknown Set method: {}", method), span);
                     ResolvedType::Unknown
                 }
             },
@@ -4673,10 +4699,6 @@ impl TypeChecker {
                         }
                     }
                     ResolvedType::Option(Box::new((**inner).clone()))
-                }
-                "result_type" => {
-                    self.check_arg_count(method, args, 0, span);
-                    (**inner).clone()
                 }
                 _ => {
                     self.error(format!("Unknown Task method: {}", method), span);
@@ -6251,6 +6273,27 @@ mod tests {
         assert!(joined.contains(
             "Async block cannot capture 'r' because its type contains borrowed references"
         ));
+    }
+
+    #[test]
+    fn rejects_undocumented_task_result_type_method() {
+        let src = r#"
+            async function make(): Task<Integer> {
+                return 1;
+            }
+
+            function main(): Integer {
+                t: Task<Integer> = make();
+                return t.result_type();
+            }
+        "#;
+        let errors = check_source(src).expect_err("Task.result_type should fail during typecheck");
+        let joined = errors
+            .iter()
+            .map(|e| e.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("Unknown Task method: result_type"));
     }
 
     #[test]

@@ -1287,6 +1287,7 @@ impl<'ctx> Codegen<'ctx> {
         match expr {
             Expr::Ident(name) => self.variables.get(name).map(|v| v.ty.clone()),
             Expr::This => self.variables.get("this").map(|v| v.ty.clone()),
+            Expr::Literal(Literal::String(_)) => Some(Type::String),
             Expr::Construct { ty, .. } => parse_type_source(ty).ok(),
             Expr::Call { callee, .. } => match &callee.node {
                 Expr::Field { object, field } => {
