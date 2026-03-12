@@ -28,7 +28,7 @@ pub fn rewrite_program_for_project(
         .get(current_namespace)
         .cloned()
         .unwrap_or_default();
-    let _local_enums = namespace_enums
+    let local_enums = namespace_enums
         .get(current_namespace)
         .cloned()
         .unwrap_or_default();
@@ -123,6 +123,9 @@ pub fn rewrite_program_for_project(
                                     &local_classes,
                                     &imported_classes,
                                     global_class_map,
+                                    &local_enums,
+                                    &imported_enums,
+                                    global_enum_map,
                                     entry_namespace,
                                 ),
                                 mutable: p.mutable,
@@ -135,6 +138,9 @@ pub fn rewrite_program_for_project(
                             &local_classes,
                             &imported_classes,
                             global_class_map,
+                            &local_enums,
+                            &imported_enums,
+                            global_enum_map,
                             entry_namespace,
                         );
                         f.body = rewrite_block_calls_for_project(
@@ -171,6 +177,9 @@ pub fn rewrite_program_for_project(
                                     &local_classes,
                                     &imported_classes,
                                     global_class_map,
+                                    &local_enums,
+                                    &imported_enums,
+                                    global_enum_map,
                                     entry_namespace,
                                 ),
                                 mutable: field.mutable,
@@ -195,6 +204,9 @@ pub fn rewrite_program_for_project(
                                         &local_classes,
                                         &imported_classes,
                                         global_class_map,
+                                        &local_enums,
+                                        &imported_enums,
+                                        global_enum_map,
                                         entry_namespace,
                                     ),
                                     mutable: p.mutable,
@@ -241,6 +253,9 @@ pub fn rewrite_program_for_project(
                                             &local_classes,
                                             &imported_classes,
                                             global_class_map,
+                                            &local_enums,
+                                            &imported_enums,
+                                            global_enum_map,
                                             entry_namespace,
                                         ),
                                         mutable: p.mutable,
@@ -253,6 +268,9 @@ pub fn rewrite_program_for_project(
                                     &local_classes,
                                     &imported_classes,
                                     global_class_map,
+                                    &local_enums,
+                                    &imported_enums,
+                                    global_enum_map,
                                     entry_namespace,
                                 );
                                 nm.body = rewrite_block_calls_for_project(
@@ -301,6 +319,9 @@ pub fn rewrite_program_for_project(
                                             &local_classes,
                                             &imported_classes,
                                             global_class_map,
+                                            &local_enums,
+                                            &imported_enums,
+                                            global_enum_map,
                                             entry_namespace,
                                         ),
                                     })
@@ -331,6 +352,9 @@ fn rewrite_type_for_project(
     local_classes: &HashSet<String>,
     imported_classes: &ImportedMap,
     global_class_map: &HashMap<String, String>,
+    local_enums: &HashSet<String>,
+    imported_enums: &ImportedMap,
+    global_enum_map: &HashMap<String, String>,
     entry_namespace: &str,
 ) -> ast::Type {
     match ty {
@@ -345,6 +369,16 @@ fn rewrite_type_for_project(
                 ast::Type::Named(mangle_project_symbol(ns, entry_namespace, symbol_name))
             } else if let Some(ns) = global_class_map.get(name) {
                 ast::Type::Named(mangle_project_symbol(ns, entry_namespace, name))
+            } else if local_enums.contains(name) {
+                ast::Type::Named(mangle_project_symbol(
+                    current_namespace,
+                    entry_namespace,
+                    name,
+                ))
+            } else if let Some((ns, symbol_name)) = imported_enums.get(name) {
+                ast::Type::Named(mangle_project_symbol(ns, entry_namespace, symbol_name))
+            } else if let Some(ns) = global_enum_map.get(name) {
+                ast::Type::Named(mangle_project_symbol(ns, entry_namespace, name))
             } else {
                 ast::Type::Named(name.clone())
             }
@@ -355,6 +389,12 @@ fn rewrite_type_for_project(
             } else if let Some((ns, symbol_name)) = imported_classes.get(name) {
                 mangle_project_symbol(ns, entry_namespace, symbol_name)
             } else if let Some(ns) = global_class_map.get(name) {
+                mangle_project_symbol(ns, entry_namespace, name)
+            } else if local_enums.contains(name) {
+                mangle_project_symbol(current_namespace, entry_namespace, name)
+            } else if let Some((ns, symbol_name)) = imported_enums.get(name) {
+                mangle_project_symbol(ns, entry_namespace, symbol_name)
+            } else if let Some(ns) = global_enum_map.get(name) {
                 mangle_project_symbol(ns, entry_namespace, name)
             } else {
                 name.clone()
@@ -367,6 +407,9 @@ fn rewrite_type_for_project(
                         local_classes,
                         imported_classes,
                         global_class_map,
+                        local_enums,
+                        imported_enums,
+                        global_enum_map,
                         entry_namespace,
                     )
                 })
@@ -382,6 +425,9 @@ fn rewrite_type_for_project(
                         local_classes,
                         imported_classes,
                         global_class_map,
+                        local_enums,
+                        imported_enums,
+                        global_enum_map,
                         entry_namespace,
                     )
                 })
@@ -392,6 +438,9 @@ fn rewrite_type_for_project(
                 local_classes,
                 imported_classes,
                 global_class_map,
+                local_enums,
+                imported_enums,
+                global_enum_map,
                 entry_namespace,
             )),
         ),
@@ -401,6 +450,9 @@ fn rewrite_type_for_project(
             local_classes,
             imported_classes,
             global_class_map,
+            local_enums,
+            imported_enums,
+            global_enum_map,
             entry_namespace,
         ))),
         ast::Type::Result(ok, err) => ast::Type::Result(
@@ -410,6 +462,9 @@ fn rewrite_type_for_project(
                 local_classes,
                 imported_classes,
                 global_class_map,
+                local_enums,
+                imported_enums,
+                global_enum_map,
                 entry_namespace,
             )),
             Box::new(rewrite_type_for_project(
@@ -418,6 +473,9 @@ fn rewrite_type_for_project(
                 local_classes,
                 imported_classes,
                 global_class_map,
+                local_enums,
+                imported_enums,
+                global_enum_map,
                 entry_namespace,
             )),
         ),
@@ -427,6 +485,9 @@ fn rewrite_type_for_project(
             local_classes,
             imported_classes,
             global_class_map,
+            local_enums,
+            imported_enums,
+            global_enum_map,
             entry_namespace,
         ))),
         ast::Type::Map(k, v) => ast::Type::Map(
@@ -436,6 +497,9 @@ fn rewrite_type_for_project(
                 local_classes,
                 imported_classes,
                 global_class_map,
+                local_enums,
+                imported_enums,
+                global_enum_map,
                 entry_namespace,
             )),
             Box::new(rewrite_type_for_project(
@@ -444,6 +508,9 @@ fn rewrite_type_for_project(
                 local_classes,
                 imported_classes,
                 global_class_map,
+                local_enums,
+                imported_enums,
+                global_enum_map,
                 entry_namespace,
             )),
         ),
@@ -453,6 +520,9 @@ fn rewrite_type_for_project(
             local_classes,
             imported_classes,
             global_class_map,
+            local_enums,
+            imported_enums,
+            global_enum_map,
             entry_namespace,
         ))),
         ast::Type::Ref(inner) => ast::Type::Ref(Box::new(rewrite_type_for_project(
@@ -461,6 +531,9 @@ fn rewrite_type_for_project(
             local_classes,
             imported_classes,
             global_class_map,
+            local_enums,
+            imported_enums,
+            global_enum_map,
             entry_namespace,
         ))),
         ast::Type::MutRef(inner) => ast::Type::MutRef(Box::new(rewrite_type_for_project(
@@ -469,6 +542,9 @@ fn rewrite_type_for_project(
             local_classes,
             imported_classes,
             global_class_map,
+            local_enums,
+            imported_enums,
+            global_enum_map,
             entry_namespace,
         ))),
         ast::Type::Box(inner) => ast::Type::Box(Box::new(rewrite_type_for_project(
@@ -477,6 +553,9 @@ fn rewrite_type_for_project(
             local_classes,
             imported_classes,
             global_class_map,
+            local_enums,
+            imported_enums,
+            global_enum_map,
             entry_namespace,
         ))),
         ast::Type::Rc(inner) => ast::Type::Rc(Box::new(rewrite_type_for_project(
@@ -485,6 +564,9 @@ fn rewrite_type_for_project(
             local_classes,
             imported_classes,
             global_class_map,
+            local_enums,
+            imported_enums,
+            global_enum_map,
             entry_namespace,
         ))),
         ast::Type::Arc(inner) => ast::Type::Arc(Box::new(rewrite_type_for_project(
@@ -493,6 +575,9 @@ fn rewrite_type_for_project(
             local_classes,
             imported_classes,
             global_class_map,
+            local_enums,
+            imported_enums,
+            global_enum_map,
             entry_namespace,
         ))),
         ast::Type::Ptr(inner) => ast::Type::Ptr(Box::new(rewrite_type_for_project(
@@ -501,6 +586,9 @@ fn rewrite_type_for_project(
             local_classes,
             imported_classes,
             global_class_map,
+            local_enums,
+            imported_enums,
+            global_enum_map,
             entry_namespace,
         ))),
         ast::Type::Task(inner) => ast::Type::Task(Box::new(rewrite_type_for_project(
@@ -509,6 +597,9 @@ fn rewrite_type_for_project(
             local_classes,
             imported_classes,
             global_class_map,
+            local_enums,
+            imported_enums,
+            global_enum_map,
             entry_namespace,
         ))),
         ast::Type::Range(inner) => ast::Type::Range(Box::new(rewrite_type_for_project(
@@ -517,6 +608,9 @@ fn rewrite_type_for_project(
             local_classes,
             imported_classes,
             global_class_map,
+            local_enums,
+            imported_enums,
+            global_enum_map,
             entry_namespace,
         ))),
         _ => ty.clone(),
@@ -660,6 +754,16 @@ fn bind_pattern_locals(pattern: &ast::Pattern, scope: &mut HashSet<String>) {
     }
 }
 
+fn collect_local_enum_names(
+    global_enum_map: &HashMap<String, String>,
+    current_namespace: &str,
+) -> HashSet<String> {
+    global_enum_map
+        .iter()
+        .filter_map(|(name, owner_ns)| (owner_ns == current_namespace).then_some(name.clone()))
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn rewrite_block_calls_for_project(
     block: &ast::Block,
@@ -738,6 +842,9 @@ fn rewrite_stmt_calls_for_project(
                     local_classes,
                     imported_classes,
                     global_class_map,
+                    &collect_local_enum_names(global_enum_map, current_namespace),
+                    imported_enums,
+                    global_enum_map,
                     entry_namespace,
                 ),
                 value: ast::Spanned::new(
@@ -1020,6 +1127,9 @@ fn rewrite_stmt_calls_for_project(
                         local_classes,
                         imported_classes,
                         global_class_map,
+                        &collect_local_enum_names(global_enum_map, current_namespace),
+                        imported_enums,
+                        global_enum_map,
                         entry_namespace,
                     )
                 }),
@@ -1969,7 +2079,20 @@ fn rewrite_expr_calls_for_project(
 
             let rewritten_object = match &object.node {
                 Expr::Ident(name) if !is_shadowed(name, scopes) => {
-                    if local_modules.contains(name) {
+                    if global_enum_map
+                        .get(name)
+                        .is_some_and(|owner_ns| owner_ns == current_namespace)
+                    {
+                        Expr::Ident(mangle_project_symbol(
+                            current_namespace,
+                            entry_namespace,
+                            name,
+                        ))
+                    } else if let Some((ns, symbol_name)) = imported_enums.get(name) {
+                        Expr::Ident(mangle_project_symbol(ns, entry_namespace, symbol_name))
+                    } else if let Some(ns) = global_enum_map.get(name) {
+                        Expr::Ident(mangle_project_symbol(ns, entry_namespace, name))
+                    } else if local_modules.contains(name) {
                         Expr::Ident(mangle_project_symbol(
                             current_namespace,
                             entry_namespace,
@@ -2124,6 +2247,9 @@ fn rewrite_expr_calls_for_project(
                             local_classes,
                             imported_classes,
                             global_class_map,
+                            &collect_local_enum_names(global_enum_map, current_namespace),
+                            imported_enums,
+                            global_enum_map,
                             entry_namespace,
                         ),
                         mutable: p.mutable,
@@ -2625,6 +2751,219 @@ mod tests {
         };
         assert_eq!(name, "util__E");
         assert_eq!(field, "A");
+    }
+
+    #[test]
+    fn rewrites_exact_imported_enum_alias_types() {
+        let program = Program {
+            package: Some("app".to_string()),
+            declarations: vec![
+                sp(Decl::Import(ast::ImportDecl {
+                    path: "util.E".to_string(),
+                    alias: Some("Enum".to_string()),
+                })),
+                sp(Decl::Function(ast::FunctionDecl {
+                    name: "main".to_string(),
+                    generic_params: vec![],
+                    params: vec![],
+                    is_variadic: false,
+                    extern_abi: None,
+                    extern_link_name: None,
+                    return_type: ast::Type::None,
+                    body: vec![sp(Stmt::Let {
+                        name: "e".to_string(),
+                        ty: ast::Type::Named("Enum".to_string()),
+                        value: sp(Expr::Call {
+                            callee: Box::new(sp(Expr::Field {
+                                object: Box::new(sp(Expr::Ident("Enum".to_string()))),
+                                field: "A".to_string(),
+                            })),
+                            args: vec![sp(Expr::Literal(ast::Literal::Integer(1)))],
+                            type_args: vec![],
+                        }),
+                        mutable: false,
+                    })],
+                    is_async: false,
+                    is_extern: false,
+                    visibility: ast::Visibility::Private,
+                    attributes: vec![],
+                })),
+            ],
+        };
+
+        let rewritten = rewrite_program_for_project(
+            &program,
+            "app",
+            "app",
+            &HashMap::from([("app".to_string(), HashSet::from(["main".to_string()]))]),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::from([("util".to_string(), HashSet::from(["E".to_string()]))]),
+            &HashMap::from([("E".to_string(), "util".to_string())]),
+            &HashMap::new(),
+            &HashMap::new(),
+            &[ImportDecl {
+                path: "util.E".to_string(),
+                alias: Some("Enum".to_string()),
+            }],
+        );
+
+        let func = rewritten
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Decl::Function(func) if func.name == "main" => Some(func),
+                _ => None,
+            })
+            .expect("expected main function declaration");
+        let Stmt::Let { ty, value, .. } = &func.body[0].node else {
+            panic!("expected let statement");
+        };
+        assert_eq!(ty, &ast::Type::Named("util__E".to_string()));
+        let Expr::Call { callee, .. } = &value.node else {
+            panic!("expected enum variant call expression");
+        };
+        let Expr::Field { object, field } = &callee.node else {
+            panic!("expected enum variant field callee");
+        };
+        let Expr::Ident(name) = &object.node else {
+            panic!("expected rewritten enum ident");
+        };
+        assert_eq!(name, "util__E");
+        assert_eq!(field, "A");
+    }
+
+    #[test]
+    fn rewrites_local_enum_types_and_variant_calls_inside_function_bodies() {
+        let program = Program {
+            package: Some("app".to_string()),
+            declarations: vec![
+                sp(Decl::Enum(ast::EnumDecl {
+                    name: "E".to_string(),
+                    generic_params: vec![],
+                    variants: vec![ast::EnumVariant {
+                        name: "A".to_string(),
+                        fields: vec![ast::EnumField {
+                            name: Some("value".to_string()),
+                            ty: ast::Type::Integer,
+                        }],
+                    }],
+                    visibility: ast::Visibility::Private,
+                })),
+                sp(Decl::Function(ast::FunctionDecl {
+                    name: "main".to_string(),
+                    generic_params: vec![],
+                    params: vec![],
+                    is_variadic: false,
+                    extern_abi: None,
+                    extern_link_name: None,
+                    return_type: ast::Type::None,
+                    body: vec![
+                        sp(Stmt::Let {
+                            name: "e".to_string(),
+                            ty: ast::Type::Named("E".to_string()),
+                            value: sp(Expr::Call {
+                                callee: Box::new(sp(Expr::Field {
+                                    object: Box::new(sp(Expr::Ident("E".to_string()))),
+                                    field: "A".to_string(),
+                                })),
+                                args: vec![sp(Expr::Literal(ast::Literal::Integer(1)))],
+                                type_args: vec![],
+                            }),
+                            mutable: false,
+                        }),
+                        sp(Stmt::Let {
+                            name: "f".to_string(),
+                            ty: ast::Type::Function(
+                                vec![ast::Type::Named("E".to_string())],
+                                Box::new(ast::Type::Integer),
+                            ),
+                            value: sp(Expr::Lambda {
+                                params: vec![ast::Parameter {
+                                    name: "x".to_string(),
+                                    ty: ast::Type::Named("E".to_string()),
+                                    mutable: false,
+                                    mode: ast::ParamMode::Owned,
+                                }],
+                                body: Box::new(sp(Expr::Match {
+                                    expr: Box::new(sp(Expr::Ident("x".to_string()))),
+                                    arms: vec![ast::MatchArm {
+                                        pattern: ast::Pattern::Variant(
+                                            "E.A".to_string(),
+                                            vec!["v".to_string()],
+                                        ),
+                                        body: vec![sp(Stmt::Expr(sp(Expr::Ident(
+                                            "v".to_string(),
+                                        ))))],
+                                    }],
+                                })),
+                            }),
+                            mutable: false,
+                        }),
+                    ],
+                    is_async: false,
+                    is_extern: false,
+                    visibility: ast::Visibility::Private,
+                    attributes: vec![],
+                })),
+            ],
+        };
+
+        let rewritten = rewrite_program_for_project(
+            &program,
+            "app",
+            "app",
+            &HashMap::from([("app".to_string(), HashSet::from(["main".to_string()]))]),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::from([("app".to_string(), HashSet::from(["E".to_string()]))]),
+            &HashMap::from([("E".to_string(), "app".to_string())]),
+            &HashMap::new(),
+            &HashMap::new(),
+            &[],
+        );
+
+        let func = rewritten
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Decl::Function(func) if func.name == "main" => Some(func),
+                _ => None,
+            })
+            .expect("expected main function declaration");
+
+        let Stmt::Let { ty, value, .. } = &func.body[0].node else {
+            panic!("expected enum let statement");
+        };
+        assert_eq!(ty, &ast::Type::Named("app__E".to_string()));
+        let Expr::Call { callee, .. } = &value.node else {
+            panic!("expected enum variant constructor call");
+        };
+        let Expr::Field { object, field } = &callee.node else {
+            panic!("expected enum variant field");
+        };
+        let Expr::Ident(name) = &object.node else {
+            panic!("expected rewritten local enum ident");
+        };
+        assert_eq!(name, "app__E");
+        assert_eq!(field, "A");
+
+        let Stmt::Let { ty, value, .. } = &func.body[1].node else {
+            panic!("expected lambda let statement");
+        };
+        assert_eq!(
+            ty,
+            &ast::Type::Function(
+                vec![ast::Type::Named("app__E".to_string())],
+                Box::new(ast::Type::Integer),
+            )
+        );
+        let Expr::Lambda { params, .. } = &value.node else {
+            panic!("expected lambda expression");
+        };
+        assert_eq!(params[0].ty, ast::Type::Named("app__E".to_string()));
     }
 
     #[test]

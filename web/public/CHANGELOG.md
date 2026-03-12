@@ -48,9 +48,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed namespace alias class constructor calls, so `import util as u; u.Box(2);` now passes import-check, rewrite, dependency tracking, and filtered codegen instead of failing as unknown alias usage / unknown type.
 - Fixed aliased constructors across project rewrite/import-check paths, so namespace alias enum variant constructors (`u.E.A(1)`), exact imported enum aliases (`import util.E as Enum; Enum.A(1)`), and exact imported class constructor aliases (`import util.Box as B; B(1)`) now compile end to end.
 - Fixed qualified enum match patterns such as `Enum.A(v)` and `util.E.B(w)` across parser, typechecker, and codegen, including aliased exact enum imports in project mode.
+- Fixed exact imported enum aliases in type positions, so project-mode code like `import util.E as Enum; e: Enum = Enum.A(1)` now rewrites and typechecks correctly instead of failing as a stale raw alias type.
+- Fixed local enum type annotations and local enum variant constructor paths inside function bodies in project mode, so code like `e: E = E.A(1)` and lambda params typed as `E` now rewrite consistently instead of leaking raw enum names into typecheck.
 - Fixed filtered codegen declaration-closure seeding for qualified import paths, so namespace-alias references now pull the owning declaration files/symbols into object rebuilds instead of omitting reachable imported functions like `util__twice`.
 - Fixed import-check namespace alias discovery so class-only or enum-only namespaces can still be imported with `as` aliases even when they do not expose top-level functions.
 - Bumped rewrite cache schema to invalidate stale cached rewrites after function-reference rewrite changes.
+- Bumped rewrite cache schema again to invalidate stale cached rewrites after exact imported enum alias type rewriting changed.
+- Bumped rewrite cache schema again to invalidate stale cached rewrites after local enum body/type rewriting changed.
 - Bumped typecheck summary cache schema to invalidate stale semantic/typecheck reuse after namespace-alias function-value resolution changes.
 - Changed project codegen to precompute full transitive dependency closures once per build, probe object-cache hits in parallel, and build per-file codegen programs from an indexed rewritten-file map instead of rescanning every rewritten unit.
 - Reduced object-cache bookkeeping overhead by precomputing per-file object/meta cache paths once per build instead of rehashing them repeatedly during cache probes and object emission.

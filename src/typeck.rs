@@ -2344,6 +2344,20 @@ impl TypeChecker {
                 });
                 has_ok && has_err
             }
+            ResolvedType::Class(enum_name) => self
+                .enums
+                .get(enum_name)
+                .is_some_and(|enum_info| {
+                    enum_info.variants.keys().all(|variant_name| {
+                        arms.iter().any(|arm| {
+                            matches!(
+                                &arm.pattern,
+                                Pattern::Variant(name, _)
+                                    if name.rsplit('.').next().is_some_and(|leaf| leaf == variant_name.as_str())
+                            )
+                        })
+                    })
+                }),
             _ => false,
         }
     }
@@ -5748,6 +5762,25 @@ mod tests {
             }
         "#;
         check_source(src).expect("qualified enum patterns should typecheck");
+    }
+
+    #[test]
+    fn enum_match_expression_is_exhaustive_without_wildcard() {
+        let src = r#"
+            enum E {
+                A(Integer)
+            }
+
+            function main(): None {
+                value: E = E.A(1);
+                result: Integer = match (value) {
+                    E.A(v) => v
+                };
+                require(result == 1);
+                return None;
+            }
+        "#;
+        check_source(src).expect("single-variant enum match should be exhaustive");
     }
 
     #[test]

@@ -187,15 +187,18 @@ This document describes the internal architecture of the Apex compiler.
 - **Closure callee codegen hardening**:
   - `src/codegen/core.rs` now allows non-identifier closure-valued expressions to go through the same indirect-call path as named function variables, so lambda callees compile instead of failing with `Invalid callee`.
   - `src/typeck.rs` and `src/codegen/core.rs` now distinguish function-valued fields from methods, so `obj.f(...)` routes through closure-call checking/lowering instead of member-method dispatch.
-  - `src/typeck.rs`, `src/project_rewrite.rs`, and filtered project codegen now also treat namespace-alias function values as first-class functions, so expressions like `u.add1` and calls like `u.add1(2)` survive typecheck, rewrite, and object-only codegen consistently.
-  - The same alias rewrite/codegen path now handles nested module-qualified alias calls like `u.M.add1`, not just single-segment `u.func` lookups.
-  - Namespace alias constructor calls like `u.Box(2)` now lower through project rewrite into constructor expressions and carry matching dependency edges/import-check knowledge, so class-only namespaces work with alias-based construction too.
-  - Aliased constructors now work on all currently supported paths: namespace-alias enum variants like `u.E.A(1)`, exact imported enum aliases like `import util.E as Enum; Enum.A(1)`, and exact imported class constructor aliases like `import util.Box as B; B(1)`.
+- `src/typeck.rs`, `src/project_rewrite.rs`, and filtered project codegen now also treat namespace-alias function values as first-class functions, so expressions like `u.add1` and calls like `u.add1(2)` survive typecheck, rewrite, and object-only codegen consistently.
+- The same alias rewrite/codegen path now handles nested module-qualified alias calls like `u.M.add1`, not just single-segment `u.func` lookups.
+- Namespace alias constructor calls like `u.Box(2)` now lower through project rewrite into constructor expressions and carry matching dependency edges/import-check knowledge, so class-only namespaces work with alias-based construction too.
+- Aliased constructors now work on all currently supported paths: namespace-alias enum variants like `u.E.A(1)`, exact imported enum aliases like `import util.E as Enum; Enum.A(1)`, and exact imported class constructor aliases like `import util.Box as B; B(1)`.
+- Exact imported enum aliases now also rewrite in type positions, so declarations like `e: Enum` stay consistent with `Enum.A(...)` constructor paths during project-mode typechecking.
+- Local enum type annotations and local enum variant constructor expressions inside function bodies now rewrite too, so body-local declarations like `e: E = E.A(1)` and lambda params typed as `E` stay consistent with the mangled project enum name.
   - Match patterns now also accept qualified enum variant names, so forms like `Enum.A(v)` and `util.E.B(w)` survive parse, typecheck, formatting, and codegen instead of failing on the first `.` token or dropping payload bindings in backend lowering.
   - Higher-order generic methods that return closures now survive specialization and subsequent invocation without confusing generated method symbols for fields.
   - `src/typeck.rs` now parses function-type strings nested inside generic wrappers during normalization/substitution, so wrapper types containing function values compare correctly.
   - `src/typeck.rs` now recognizes `Option.some/none` and `Result.ok/error` as frontend static constructors instead of treating `Option`/`Result` as undefined variables.
-  - `src/project_rewrite.rs` now rewrites bare function identifiers used as values in project mode, and the rewrite cache schema was bumped so old pre-fix rewrites are dropped.
+- `src/project_rewrite.rs` now rewrites bare function identifiers used as values in project mode, and the rewrite cache schema was bumped so old pre-fix rewrites are dropped.
+- The rewrite cache schema is bumped whenever alias/type rewriting changes in a cache-incompatible way, preventing stale `.apexcache` entries from reintroducing fixed project-rewrite bugs.
 
 ## Directory Structure
 
