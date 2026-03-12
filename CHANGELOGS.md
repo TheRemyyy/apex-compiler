@@ -25,6 +25,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed generic container runtime storage/equality for non-scalar values:
   - `Set<Option<T>>` / `Set<Result<T, E>>` membership checks now compare tagged values semantically instead of relying on unstable raw-byte equality
   - `Map<K, V>` now grows past its initial capacity while preserving typed key/value storage sizes instead of overflowing small fixed buffers after 8 inserts
+- Fixed collection runtime safety guards:
+  - `List.get()`, `List.set()`, and `List.pop()` now fail fast on negative/out-of-bounds indices or empty-list access instead of reading invalid memory
+  - `Map.get()` now fails fast on missing keys instead of returning a zero/null value that could later crash during field or method access
 - Fixed `apex test` handling for `@Ignore` without a reason:
   - tests marked with bare `@Ignore` are now skipped correctly instead of being executed
   - ignored tests are now counted in the final `Total` summary as well as `Ignored`

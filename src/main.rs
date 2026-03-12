@@ -7951,6 +7951,118 @@ function main(): None {
     }
 
     #[test]
+    fn compile_source_fails_fast_on_missing_map_get_object_results() {
+        let temp_root = make_temp_project_root("map-get-missing-object-runtime");
+        let source_path = temp_root.join("map_get_missing_object_runtime.apex");
+        let output_path = temp_root.join("map_get_missing_object_runtime");
+        let source = r#"
+            class Boxed {
+                value: Integer;
+                constructor(value: Integer) { this.value = value; }
+            }
+
+            function main(): Integer {
+                m: Map<Integer, Boxed> = Map<Integer, Boxed>();
+                return m.get(1).value;
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, false, true, None, None)
+            .expect("missing map.get object result should still codegen");
+
+        let status = std::process::Command::new(&output_path)
+            .status()
+            .expect("run compiled missing map.get object binary");
+        assert_eq!(status.code(), Some(1));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn compile_source_fails_fast_on_empty_list_get_object_results() {
+        let temp_root = make_temp_project_root("list-get-empty-object-runtime");
+        let source_path = temp_root.join("list_get_empty_object_runtime.apex");
+        let output_path = temp_root.join("list_get_empty_object_runtime");
+        let source = r#"
+            class Boxed {
+                value: Integer;
+                constructor(value: Integer) { this.value = value; }
+            }
+
+            function main(): Integer {
+                xs: List<Boxed> = List<Boxed>();
+                return xs.get(0).value;
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, false, true, None, None)
+            .expect("empty list.get object result should still codegen");
+
+        let status = std::process::Command::new(&output_path)
+            .status()
+            .expect("run compiled empty list.get object binary");
+        assert_eq!(status.code(), Some(1));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn compile_source_fails_fast_on_empty_list_pop_object_results() {
+        let temp_root = make_temp_project_root("list-pop-empty-object-runtime");
+        let source_path = temp_root.join("list_pop_empty_object_runtime.apex");
+        let output_path = temp_root.join("list_pop_empty_object_runtime");
+        let source = r#"
+            class Boxed {
+                value: Integer;
+                constructor(value: Integer) { this.value = value; }
+            }
+
+            function main(): Integer {
+                xs: List<Boxed> = List<Boxed>();
+                return xs.pop().value;
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, false, true, None, None)
+            .expect("empty list.pop object result should still codegen");
+
+        let status = std::process::Command::new(&output_path)
+            .status()
+            .expect("run compiled empty list.pop object binary");
+        assert_eq!(status.code(), Some(1));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn compile_source_fails_fast_on_negative_list_get_index() {
+        let temp_root = make_temp_project_root("list-get-negative-index-runtime");
+        let source_path = temp_root.join("list_get_negative_index_runtime.apex");
+        let output_path = temp_root.join("list_get_negative_index_runtime");
+        let source = r#"
+            function main(): Integer {
+                xs: List<Integer> = List<Integer>();
+                xs.push(1);
+                return xs.get(-1);
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, false, true, None, None)
+            .expect("negative list.get index should still codegen");
+
+        let status = std::process::Command::new(&output_path)
+            .status()
+            .expect("run compiled negative list.get binary");
+        assert_eq!(status.code(), Some(1));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
     fn compile_source_supports_lambda_callee_calls() {
         let temp_root = make_temp_project_root("lambda-callee-codegen");
         let source_path = temp_root.join("lambda_callee.apex");

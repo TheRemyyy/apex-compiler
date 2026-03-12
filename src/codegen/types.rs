@@ -9,6 +9,27 @@ use inkwell::{AddressSpace, IntPredicate};
 use crate::codegen::core::{Codegen, CodegenError, Result};
 
 impl<'ctx> Codegen<'ctx> {
+    fn emit_runtime_error(&mut self, message: &str, global_name: &str) -> Result<()> {
+        let printf = self.get_or_declare_printf();
+        let exit_fn = self.get_or_declare_exit();
+        let msg = self
+            .builder
+            .build_global_string_ptr(&format!("{message}\n"), global_name)
+            .unwrap();
+        self.builder
+            .build_call(printf, &[msg.as_pointer_value().into()], "")
+            .unwrap();
+        self.builder
+            .build_call(
+                exit_fn,
+                &[self.context.i32_type().const_int(1, false).into()],
+                "",
+            )
+            .unwrap();
+        self.builder.build_unreachable().unwrap();
+        Ok(())
+    }
+
     fn build_value_equality(
         &mut self,
         lhs: BasicValueEnum<'ctx>,
@@ -2257,9 +2278,52 @@ impl<'ctx> Codegen<'ctx> {
                 Ok(self.context.i8_type().const_int(0, false).into())
             }
             "get" => {
-                // Get data pointer
                 let i32_type = self.context.i32_type();
                 let zero = i32_type.const_int(0, false);
+                let length_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(1, false)],
+                            "len_ptr",
+                        )
+                        .unwrap()
+                };
+                let length = self
+                    .builder
+                    .build_load(self.context.i64_type(), length_ptr, "len")
+                    .unwrap()
+                    .into_int_value();
+                let index = self.compile_expr(&args[0].node)?.into_int_value();
+                let current_fn = self.current_function.unwrap();
+                let ok_bb = self.context.append_basic_block(current_fn, "list_get.ok");
+                let fail_bb = self.context.append_basic_block(current_fn, "list_get.fail");
+                let non_negative = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::SGE,
+                        index,
+                        self.context.i64_type().const_zero(),
+                        "list_get_non_negative",
+                    )
+                    .unwrap();
+                let in_bounds = self
+                    .builder
+                    .build_int_compare(IntPredicate::SLT, index, length, "list_get_in_bounds")
+                    .unwrap();
+                let valid = self
+                    .builder
+                    .build_and(non_negative, in_bounds, "list_get_valid")
+                    .unwrap();
+                self.builder
+                    .build_conditional_branch(valid, ok_bb, fail_bb)
+                    .unwrap();
+
+                self.builder.position_at_end(fail_bb);
+                self.emit_runtime_error("List.get() index out of bounds", "list_get_oob")?;
+
+                self.builder.position_at_end(ok_bb);
                 let data_ptr_ptr = unsafe {
                     self.builder
                         .build_gep(
@@ -2280,8 +2344,6 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap()
                     .into_pointer_value();
 
-                // Calculate element pointer: data + index * 8
-                let index = self.compile_expr(&args[0].node)?.into_int_value();
                 let offset = self
                     .builder
                     .build_int_mul(
@@ -2331,7 +2393,6 @@ impl<'ctx> Codegen<'ctx> {
                 Ok(length)
             }
             "pop" => {
-                // Get current length
                 let i32_type = self.context.i32_type();
                 let zero = i32_type.const_int(0, false);
                 let length_ptr = unsafe {
@@ -2349,6 +2410,26 @@ impl<'ctx> Codegen<'ctx> {
                     .build_load(self.context.i64_type(), length_ptr, "len")
                     .unwrap()
                     .into_int_value();
+                let current_fn = self.current_function.unwrap();
+                let ok_bb = self.context.append_basic_block(current_fn, "list_pop.ok");
+                let fail_bb = self.context.append_basic_block(current_fn, "list_pop.fail");
+                let has_items = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::SGT,
+                        length,
+                        self.context.i64_type().const_zero(),
+                        "list_pop_has_items",
+                    )
+                    .unwrap();
+                self.builder
+                    .build_conditional_branch(has_items, ok_bb, fail_bb)
+                    .unwrap();
+
+                self.builder.position_at_end(fail_bb);
+                self.emit_runtime_error("List.pop() on empty list", "list_pop_empty")?;
+
+                self.builder.position_at_end(ok_bb);
 
                 // new_length = length - 1
                 let new_length = self
@@ -2413,9 +2494,52 @@ impl<'ctx> Codegen<'ctx> {
                 Ok(val)
             }
             "set" => {
-                // Get data pointer
                 let i32_type = self.context.i32_type();
                 let zero = i32_type.const_int(0, false);
+                let length_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(1, false)],
+                            "len_ptr",
+                        )
+                        .unwrap()
+                };
+                let length = self
+                    .builder
+                    .build_load(self.context.i64_type(), length_ptr, "len")
+                    .unwrap()
+                    .into_int_value();
+                let index = self.compile_expr(&args[0].node)?.into_int_value();
+                let current_fn = self.current_function.unwrap();
+                let ok_bb = self.context.append_basic_block(current_fn, "list_set.ok");
+                let fail_bb = self.context.append_basic_block(current_fn, "list_set.fail");
+                let non_negative = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::SGE,
+                        index,
+                        self.context.i64_type().const_zero(),
+                        "list_set_non_negative",
+                    )
+                    .unwrap();
+                let in_bounds = self
+                    .builder
+                    .build_int_compare(IntPredicate::SLT, index, length, "list_set_in_bounds")
+                    .unwrap();
+                let valid = self
+                    .builder
+                    .build_and(non_negative, in_bounds, "list_set_valid")
+                    .unwrap();
+                self.builder
+                    .build_conditional_branch(valid, ok_bb, fail_bb)
+                    .unwrap();
+
+                self.builder.position_at_end(fail_bb);
+                self.emit_runtime_error("List.set() index out of bounds", "list_set_oob")?;
+
+                self.builder.position_at_end(ok_bb);
                 let data_ptr_ptr = unsafe {
                     self.builder
                         .build_gep(
@@ -2436,8 +2560,6 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap()
                     .into_pointer_value();
 
-                // Calculate element pointer
-                let index = self.compile_expr(&args[0].node)?.into_int_value();
                 let offset = self
                     .builder
                     .build_int_mul(
@@ -2623,6 +2745,54 @@ impl<'ctx> Codegen<'ctx> {
                 Ok(length)
             }
             "get" => {
+                let length_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(1, false)],
+                            "len_ptr",
+                        )
+                        .unwrap()
+                };
+                let length = self
+                    .builder
+                    .build_load(self.context.i64_type(), length_ptr, "len")
+                    .unwrap()
+                    .into_int_value();
+                let index = self.compile_expr(&args[0].node)?.into_int_value();
+                let current_fn = self.current_function.unwrap();
+                let ok_bb = self
+                    .context
+                    .append_basic_block(current_fn, "list_ptr_get.ok");
+                let fail_bb = self
+                    .context
+                    .append_basic_block(current_fn, "list_ptr_get.fail");
+                let non_negative = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::SGE,
+                        index,
+                        self.context.i64_type().const_zero(),
+                        "list_ptr_get_non_negative",
+                    )
+                    .unwrap();
+                let in_bounds = self
+                    .builder
+                    .build_int_compare(IntPredicate::SLT, index, length, "list_ptr_get_in_bounds")
+                    .unwrap();
+                let valid = self
+                    .builder
+                    .build_and(non_negative, in_bounds, "list_ptr_get_valid")
+                    .unwrap();
+                self.builder
+                    .build_conditional_branch(valid, ok_bb, fail_bb)
+                    .unwrap();
+
+                self.builder.position_at_end(fail_bb);
+                self.emit_runtime_error("List.get() index out of bounds", "list_ptr_get_oob")?;
+
+                self.builder.position_at_end(ok_bb);
                 let data_ptr_ptr = unsafe {
                     self.builder
                         .build_gep(
@@ -2643,7 +2813,6 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap()
                     .into_pointer_value();
 
-                let index = self.compile_expr(&args[0].node)?.into_int_value();
                 let offset = self
                     .builder
                     .build_int_mul(
@@ -2673,6 +2842,54 @@ impl<'ctx> Codegen<'ctx> {
                 Ok(val)
             }
             "set" => {
+                let length_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            list_type.as_basic_type_enum(),
+                            list_ptr,
+                            &[zero, i32_type.const_int(1, false)],
+                            "len_ptr",
+                        )
+                        .unwrap()
+                };
+                let length = self
+                    .builder
+                    .build_load(self.context.i64_type(), length_ptr, "len")
+                    .unwrap()
+                    .into_int_value();
+                let index = self.compile_expr(&args[0].node)?.into_int_value();
+                let current_fn = self.current_function.unwrap();
+                let ok_bb = self
+                    .context
+                    .append_basic_block(current_fn, "list_ptr_set.ok");
+                let fail_bb = self
+                    .context
+                    .append_basic_block(current_fn, "list_ptr_set.fail");
+                let non_negative = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::SGE,
+                        index,
+                        self.context.i64_type().const_zero(),
+                        "list_ptr_set_non_negative",
+                    )
+                    .unwrap();
+                let in_bounds = self
+                    .builder
+                    .build_int_compare(IntPredicate::SLT, index, length, "list_ptr_set_in_bounds")
+                    .unwrap();
+                let valid = self
+                    .builder
+                    .build_and(non_negative, in_bounds, "list_ptr_set_valid")
+                    .unwrap();
+                self.builder
+                    .build_conditional_branch(valid, ok_bb, fail_bb)
+                    .unwrap();
+
+                self.builder.position_at_end(fail_bb);
+                self.emit_runtime_error("List.set() index out of bounds", "list_ptr_set_oob")?;
+
+                self.builder.position_at_end(ok_bb);
                 let data_ptr_ptr = unsafe {
                     self.builder
                         .build_gep(
@@ -2693,7 +2910,6 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap()
                     .into_pointer_value();
 
-                let index = self.compile_expr(&args[0].node)?.into_int_value();
                 let offset = self
                     .builder
                     .build_int_mul(
@@ -2723,7 +2939,6 @@ impl<'ctx> Codegen<'ctx> {
                 Ok(self.context.i8_type().const_int(0, false).into())
             }
             "pop" => {
-                // Get current length
                 let length_ptr = unsafe {
                     self.builder
                         .build_gep(
@@ -2739,6 +2954,30 @@ impl<'ctx> Codegen<'ctx> {
                     .build_load(self.context.i64_type(), length_ptr, "len")
                     .unwrap()
                     .into_int_value();
+                let current_fn = self.current_function.unwrap();
+                let ok_bb = self
+                    .context
+                    .append_basic_block(current_fn, "list_ptr_pop.ok");
+                let fail_bb = self
+                    .context
+                    .append_basic_block(current_fn, "list_ptr_pop.fail");
+                let has_items = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::SGT,
+                        length,
+                        self.context.i64_type().const_zero(),
+                        "list_ptr_pop_has_items",
+                    )
+                    .unwrap();
+                self.builder
+                    .build_conditional_branch(has_items, ok_bb, fail_bb)
+                    .unwrap();
+
+                self.builder.position_at_end(fail_bb);
+                self.emit_runtime_error("List.pop() on empty list", "list_ptr_pop_empty")?;
+
+                self.builder.position_at_end(ok_bb);
 
                 // new_length = length - 1
                 let new_length = self
@@ -3188,17 +3427,26 @@ impl<'ctx> Codegen<'ctx> {
 
                 let idx_ptr = self.builder.build_alloca(i64_type, "map_idx").unwrap();
                 let res_ptr = self.builder.build_alloca(val_llvm, "map_get_res").unwrap();
+                let found_ptr = self
+                    .builder
+                    .build_alloca(self.context.bool_type(), "map_get_found")
+                    .unwrap();
                 self.builder
                     .build_store(idx_ptr, i64_type.const_int(0, false))
                     .unwrap();
                 self.builder
                     .build_store(res_ptr, val_llvm.const_zero())
                     .unwrap();
+                self.builder
+                    .build_store(found_ptr, self.context.bool_type().const_zero())
+                    .unwrap();
 
                 let current_fn = self.current_function.unwrap();
                 let cond_bb = self.context.append_basic_block(current_fn, "map_get.cond");
                 let body_bb = self.context.append_basic_block(current_fn, "map_get.body");
                 let done_bb = self.context.append_basic_block(current_fn, "map_get.done");
+                let merge_bb = self.context.append_basic_block(current_fn, "map_get.merge");
+                let fail_bb = self.context.append_basic_block(current_fn, "map_get.fail");
                 self.builder.build_unconditional_branch(cond_bb).unwrap();
 
                 self.builder.position_at_end(cond_bb);
@@ -3256,6 +3504,9 @@ impl<'ctx> Codegen<'ctx> {
                     .build_load(val_llvm, val_slot, "found")
                     .unwrap();
                 self.builder.build_store(res_ptr, found).unwrap();
+                self.builder
+                    .build_store(found_ptr, self.context.bool_type().const_all_ones())
+                    .unwrap();
                 self.builder.build_unconditional_branch(done_bb).unwrap();
 
                 self.builder.position_at_end(next_bb);
@@ -3267,6 +3518,19 @@ impl<'ctx> Codegen<'ctx> {
                 self.builder.build_unconditional_branch(cond_bb).unwrap();
 
                 self.builder.position_at_end(done_bb);
+                let found = self
+                    .builder
+                    .build_load(self.context.bool_type(), found_ptr, "map_get_found")
+                    .unwrap()
+                    .into_int_value();
+                self.builder
+                    .build_conditional_branch(found, merge_bb, fail_bb)
+                    .unwrap();
+
+                self.builder.position_at_end(fail_bb);
+                self.emit_runtime_error("Map.get() missing key", "map_get_missing_key")?;
+
+                self.builder.position_at_end(merge_bb);
                 Ok(self
                     .builder
                     .build_load(val_llvm, res_ptr, "map_get_res")
