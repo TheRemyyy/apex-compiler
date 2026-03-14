@@ -1255,6 +1255,16 @@ impl<'ctx> Codegen<'ctx> {
                             false,
                         );
                         let i32_type = self.context.i32_type();
+                        let len_ptr = unsafe {
+                            self.builder
+                                .build_gep(
+                                    list_type.as_basic_type_enum(),
+                                    list_ptr,
+                                    &[i32_type.const_int(0, false), i32_type.const_int(1, false)],
+                                    "list_len_ptr",
+                                )
+                                .unwrap()
+                        };
                         let data_ptr_ptr = unsafe {
                             self.builder
                                 .build_gep(
@@ -1265,6 +1275,51 @@ impl<'ctx> Codegen<'ctx> {
                                 )
                                 .unwrap()
                         };
+                        let length = self
+                            .builder
+                            .build_load(self.context.i64_type(), len_ptr, "list_len")
+                            .unwrap()
+                            .into_int_value();
+                        let non_negative = self
+                            .builder
+                            .build_int_compare(
+                                IntPredicate::SGE,
+                                idx_val,
+                                self.context.i64_type().const_zero(),
+                                "list_assign_non_negative",
+                            )
+                            .unwrap();
+                        let in_bounds = self
+                            .builder
+                            .build_int_compare(
+                                IntPredicate::SLT,
+                                idx_val,
+                                length,
+                                "list_assign_in_bounds",
+                            )
+                            .unwrap();
+                        let valid = self
+                            .builder
+                            .build_and(non_negative, in_bounds, "list_assign_valid")
+                            .unwrap();
+                        let current_fn = self.current_function.unwrap();
+                        let ok_bb = self
+                            .context
+                            .append_basic_block(current_fn, "list_assign_ok");
+                        let fail_bb = self
+                            .context
+                            .append_basic_block(current_fn, "list_assign_fail");
+                        self.builder
+                            .build_conditional_branch(valid, ok_bb, fail_bb)
+                            .unwrap();
+
+                        self.builder.position_at_end(fail_bb);
+                        self.emit_runtime_error(
+                            "List assignment index out of bounds",
+                            "list_assign_index_oob",
+                        )?;
+
+                        self.builder.position_at_end(ok_bb);
                         let data_ptr = self
                             .builder
                             .build_load(

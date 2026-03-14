@@ -6399,6 +6399,22 @@ impl<'ctx> Codegen<'ctx> {
             }
 
             Stmt::Assign { target, value } => {
+                if let Expr::Index { object, index } = &target.node {
+                    if let Some(map_ty @ Type::Map(_, _)) = self.infer_object_type(&object.node) {
+                        let map_value = if let Ok(map_ptr) = self.compile_lvalue(&object.node) {
+                            map_ptr.into()
+                        } else {
+                            self.compile_expr(&object.node)?
+                        };
+                        let args = [
+                            Spanned::new(index.node.clone(), index.span.clone()),
+                            Spanned::new(value.node.clone(), value.span.clone()),
+                        ];
+                        self.compile_map_method_on_value(map_value, &map_ty, "set", &args)?;
+                        return Ok(());
+                    }
+                }
+
                 let val = self.compile_expr(&value.node)?;
                 let ptr = self.compile_lvalue(&target.node)?;
                 self.builder.build_store(ptr, val).unwrap();
@@ -9313,6 +9329,67 @@ impl<'ctx> Codegen<'ctx> {
 
         let idx = self.compile_expr(index)?.into_int_value();
         let list_ty = object_ty;
+
+        if matches!(list_ty, Some(Type::String)) {
+            let i64_type = self.context.i64_type();
+            let non_negative = self
+                .builder
+                .build_int_compare(
+                    IntPredicate::SGE,
+                    idx,
+                    i64_type.const_zero(),
+                    "string_index_non_negative",
+                )
+                .unwrap();
+            let string_ptr = obj_val.into_pointer_value();
+            let strlen_fn = self.get_or_declare_strlen();
+            let raw_length = self
+                .builder
+                .build_call(strlen_fn, &[string_ptr.into()], "string_index_len")
+                .map_err(|e| CodegenError::new(format!("strlen call failed: {}", e)))?
+                .try_as_basic_value();
+            let length = match raw_length {
+                ValueKind::Basic(BasicValueEnum::IntValue(len)) => len,
+                _ => return Err(CodegenError::new("strlen did not return an integer length")),
+            };
+            let in_bounds = self
+                .builder
+                .build_int_compare(IntPredicate::SLT, idx, length, "string_index_in_bounds")
+                .unwrap();
+            let valid = self
+                .builder
+                .build_and(non_negative, in_bounds, "string_index_valid")
+                .unwrap();
+            let current_fn = self.current_function.unwrap();
+            let ok_bb = self
+                .context
+                .append_basic_block(current_fn, "string_index_ok");
+            let fail_bb = self
+                .context
+                .append_basic_block(current_fn, "string_index_fail");
+            self.builder
+                .build_conditional_branch(valid, ok_bb, fail_bb)
+                .unwrap();
+
+            self.builder.position_at_end(fail_bb);
+            self.emit_runtime_error("String index out of bounds", "string_index_oob")?;
+
+            self.builder.position_at_end(ok_bb);
+            let char_ptr = unsafe {
+                self.builder
+                    .build_gep(
+                        self.context.i8_type(),
+                        string_ptr,
+                        &[idx],
+                        "string_char_ptr",
+                    )
+                    .unwrap()
+            };
+            return Ok(self
+                .builder
+                .build_load(self.context.i8_type(), char_ptr, "string_char")
+                .unwrap());
+        }
 
         if let Some(Type::List(_)) = &list_ty {
             let i64_type = self.context.i64_type();

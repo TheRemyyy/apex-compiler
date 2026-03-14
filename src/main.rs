@@ -8989,6 +8989,83 @@ function main(): None {
     }
 
     #[test]
+    fn compile_source_runs_map_index_assignment_with_string_keys() {
+        let temp_root = make_temp_project_root("map-index-assign-runtime");
+        let source_path = temp_root.join("map_index_assign_runtime.apex");
+        let output_path = temp_root.join("map_index_assign_runtime");
+        let source = r#"
+            function main(): Integer {
+                mut m: Map<String, Integer> = Map<String, Integer>();
+                m["x"] = 21;
+                return m["x"];
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, false, true, None, None)
+            .expect("map index assignment should codegen");
+
+        let status = std::process::Command::new(&output_path)
+            .status()
+            .expect("run compiled map index assignment binary");
+        assert_eq!(status.code(), Some(21));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn compile_source_fails_fast_on_out_of_bounds_list_index_assignment() {
+        let temp_root = make_temp_project_root("list-index-assign-oob-runtime");
+        let source_path = temp_root.join("list_index_assign_oob_runtime.apex");
+        let output_path = temp_root.join("list_index_assign_oob_runtime");
+        let source = r#"
+            function main(): Integer {
+                mut xs: List<Integer> = List<Integer>();
+                xs.push(1);
+                xs[10] = 24;
+                return 24;
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, false, true, None, None)
+            .expect("out-of-bounds list assignment should still codegen");
+
+        let status = std::process::Command::new(&output_path)
+            .status()
+            .expect("run compiled list assignment oob binary");
+        assert_eq!(status.code(), Some(1));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn compile_source_fails_fast_on_negative_list_index_assignment() {
+        let temp_root = make_temp_project_root("list-index-assign-negative-runtime");
+        let source_path = temp_root.join("list_index_assign_negative_runtime.apex");
+        let output_path = temp_root.join("list_index_assign_negative_runtime");
+        let source = r#"
+            function main(): Integer {
+                mut xs: List<Integer> = List<Integer>();
+                xs.push(1);
+                xs[-1] = 25;
+                return 25;
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, false, true, None, None)
+            .expect("negative list assignment should still codegen");
+
+        let status = std::process::Command::new(&output_path)
+            .status()
+            .expect("run compiled negative list assignment binary");
+        assert_eq!(status.code(), Some(1));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
     fn compile_source_fails_fast_on_missing_map_index_object_results() {
         let temp_root = make_temp_project_root("map-index-missing-object-runtime");
         let source_path = temp_root.join("map_index_missing_object_runtime.apex");
@@ -9120,6 +9197,55 @@ function main(): None {
         let status = std::process::Command::new(&output_path)
             .status()
             .expect("run compiled negative list index operator binary");
+        assert_eq!(status.code(), Some(1));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn compile_source_runs_string_index_operator() {
+        let temp_root = make_temp_project_root("string-index-runtime");
+        let source_path = temp_root.join("string_index_runtime.apex");
+        let output_path = temp_root.join("string_index_runtime");
+        let source = r#"
+            function main(): Integer {
+                c: Char = "abc"[1];
+                if (c == 'b') { return 19; }
+                return 0;
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, false, true, None, None)
+            .expect("string index operator should codegen");
+
+        let status = std::process::Command::new(&output_path)
+            .status()
+            .expect("run compiled string index binary");
+        assert_eq!(status.code(), Some(19));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn compile_source_fails_fast_on_out_of_bounds_string_index_operator() {
+        let temp_root = make_temp_project_root("string-index-oob-runtime");
+        let source_path = temp_root.join("string_index_oob_runtime.apex");
+        let output_path = temp_root.join("string_index_oob_runtime");
+        let source = r#"
+            function main(): Integer {
+                c: Char = "abc"[10];
+                return 20;
+            }
+        "#;
+
+        fs::write(&source_path, source).expect("write source");
+        compile_source(source, &source_path, &output_path, false, true, None, None)
+            .expect("out-of-bounds string index should still codegen");
+
+        let status = std::process::Command::new(&output_path)
+            .status()
+            .expect("run compiled string index oob binary");
         assert_eq!(status.code(), Some(1));
 
         let _ = fs::remove_dir_all(temp_root);

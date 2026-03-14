@@ -64,6 +64,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - direct list indexing via `xs[i]` now uses the same bounds checks instead of bypassing the safer method path and reading invalid memory
   - direct map indexing via `m[key]` now lowers through the same typed/fail-fast lookup path as `Map.get(key)` instead of panicking in codegen or treating the map storage as a raw pointer array
   - `Map<K, V>` indexing now typechecks against the real key type `K` instead of incorrectly requiring every bracket index to be `Integer`
+  - direct string indexing via `"abc"[i]` now performs a real bounds check and returns a `Char` from the underlying string buffer instead of reading through an unchecked raw pointer offset
+  - assignments through map index syntax like `m[key] = value` now lower through the real typed `Map.set(key, value)` path instead of crashing in list-style lvalue code when `key` is not an integer offset
+  - list index assignments like `xs[i] = value` now perform the same negative/out-of-bounds checks as list reads instead of silently writing past the logical list length
 - Fixed `apex test` handling for `@Ignore` without a reason:
   - tests marked with bare `@Ignore` are now skipped correctly instead of being executed
   - ignored tests are now counted in the final `Total` summary as well as `Ignored`
