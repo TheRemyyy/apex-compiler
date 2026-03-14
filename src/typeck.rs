@@ -270,6 +270,64 @@ impl TypeChecker {
         None
     }
 
+    fn resolve_import_alias_variant(&self, alias_ident: &str) -> Option<(String, String)> {
+        if self.lookup_variable(alias_ident).is_some() {
+            return None;
+        }
+        let path = self.import_aliases.get(alias_ident)?;
+        if path.ends_with(".*") {
+            return None;
+        }
+        let (enum_path, variant_name) = path.rsplit_once('.')?;
+        let (namespace, enum_name) = enum_path
+            .rsplit_once('.')
+            .map_or((String::new(), enum_path.to_string()), |(ns, name)| {
+                (ns.to_string(), name.to_string())
+            });
+        if self.enums.contains_key(&enum_name) {
+            return Some((enum_name, variant_name.to_string()));
+        }
+        let mangled = if namespace.is_empty() {
+            enum_name.clone()
+        } else {
+            format!("{}__{}", namespace.replace('.', "__"), enum_name)
+        };
+        if self.enums.contains_key(&mangled) {
+            return Some((mangled, variant_name.to_string()));
+        }
+        let suffix = format!("__{}", enum_name);
+        let mut matches = self
+            .enums
+            .keys()
+            .filter(|candidate| *candidate == &enum_name || candidate.ends_with(&suffix))
+            .cloned()
+            .collect::<Vec<_>>();
+        matches.sort_unstable();
+        matches.dedup();
+        (matches.len() == 1).then(|| (matches[0].clone(), variant_name.to_string()))
+    }
+
+    fn resolve_enum_name(&self, name: &str) -> Option<String> {
+        if self.enums.contains_key(name) {
+            return Some(name.to_string());
+        }
+        if let Some(leaf) = name.rsplit("__").next() {
+            if leaf != name && self.enums.contains_key(leaf) {
+                return Some(leaf.to_string());
+            }
+        }
+        let suffix = format!("__{}", name);
+        let mut matches = self
+            .enums
+            .keys()
+            .filter(|candidate| *candidate == name || candidate.ends_with(&suffix))
+            .cloned()
+            .collect::<Vec<_>>();
+        matches.sort_unstable();
+        matches.dedup();
+        (matches.len() == 1).then(|| matches[0].clone())
+    }
+
     fn resolve_import_alias_module_candidate(
         &self,
         alias_ident: &str,
@@ -2479,7 +2537,13 @@ impl TypeChecker {
                 }
             }
             Pattern::Variant(name, bindings) => {
-                let variant_name = pattern_variant_leaf(name);
+                let imported_variant = (!name.contains('.'))
+                    .then(|| self.resolve_import_alias_variant(name))
+                    .flatten();
+                let variant_name = imported_variant.as_ref().map_or_else(
+                    || pattern_variant_leaf(name).to_string(),
+                    |(_, variant)| variant.clone(),
+                );
                 match expected_type {
                     ResolvedType::Option(inner) => {
                         if variant_name == "Some" && bindings.len() == 1 {
@@ -2500,8 +2564,21 @@ impl TypeChecker {
                         }
                     }
                     ResolvedType::Class(enum_name) => {
-                        if let Some(enum_info) = self.enums.get(enum_name).cloned() {
-                            if let Some(field_tys) = enum_info.variants.get(variant_name) {
+                        if imported_variant
+                            .as_ref()
+                            .is_some_and(|(owner_enum, _)| owner_enum != enum_name)
+                        {
+                            self.error(
+                                format!("Cannot match variant {} on type {}", name, expected_type),
+                                span,
+                            );
+                            return;
+                        }
+                        let resolved_enum_name = self
+                            .resolve_enum_name(enum_name)
+                            .unwrap_or_else(|| enum_name.clone());
+                        if let Some(enum_info) = self.enums.get(&resolved_enum_name).cloned() {
+                            if let Some(field_tys) = enum_info.variants.get(&variant_name) {
                                 if field_tys.len() != bindings.len() {
                                     self.error(
                                         format!(
@@ -2593,15 +2670,22 @@ impl TypeChecker {
                 has_ok && has_err
             }
             ResolvedType::Class(enum_name) => self
-                .enums
-                .get(enum_name)
+                .resolve_enum_name(enum_name)
+                .and_then(|resolved_enum_name| self.enums.get(&resolved_enum_name))
                 .is_some_and(|enum_info| {
                     enum_info.variants.keys().all(|variant_name| {
                         arms.iter().any(|arm| {
-                            matches!(
-                                &arm.pattern,
-                                Pattern::Variant(name, _)
-                                    if name.rsplit('.').next().is_some_and(|leaf| leaf == variant_name.as_str())
+                            matches!(&arm.pattern, Pattern::Variant(name, _)
+                                if (!name.contains('.')
+                                    && self
+                                        .resolve_import_alias_variant(name)
+                                        .is_some_and(|(owner_enum, imported_variant)| {
+                                            owner_enum == *enum_name && imported_variant == *variant_name
+                                        }))
+                                    || name
+                                        .rsplit('.')
+                                        .next()
+                                        .is_some_and(|leaf| leaf == variant_name.as_str())
                             )
                         })
                     })
@@ -2637,6 +2721,39 @@ impl TypeChecker {
             Expr::Ident(name) => {
                 if let Some(var) = self.lookup_variable(name) {
                     var.ty.clone()
+                } else if let Some((enum_name, variant_name)) =
+                    self.resolve_import_alias_variant(name)
+                {
+                    if let Some(enum_info) = self.enums.get(&enum_name) {
+                        if let Some(variant_fields) = enum_info.variants.get(&variant_name) {
+                            if variant_fields.is_empty() {
+                                ResolvedType::Class(enum_name)
+                            } else {
+                                self.error(
+                                    format!(
+                                        "Enum variant '{}.{}' requires {} argument(s)",
+                                        enum_name,
+                                        variant_name,
+                                        variant_fields.len()
+                                    ),
+                                    span,
+                                );
+                                ResolvedType::Unknown
+                            }
+                        } else {
+                            self.error(
+                                format!(
+                                    "Unknown variant '{}' for enum '{}'",
+                                    variant_name, enum_name
+                                ),
+                                span,
+                            );
+                            ResolvedType::Unknown
+                        }
+                    } else {
+                        self.error(format!("Undefined variable: {}", name), span);
+                        ResolvedType::Unknown
+                    }
                 } else if let Some(function_name) = self.resolve_function_value_name(name) {
                     let function_name = function_name.to_owned();
                     self.function_value_type_or_error(&function_name, span)
@@ -2688,6 +2805,7 @@ impl TypeChecker {
                 if let Expr::Ident(owner_name) = &object.node {
                     let resolved_owner = self
                         .resolve_import_alias_symbol(owner_name)
+                        .or_else(|| self.resolve_enum_name(owner_name))
                         .unwrap_or_else(|| owner_name.clone());
                     if let Some(enum_info) = self.enums.get(&resolved_owner) {
                         if let Some(variant_fields) = enum_info.variants.get(field) {
@@ -2758,6 +2876,39 @@ impl TypeChecker {
             }
 
             Expr::Construct { ty, args } => {
+                if let Some((enum_name, variant_name)) = self.resolve_import_alias_variant(ty) {
+                    if let Some(enum_info) = self.enums.get(&enum_name).cloned() {
+                        if let Some(field_types) = enum_info.variants.get(&variant_name) {
+                            if args.len() != field_types.len() {
+                                self.error(
+                                    format!(
+                                        "Enum variant '{}.{}' expects {} argument(s), got {}",
+                                        enum_name,
+                                        variant_name,
+                                        field_types.len(),
+                                        args.len()
+                                    ),
+                                    span.clone(),
+                                );
+                            } else {
+                                for (arg, expected_ty) in args.iter().zip(field_types.iter()) {
+                                    let actual = self.check_expr(&arg.node, arg.span.clone());
+                                    if !self.types_compatible(expected_ty, &actual) {
+                                        self.error(
+                                            format!(
+                                                "Enum variant argument type mismatch: expected {}, got {}",
+                                                expected_ty, actual
+                                            ),
+                                            arg.span.clone(),
+                                        );
+                                    }
+                                }
+                            }
+                            return ResolvedType::Class(enum_name);
+                        }
+                    }
+                }
+
                 // Handle generic built-in types (e.g., List<Integer>, Set<String>)
                 if ty.contains('<') && ty.ends_with('>') {
                     let resolved = self.parse_type_string(ty);
@@ -3397,9 +3548,54 @@ impl TypeChecker {
             Expr::Ident(name) => self.resolve_import_alias_symbol(name),
             _ => None,
         };
+        let aliased_variant_call = match callee {
+            Expr::Ident(name) => self.resolve_import_alias_variant(name),
+            _ => None,
+        };
 
         // 1. Built-in functions (special handling for println, etc.)
         if let Expr::Ident(name) = callee {
+            if let Some((enum_name, variant_name)) = &aliased_variant_call {
+                if !type_args.is_empty() {
+                    self.error(
+                        format!(
+                            "Enum variant '{}.{}' does not accept type arguments",
+                            enum_name, variant_name
+                        ),
+                        span.clone(),
+                    );
+                }
+                if let Some(enum_info) = self.enums.get(enum_name).cloned() {
+                    if let Some(field_types) = enum_info.variants.get(variant_name) {
+                        if args.len() != field_types.len() {
+                            self.error(
+                                format!(
+                                    "Enum variant '{}.{}' expects {} argument(s), got {}",
+                                    enum_name,
+                                    variant_name,
+                                    field_types.len(),
+                                    args.len()
+                                ),
+                                span.clone(),
+                            );
+                        } else {
+                            for (arg, expected_ty) in args.iter().zip(field_types.iter()) {
+                                let actual = self.check_expr(&arg.node, arg.span.clone());
+                                if !self.types_compatible(expected_ty, &actual) {
+                                    self.error(
+                                        format!(
+                                            "Enum variant argument type mismatch: expected {}, got {}",
+                                            expected_ty, actual
+                                        ),
+                                        arg.span.clone(),
+                                    );
+                                }
+                            }
+                        }
+                        return ResolvedType::Class(enum_name.clone());
+                    }
+                }
+            }
             let resolved_name = canonical_ident_call.as_deref().unwrap_or(name);
             if !type_args.is_empty() && Self::builtin_required_effect(resolved_name).is_some() {
                 self.error(
@@ -3606,7 +3802,10 @@ impl TypeChecker {
                     }
                 }
 
-                let resolved_module = name.clone();
+                let resolved_module = self
+                    .resolve_import_alias_symbol(name)
+                    .or_else(|| self.resolve_enum_name(name))
+                    .unwrap_or_else(|| name.clone());
 
                 if matches!(
                     resolved_module.as_str(),

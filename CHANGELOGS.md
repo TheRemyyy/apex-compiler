@@ -34,6 +34,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - nested tagged keys like `Map<Option<Class>, V>` now also work end-to-end because `Option<T>` payload equality now composes correctly over pointer-backed class values
 - Fixed enum container keys with multiple variants:
   - enum values now zero-initialize inactive payload slots during construction instead of leaving them `undef`, so `Map<Enum, V>` and `Set<Enum>` lookups no longer fail spuriously for multi-variant enums
+- Fixed exact imported enum variant aliases in project mode:
+  - forms like `import app.E.B as Variant; e: E = Variant(2);` now resolve as real enum variant constructors instead of leaking `Unknown type: Variant`
+  - dependency graph/import closure resolution now treats exact variant imports as owning the parent enum file, so semantic components no longer split away the enum metadata needed for constructor checking and match exhaustiveness
 - Fixed nested enum payload handling:
   - nested enum-by-value payloads are now rejected during typechecking with a direct diagnostic instead of slipping through and panicking later in backend enum payload encoding
 - Fixed collection runtime safety guards:

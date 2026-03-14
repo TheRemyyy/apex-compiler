@@ -975,6 +975,25 @@ fn extend_declaration_symbols_for_exact_import(
         return;
     };
 
+    if let Some((enum_namespace, enum_name)) = namespace.rsplit_once('.') {
+        if global_enum_map
+            .get(enum_name)
+            .is_some_and(|owner_ns| owner_ns == enum_namespace)
+        {
+            if let Some(owner_file) = global_enum_file_map.get(enum_name) {
+                if closure_files.contains(owner_file) {
+                    declaration_symbols.insert(mangle_project_symbol_for_codegen(
+                        enum_namespace,
+                        entry_namespace,
+                        enum_name,
+                    ));
+                    stack.push(owner_file.clone());
+                }
+            }
+            return;
+        }
+    }
+
     let mut push_owner = |owner_ns: &str, owner_file: &Path| {
         if owner_ns == namespace && closure_files.contains(owner_file) {
             declaration_symbols.insert(mangle_project_symbol_for_codegen(
@@ -1578,6 +1597,15 @@ fn import_path_owner_file<'a>(
     global_module_file_map: &'a HashMap<String, PathBuf>,
 ) -> Option<&'a PathBuf> {
     let (namespace, symbol) = path.rsplit_once('.')?;
+
+    if let Some((enum_namespace, enum_name)) = namespace.rsplit_once('.') {
+        if global_enum_map
+            .get(enum_name)
+            .is_some_and(|owner_ns| owner_ns == enum_namespace)
+        {
+            return global_enum_file_map.get(enum_name);
+        }
+    }
 
     if global_function_map
         .get(symbol)
@@ -6890,6 +6918,35 @@ function main(): None {
         with_current_dir(&temp_root, || {
             build_project(false, false, true, false, false)
                 .expect("project build should support unit enum variant values");
+        });
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn project_build_supports_exact_imported_enum_variant_aliases() {
+        let temp_root = make_temp_project_root("exact-enum-variant-alias-project");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(
+            &temp_root,
+            &["src/main.apex", "src/util.apex"],
+            "src/main.apex",
+            "smoke",
+        );
+        fs::write(
+            src_dir.join("util.apex"),
+            "package app;\nenum E { A(Integer) B(Integer) }\n",
+        )
+        .expect("write util");
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nimport app.E.B as Variant;\nfunction main(): None { e: E = Variant(2); match (e) { E.A(v) => { require(false); } E.B(v) => { require(v == 2); } } return None; }\n",
+        )
+        .expect("write main");
+
+        with_current_dir(&temp_root, || {
+            build_project(false, false, true, false, false)
+                .expect("project build should support exact imported enum variant aliases");
         });
 
         let _ = fs::remove_dir_all(temp_root);

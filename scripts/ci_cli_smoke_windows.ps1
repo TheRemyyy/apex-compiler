@@ -35,6 +35,10 @@ $bashScriptUnix = (& $bashCommand.Source -lc "cygpath -u '$bashScript'").Trim()
 $compilerUnix = (& $bashCommand.Source -lc "cygpath -u '$compilerInput'").Trim()
 $repoRootUnix = (& $bashCommand.Source -lc "cygpath -u '$repoRoot'").Trim()
 
+Write-Host "bashScriptUnix: $bashScriptUnix"
+Write-Host "compilerUnix: $compilerUnix"
+Write-Host "repoRootUnix: $repoRootUnix"
+
 if (-not $bashScriptUnix) {
     throw "Failed to convert smoke script path for bash: $bashScript"
 }
@@ -55,8 +59,11 @@ export CI_SKIP_COMPILER_BUILD='$ciSkip'
 '$bashScriptUnix'
 "@
 
-& $bashCommand.Source --noprofile --norc -lc $bashRun
+$bashOutput = & $bashCommand.Source --noprofile --norc -lc $bashRun 2>&1
 $exitCode = $LASTEXITCODE
+Write-Host "Bash output:"
+Write-Host $bashOutput
+Write-Host "Bash exit code: $exitCode"
 if ($exitCode -ne 0) {
     Write-Error "Windows CLI smoke wrapper failed with exit code $exitCode"
     exit $exitCode

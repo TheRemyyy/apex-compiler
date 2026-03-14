@@ -22,6 +22,25 @@ fn alias_qualified_symbol_name(alias: &str, symbol_name: &str) -> String {
     format!("{}.{}", alias, symbol_name.replace("__", "."))
 }
 
+fn resolve_exact_imported_variant_alias(
+    import_ns: &str,
+    symbol_name: &str,
+    global_enum_map: &HashMap<String, String>,
+) -> Option<(String, String, String)> {
+    if symbol_name.contains('.') || symbol_name.contains("__") {
+        return None;
+    }
+    let (owner_ns, enum_name) = import_ns
+        .rsplit_once('.')
+        .map_or((String::new(), import_ns.to_string()), |(ns, name)| {
+            (ns.to_string(), name.to_string())
+        });
+    global_enum_map
+        .get(&enum_name)
+        .filter(|candidate_owner| *candidate_owner == &owner_ns)
+        .map(|_| (owner_ns, enum_name, symbol_name.to_string()))
+}
+
 fn format_type_string(ty: &ast::Type) -> String {
     match ty {
         ast::Type::Integer => "Integer".to_string(),
@@ -1341,6 +1360,58 @@ fn rewrite_expr_calls_for_project(
                                 .collect(),
                         };
                     }
+                    if let Some((import_ns, symbol_name)) = imported_modules.get(name) {
+                        if let Some((owner_ns, enum_name, variant_name)) =
+                            resolve_exact_imported_variant_alias(
+                                import_ns,
+                                symbol_name,
+                                global_enum_map,
+                            )
+                        {
+                            return Expr::Call {
+                                callee: Box::new(ast::Spanned::new(
+                                    Expr::Field {
+                                        object: Box::new(ast::Spanned::new(
+                                            Expr::Ident(mangle_project_symbol(
+                                                &owner_ns,
+                                                entry_namespace,
+                                                &enum_name,
+                                            )),
+                                            callee.span.clone(),
+                                        )),
+                                        field: variant_name,
+                                    },
+                                    callee.span.clone(),
+                                )),
+                                args: args
+                                    .iter()
+                                    .map(|arg| {
+                                        ast::Spanned::new(
+                                            rewrite_expr_calls_for_project(
+                                                &arg.node,
+                                                current_namespace,
+                                                entry_namespace,
+                                                local_functions,
+                                                imported_map,
+                                                global_function_map,
+                                                local_classes,
+                                                imported_classes,
+                                                global_class_map,
+                                                imported_enums,
+                                                global_enum_map,
+                                                local_modules,
+                                                imported_modules,
+                                                global_module_map,
+                                                scopes,
+                                            ),
+                                            arg.span.clone(),
+                                        )
+                                    })
+                                    .collect(),
+                                type_args: vec![],
+                            };
+                        }
+                    }
                 }
             }
             let rewritten_callee = match &callee.node {
@@ -2495,45 +2566,96 @@ fn rewrite_expr_calls_for_project(
                 index.span.clone(),
             )),
         },
-        Expr::Construct { ty, args } => Expr::Construct {
-            ty: rewrite_construct_type_name_for_project(
-                ty,
-                current_namespace,
-                local_classes,
-                imported_classes,
-                global_class_map,
-                &collect_local_enum_names(global_enum_map, current_namespace),
-                imported_enums,
-                global_enum_map,
-                imported_modules,
-                entry_namespace,
-            ),
-            args: args
-                .iter()
-                .map(|a| {
-                    ast::Spanned::new(
-                        rewrite_expr_calls_for_project(
-                            &a.node,
-                            current_namespace,
-                            entry_namespace,
-                            local_functions,
-                            imported_map,
-                            global_function_map,
-                            local_classes,
-                            imported_classes,
-                            global_class_map,
-                            imported_enums,
-                            global_enum_map,
-                            local_modules,
-                            imported_modules,
-                            global_module_map,
-                            scopes,
-                        ),
-                        a.span.clone(),
-                    )
-                })
-                .collect(),
-        },
+        Expr::Construct { ty, args } => {
+            if let Some((import_ns, symbol_name)) = imported_modules.get(ty) {
+                if let Some((owner_ns, enum_name, variant_name)) =
+                    resolve_exact_imported_variant_alias(import_ns, symbol_name, global_enum_map)
+                {
+                    return Expr::Call {
+                        callee: Box::new(ast::Spanned::new(
+                            Expr::Field {
+                                object: Box::new(ast::Spanned::new(
+                                    Expr::Ident(mangle_project_symbol(
+                                        &owner_ns,
+                                        entry_namespace,
+                                        &enum_name,
+                                    )),
+                                    ast::Span::default(),
+                                )),
+                                field: variant_name,
+                            },
+                            ast::Span::default(),
+                        )),
+                        args: args
+                            .iter()
+                            .map(|a| {
+                                ast::Spanned::new(
+                                    rewrite_expr_calls_for_project(
+                                        &a.node,
+                                        current_namespace,
+                                        entry_namespace,
+                                        local_functions,
+                                        imported_map,
+                                        global_function_map,
+                                        local_classes,
+                                        imported_classes,
+                                        global_class_map,
+                                        imported_enums,
+                                        global_enum_map,
+                                        local_modules,
+                                        imported_modules,
+                                        global_module_map,
+                                        scopes,
+                                    ),
+                                    a.span.clone(),
+                                )
+                            })
+                            .collect(),
+                        type_args: vec![],
+                    };
+                }
+            }
+
+            Expr::Construct {
+                ty: rewrite_construct_type_name_for_project(
+                    ty,
+                    current_namespace,
+                    local_classes,
+                    imported_classes,
+                    global_class_map,
+                    &collect_local_enum_names(global_enum_map, current_namespace),
+                    imported_enums,
+                    global_enum_map,
+                    imported_modules,
+                    entry_namespace,
+                ),
+                args: args
+                    .iter()
+                    .map(|a| {
+                        ast::Spanned::new(
+                            rewrite_expr_calls_for_project(
+                                &a.node,
+                                current_namespace,
+                                entry_namespace,
+                                local_functions,
+                                imported_map,
+                                global_function_map,
+                                local_classes,
+                                imported_classes,
+                                global_class_map,
+                                imported_enums,
+                                global_enum_map,
+                                local_modules,
+                                imported_modules,
+                                global_module_map,
+                                scopes,
+                            ),
+                            a.span.clone(),
+                        )
+                    })
+                    .collect(),
+            }
+        }
         Expr::Lambda { params, body } => {
             push_scope(scopes);
             if let Some(scope) = scopes.last_mut() {
@@ -2983,6 +3105,24 @@ fn rewrite_expr_calls_for_project(
                     Expr::Ident(symbol_name.clone())
                 } else {
                     Expr::Ident(mangle_project_symbol(ns, entry_namespace, symbol_name))
+                }
+            } else if let Some((import_ns, symbol_name)) = imported_modules.get(name) {
+                if let Some((owner_ns, enum_name, variant_name)) =
+                    resolve_exact_imported_variant_alias(import_ns, symbol_name, global_enum_map)
+                {
+                    Expr::Field {
+                        object: Box::new(ast::Spanned::new(
+                            Expr::Ident(mangle_project_symbol(
+                                &owner_ns,
+                                entry_namespace,
+                                &enum_name,
+                            )),
+                            ast::Span::default(),
+                        )),
+                        field: variant_name,
+                    }
+                } else {
+                    Expr::Ident(name.clone())
                 }
             } else if let Some(ns) = global_function_map.get(name) {
                 Expr::Ident(mangle_project_symbol(ns, entry_namespace, name))
@@ -3539,6 +3679,78 @@ mod tests {
         };
         assert_eq!(name, "util__E");
         assert_eq!(field, "A");
+    }
+
+    #[test]
+    fn rewrites_exact_imported_enum_variant_alias_calls() {
+        let program = Program {
+            package: Some("app".to_string()),
+            declarations: vec![
+                sp(Decl::Import(ast::ImportDecl {
+                    path: "util.E.B".to_string(),
+                    alias: Some("Variant".to_string()),
+                })),
+                sp(Decl::Function(ast::FunctionDecl {
+                    name: "main".to_string(),
+                    generic_params: vec![],
+                    params: vec![],
+                    is_variadic: false,
+                    extern_abi: None,
+                    extern_link_name: None,
+                    return_type: ast::Type::None,
+                    body: vec![sp(Stmt::Expr(sp(Expr::Call {
+                        callee: Box::new(sp(Expr::Ident("Variant".to_string()))),
+                        args: vec![sp(Expr::Literal(ast::Literal::Integer(2)))],
+                        type_args: vec![],
+                    })))],
+                    is_async: false,
+                    is_extern: false,
+                    visibility: ast::Visibility::Private,
+                    attributes: vec![],
+                })),
+            ],
+        };
+
+        let rewritten = rewrite_program_for_project(
+            &program,
+            "app",
+            "app",
+            &HashMap::from([("app".to_string(), HashSet::from(["main".to_string()]))]),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::from([("util".to_string(), HashSet::from(["E".to_string()]))]),
+            &HashMap::from([("E".to_string(), "util".to_string())]),
+            &HashMap::new(),
+            &HashMap::new(),
+            &[ImportDecl {
+                path: "util.E.B".to_string(),
+                alias: Some("Variant".to_string()),
+            }],
+        );
+
+        let func = rewritten
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Decl::Function(func) if func.name == "main" => Some(func),
+                _ => None,
+            })
+            .expect("expected main function declaration");
+        let Stmt::Expr(expr_stmt) = &func.body[0].node else {
+            panic!("expected expr statement");
+        };
+        let Expr::Call { callee, .. } = &expr_stmt.node else {
+            panic!("expected rewritten enum variant call");
+        };
+        let Expr::Field { object, field } = &callee.node else {
+            panic!("expected rewritten enum variant field callee");
+        };
+        let Expr::Ident(name) = &object.node else {
+            panic!("expected rewritten enum ident");
+        };
+        assert_eq!(name, "util__E");
+        assert_eq!(field, "B");
     }
 
     #[test]
