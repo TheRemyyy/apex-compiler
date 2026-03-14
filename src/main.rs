@@ -9794,6 +9794,57 @@ function main(): None {
     }
 
     #[test]
+    fn project_run_supports_local_qualified_nested_enum_match_expressions() {
+        let temp_root = make_temp_project_root("local-nested-enum-match-project");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(&temp_root, &["src/main.apex"], "src/main.apex", "smoke");
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nmodule M { enum E { A(Integer), B(Integer) } class Box { value: Integer; constructor(value: Integer) { this.value = value; } } }\nfunction main(): Integer { return (match (M.E.A(42)) { M.E.A(v) => M.Box(v), M.E.B(v) => M.Box(v) }).value; }\n",
+        )
+        .expect("write main");
+
+        with_current_dir(&temp_root, || {
+            build_project(false, false, false, false, false).expect(
+                "project build should support local qualified nested enum match expressions",
+            );
+        });
+
+        let output_path = temp_root.join("smoke");
+        let status = std::process::Command::new(&output_path)
+            .status()
+            .expect("run local nested enum match project binary");
+        assert_eq!(status.code(), Some(42));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn project_run_supports_module_local_qualified_async_function_paths() {
+        let temp_root = make_temp_project_root("module-local-qualified-async-project");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(&temp_root, &["src/main.apex"], "src/main.apex", "smoke");
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nmodule M { class Box { value: Integer; constructor(value: Integer) { this.value = value; } } async function mk(): M.Box { return M.Box(43); } }\nfunction main(): Integer { return await(M.mk()).value; }\n",
+        )
+        .expect("write main");
+
+        with_current_dir(&temp_root, || {
+            build_project(false, false, false, false, false)
+                .expect("project build should support module-local qualified async function paths");
+        });
+
+        let output_path = temp_root.join("smoke");
+        let status = std::process::Command::new(&output_path)
+            .status()
+            .expect("run module-local qualified async project binary");
+        assert_eq!(status.code(), Some(43));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
     fn compile_source_runs_direct_constructor_method_calls() {
         let temp_root = make_temp_project_root("direct-ctor-method-runtime");
         let source_path = temp_root.join("direct_ctor_method_runtime.apex");

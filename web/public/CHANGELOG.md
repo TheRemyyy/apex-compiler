@@ -57,6 +57,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed filtered project codegen for direct constructor method receivers:
   - calls like `Boxed(23).get()` now seed the owning method symbol into the declaration closure instead of linking against a missing `Boxed__get` symbol
   - filtered object emission now also activates closure-discovered body symbols that belong to the rebuilt source file itself, so direct-constructor receiver methods are compiled into the correct per-file object without duplicating imported dependency bodies
+- Fixed local qualified nested-module paths in project mode:
+  - local nested enum constructor and pattern paths like `M.E.A(42)` and `match (e) { M.E.A(v) => ... }` now rewrite correctly in expression-form matches instead of leaking `app__M` pseudo-variables into semantic analysis
+  - module-local qualified async/function paths like `async function mk(): M.Box { return M.Box(43); }` now remap `M.mk(...)` and `M.Box(...)` inside module bodies instead of leaving broken `app__M.*` chains behind after the first rewrite pass
 - Fixed `await` postfix precedence in the parser:
   - chains like `await(make_box()).get()` now parse as method calls on the awaited result instead of incorrectly swallowing the `.get()` inside the awaited operand
 - Fixed negative task timeouts:

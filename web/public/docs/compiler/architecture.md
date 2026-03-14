@@ -105,6 +105,7 @@ Runtime unwrap failure diagnostics now emit real newline-terminated panic messag
   - Qualified import paths used through namespace aliases (for example `import util as u; f = u.add1`) now seed that closure too, so imported function values and alias-qualified calls pull in the right owner declarations during filtered object rebuilds.
   - Alias-qualified class/module references (for example `u.Box(...)`) now seed dependency edges and declaration closure entries too, so constructor/object codegen sees the owning type declarations instead of treating alias-rooted constructors as isolated files.
   - Filtered object emission now also activates closure-discovered body symbols that belong to the rebuilt source file itself, so direct-constructor receiver calls such as `Boxed(...).get()` emit the required methods without duplicating imported dependency bodies in the caller object.
+  - Project rewrite now also normalizes local qualified nested-module expression paths, so local forms like `M.E.A(...)`, `match (...) { M.E.A(v) => ... }`, and module-body references like `M.mk()` / `M.Box(...)` survive the second module-local rewrite pass without leaving stale `app__M.*` chains behind.
 - **Impacted semantic view**:
   - Type checking and borrow checking now run with full bodies only for changed files and real API dependents.
   - Unchanged unaffected files participate through API projections plus cached semantic summaries.
