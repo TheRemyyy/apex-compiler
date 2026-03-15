@@ -64,6 +64,82 @@ pub struct TestSummary {
 
 /// Discover all tests in a program
 pub fn discover_tests(program: &Program) -> TestDiscovery {
+    #[allow(clippy::too_many_arguments)]
+    fn collect_suite_functions(
+        declarations: &[crate::ast::Spanned<Decl>],
+        module_prefix: Option<&str>,
+        suite_tests: &mut Vec<Test>,
+        before_all: &mut Option<FunctionDecl>,
+        before_each: &mut Option<FunctionDecl>,
+        after_each: &mut Option<FunctionDecl>,
+        after_all: &mut Option<FunctionDecl>,
+        total_tests: &mut usize,
+        ignored_tests: &mut usize,
+    ) {
+        for decl in declarations {
+            match &decl.node {
+                Decl::Function(func) => {
+                    let qualified_name = module_prefix
+                        .map(|prefix| format!("{}__{}", prefix, func.name))
+                        .unwrap_or_else(|| func.name.clone());
+                    let mut qualified_func = func.clone();
+                    qualified_func.name = qualified_name.clone();
+
+                    if has_attribute(&func.attributes, Attribute::BeforeAll) {
+                        *before_all = Some(qualified_func);
+                        continue;
+                    }
+                    if has_attribute(&func.attributes, Attribute::Before) {
+                        *before_each = Some(qualified_func);
+                        continue;
+                    }
+                    if has_attribute(&func.attributes, Attribute::After) {
+                        *after_each = Some(qualified_func);
+                        continue;
+                    }
+                    if has_attribute(&func.attributes, Attribute::AfterAll) {
+                        *after_all = Some(qualified_func);
+                        continue;
+                    }
+
+                    if has_attribute(&func.attributes, Attribute::Test) {
+                        let ignored = has_ignore_attribute(&func.attributes);
+                        let ignore_reason = get_ignore_reason(&func.attributes);
+
+                        suite_tests.push(Test {
+                            name: qualified_name,
+                            function: qualified_func,
+                            ignored,
+                            ignore_reason,
+                        });
+
+                        *total_tests += 1;
+                        if ignored {
+                            *ignored_tests += 1;
+                        }
+                    }
+                }
+                Decl::Module(module) => {
+                    let next_prefix = module_prefix
+                        .map(|prefix| format!("{}__{}", prefix, module.name))
+                        .unwrap_or_else(|| module.name.clone());
+                    collect_suite_functions(
+                        &module.declarations,
+                        Some(&next_prefix),
+                        suite_tests,
+                        before_all,
+                        before_each,
+                        after_each,
+                        after_all,
+                        total_tests,
+                        ignored_tests,
+                    );
+                }
+                Decl::Class(_) | Decl::Enum(_) | Decl::Interface(_) | Decl::Import(_) => {}
+            }
+        }
+    }
+
     let mut suites = Vec::new();
     let mut total_tests = 0;
     let mut ignored_tests = 0;
@@ -76,45 +152,17 @@ pub fn discover_tests(program: &Program) -> TestDiscovery {
     let mut after_each = None;
     let mut after_all = None;
 
-    for decl in &program.declarations {
-        if let Decl::Function(func) = &decl.node {
-            // Check for lifecycle hooks
-            if has_attribute(&func.attributes, Attribute::BeforeAll) {
-                before_all = Some(func.clone());
-                continue;
-            }
-            if has_attribute(&func.attributes, Attribute::Before) {
-                before_each = Some(func.clone());
-                continue;
-            }
-            if has_attribute(&func.attributes, Attribute::After) {
-                after_each = Some(func.clone());
-                continue;
-            }
-            if has_attribute(&func.attributes, Attribute::AfterAll) {
-                after_all = Some(func.clone());
-                continue;
-            }
-
-            // Check for @Test attribute
-            if has_attribute(&func.attributes, Attribute::Test) {
-                let ignored = has_ignore_attribute(&func.attributes);
-                let ignore_reason = get_ignore_reason(&func.attributes);
-
-                suite_tests.push(Test {
-                    name: func.name.clone(),
-                    function: func.clone(),
-                    ignored,
-                    ignore_reason,
-                });
-
-                total_tests += 1;
-                if ignored {
-                    ignored_tests += 1;
-                }
-            }
-        }
-    }
+    collect_suite_functions(
+        &program.declarations,
+        None,
+        &mut suite_tests,
+        &mut before_all,
+        &mut before_each,
+        &mut after_each,
+        &mut after_all,
+        &mut total_tests,
+        &mut ignored_tests,
+    );
 
     // Create default suite if we found any tests
     if !suite_tests.is_empty() {
@@ -595,6 +643,34 @@ function skipped(): None {
         assert_eq!(
             escape_display_text("c:\\tmp\\foo\nline2\tz"),
             "c:\\\\tmp\\\\foo\\nline2\\tz"
+        );
+    }
+
+    #[test]
+    fn discover_tests_in_nested_modules() {
+        let source = r#"
+module Tests {
+    @Before
+    function setup(): None { return None; }
+
+    @Test
+    function works(): None { return None; }
+}
+"#;
+        let tokens = tokenize(source).expect("tokenize");
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse_program().expect("parse");
+        let discovery = discover_tests(&program);
+
+        assert_eq!(discovery.total_tests, 1);
+        assert_eq!(discovery.suites[0].tests[0].name, "Tests__works");
+        assert_eq!(
+            discovery.suites[0]
+                .before_each
+                .as_ref()
+                .expect("before hook")
+                .name,
+            "Tests__setup"
         );
     }
 }

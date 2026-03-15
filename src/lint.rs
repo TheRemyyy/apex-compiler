@@ -507,24 +507,36 @@ fn apply_safe_import_fixes(source: &str, program: &Program) -> String {
 
     let mut imports = Vec::new();
     let mut body_lines = Vec::new();
+    let mut in_block_comment = false;
 
     for line in source.lines() {
         if shebang.as_ref().is_some_and(|s| s == line) {
             continue;
         }
         let trimmed = line.trim();
-        let import_prefix = trimmed
-            .split("//")
-            .next()
-            .unwrap_or("")
-            .split("/*")
-            .next()
-            .unwrap_or("")
-            .trim_end();
-        if import_prefix.starts_with("import ") && import_prefix.ends_with(';') {
-            imports.push(import_prefix.to_string());
+        let starts_block_comment = trimmed.contains("/*");
+        let ends_block_comment = trimmed.contains("*/");
+        let can_extract_import =
+            !in_block_comment && !trimmed.starts_with("//") && !trimmed.starts_with("/*");
+
+        let is_package_line = can_extract_import
+            && program
+                .package
+                .as_ref()
+                .is_some_and(|package| trimmed == format!("package {};", package));
+
+        if can_extract_import && trimmed.starts_with("import ") && trimmed.ends_with(';') {
+            imports.push(trimmed.to_string());
+        } else if is_package_line {
+            continue;
         } else {
             body_lines.push(line);
+        }
+
+        if starts_block_comment && !ends_block_comment {
+            in_block_comment = true;
+        } else if in_block_comment && ends_block_comment {
+            in_block_comment = false;
         }
     }
 
@@ -559,14 +571,7 @@ fn apply_safe_import_fixes(source: &str, program: &Program) -> String {
     }
     output.push('\n');
 
-    let body = body_lines
-        .into_iter()
-        .filter(|line| {
-            let trimmed = line.trim();
-            !trimmed.starts_with("package ") && !trimmed.starts_with("import ")
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let body = body_lines.join("\n");
     output.push_str(body.trim_matches('\n'));
     if !output.ends_with('\n') {
         output.push('\n');
@@ -819,9 +824,15 @@ fn collect_type_names(ty: &Type, used: &mut HashSet<String>) {
     match ty {
         Type::Named(name) => {
             used.insert(name.clone());
+            if let Some((prefix, _)) = name.split_once('.') {
+                used.insert(prefix.to_string());
+            }
         }
         Type::Generic(name, args) => {
             used.insert(name.clone());
+            if let Some((prefix, _)) = name.split_once('.') {
+                used.insert(prefix.to_string());
+            }
             for arg in args {
                 collect_type_names(arg, used);
             }
@@ -1100,6 +1111,37 @@ function main(): None {
             f.code == "L003"
                 && f.message
                     .contains("specific import 'std.math.Math__abs as abs_fn' appears unused")
+        }));
+    }
+
+    #[test]
+    fn fix_does_not_hoist_imports_out_of_block_comments() {
+        let source = r#"/*
+import evil.pkg;
+*/
+import std.io.*;
+
+function main(): None {
+    return None;
+}
+"#;
+        let result = lint_source(source, true).expect("lint succeeds");
+        let fixed = result.fixed_source.expect("fixed source");
+        assert!(fixed.starts_with("import std.io.*;\n\n"), "{fixed}");
+        assert!(fixed.contains("/*\nimport evil.pkg;\n*/"), "{fixed}");
+    }
+
+    #[test]
+    fn type_position_alias_usage_marks_import_as_used() {
+        let source = r#"import util as u;
+
+function main(value: u.Box): None {
+    return None;
+}
+"#;
+        let result = lint_source(source, false).expect("lint succeeds");
+        assert!(!result.findings.iter().any(|f| {
+            f.code == "L003" && f.message.contains("import 'util as u' appears unused")
         }));
     }
 }

@@ -2151,12 +2151,14 @@ impl<'ctx> Codegen<'ctx> {
                     instantiations,
                 );
             }
-            Type::Ref(inner) | Type::MutRef(inner) => Self::collect_generic_class_instantiation_from_type(
-                inner,
-                class_templates,
-                in_scope_generics,
-                instantiations,
-            ),
+            Type::Ref(inner) | Type::MutRef(inner) => {
+                Self::collect_generic_class_instantiation_from_type(
+                    inner,
+                    class_templates,
+                    in_scope_generics,
+                    instantiations,
+                )
+            }
             Type::Result(ok, err) => {
                 Self::collect_generic_class_instantiation_from_type(
                     ok,
@@ -3340,7 +3342,8 @@ impl<'ctx> Codegen<'ctx> {
             ))),
             Type::Box(inner) => {
                 let rewritten = Self::rewrite_specialized_class_type(inner, emitted_classes);
-                let spec_name = Self::generic_class_spec_name("Box", std::slice::from_ref(&rewritten));
+                let spec_name =
+                    Self::generic_class_spec_name("Box", std::slice::from_ref(&rewritten));
                 if emitted_classes.contains(&spec_name) {
                     Type::Named(spec_name)
                 } else {
@@ -3349,7 +3352,8 @@ impl<'ctx> Codegen<'ctx> {
             }
             Type::Rc(inner) => {
                 let rewritten = Self::rewrite_specialized_class_type(inner, emitted_classes);
-                let spec_name = Self::generic_class_spec_name("Rc", std::slice::from_ref(&rewritten));
+                let spec_name =
+                    Self::generic_class_spec_name("Rc", std::slice::from_ref(&rewritten));
                 if emitted_classes.contains(&spec_name) {
                     Type::Named(spec_name)
                 } else {
@@ -5606,10 +5610,7 @@ impl<'ctx> Codegen<'ctx> {
             name,
             (
                 func,
-                Type::Function(
-                    normalized_params,
-                    Box::new(normalized_return),
-                ),
+                Type::Function(normalized_params, Box::new(normalized_return)),
             ),
         );
 
@@ -5672,7 +5673,8 @@ impl<'ctx> Codegen<'ctx> {
             })?;
 
         self.current_function = Some(func);
-        self.current_return_type = Some(self.normalize_codegen_type(&Type::Named(class.name.clone())));
+        self.current_return_type =
+            Some(self.normalize_codegen_type(&Type::Named(class.name.clone())));
         let entry = self.context.append_basic_block(func, "entry");
         self.builder.position_at_end(entry);
         self.variables.clear();

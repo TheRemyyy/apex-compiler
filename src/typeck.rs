@@ -440,7 +440,9 @@ impl TypeChecker {
     }
 
     fn known_type_exists(&self, name: &str) -> bool {
-        self.classes.contains_key(name) || self.enums.contains_key(name) || self.interfaces.contains_key(name)
+        self.classes.contains_key(name)
+            || self.enums.contains_key(name)
+            || self.interfaces.contains_key(name)
     }
 
     fn resolve_known_type_name(&self, name: &str) -> Option<String> {
@@ -612,33 +614,43 @@ impl TypeChecker {
             Type::Option(inner) => {
                 let inner = self.resolve_type_with_bindings(inner, bindings);
                 self.resolve_user_defined_generic_type("Option", std::slice::from_ref(&inner))
-                    .or_else(|| self.module_scoped_generic_type("Option", std::slice::from_ref(&inner)))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Option", std::slice::from_ref(&inner))
+                    })
                     .unwrap_or_else(|| ResolvedType::Option(Box::new(inner)))
             }
             Type::Result(ok, err) => {
                 let ok = self.resolve_type_with_bindings(ok, bindings);
                 let err = self.resolve_type_with_bindings(err, bindings);
                 self.resolve_user_defined_generic_type("Result", &[ok.clone(), err.clone()])
-                    .or_else(|| self.module_scoped_generic_type("Result", &[ok.clone(), err.clone()]))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Result", &[ok.clone(), err.clone()])
+                    })
                     .unwrap_or_else(|| ResolvedType::Result(Box::new(ok), Box::new(err)))
             }
             Type::List(inner) => {
                 let inner = self.resolve_type_with_bindings(inner, bindings);
                 self.resolve_user_defined_generic_type("List", std::slice::from_ref(&inner))
-                    .or_else(|| self.module_scoped_generic_type("List", std::slice::from_ref(&inner)))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("List", std::slice::from_ref(&inner))
+                    })
                     .unwrap_or_else(|| ResolvedType::List(Box::new(inner)))
             }
             Type::Map(k, v) => {
                 let key = self.resolve_type_with_bindings(k, bindings);
                 let value = self.resolve_type_with_bindings(v, bindings);
                 self.resolve_user_defined_generic_type("Map", &[key.clone(), value.clone()])
-                    .or_else(|| self.module_scoped_generic_type("Map", &[key.clone(), value.clone()]))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Map", &[key.clone(), value.clone()])
+                    })
                     .unwrap_or_else(|| ResolvedType::Map(Box::new(key), Box::new(value)))
             }
             Type::Set(inner) => {
                 let inner = self.resolve_type_with_bindings(inner, bindings);
                 self.resolve_user_defined_generic_type("Set", std::slice::from_ref(&inner))
-                    .or_else(|| self.module_scoped_generic_type("Set", std::slice::from_ref(&inner)))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Set", std::slice::from_ref(&inner))
+                    })
                     .unwrap_or_else(|| ResolvedType::Set(Box::new(inner)))
             }
             Type::Ref(inner) => {
@@ -650,7 +662,9 @@ impl TypeChecker {
             Type::Box(inner) => {
                 let inner = self.resolve_type_with_bindings(inner, bindings);
                 self.resolve_user_defined_generic_type("Box", std::slice::from_ref(&inner))
-                    .or_else(|| self.module_scoped_generic_type("Box", std::slice::from_ref(&inner)))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Box", std::slice::from_ref(&inner))
+                    })
                     .unwrap_or_else(|| ResolvedType::Box(Box::new(inner)))
             }
             Type::Rc(inner) => {
@@ -662,25 +676,33 @@ impl TypeChecker {
             Type::Arc(inner) => {
                 let inner = self.resolve_type_with_bindings(inner, bindings);
                 self.resolve_user_defined_generic_type("Arc", std::slice::from_ref(&inner))
-                    .or_else(|| self.module_scoped_generic_type("Arc", std::slice::from_ref(&inner)))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Arc", std::slice::from_ref(&inner))
+                    })
                     .unwrap_or_else(|| ResolvedType::Arc(Box::new(inner)))
             }
             Type::Ptr(inner) => {
                 let inner = self.resolve_type_with_bindings(inner, bindings);
                 self.resolve_user_defined_generic_type("Ptr", std::slice::from_ref(&inner))
-                    .or_else(|| self.module_scoped_generic_type("Ptr", std::slice::from_ref(&inner)))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Ptr", std::slice::from_ref(&inner))
+                    })
                     .unwrap_or_else(|| ResolvedType::Ptr(Box::new(inner)))
             }
             Type::Task(inner) => {
                 let inner = self.resolve_type_with_bindings(inner, bindings);
                 self.resolve_user_defined_generic_type("Task", std::slice::from_ref(&inner))
-                    .or_else(|| self.module_scoped_generic_type("Task", std::slice::from_ref(&inner)))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Task", std::slice::from_ref(&inner))
+                    })
                     .unwrap_or_else(|| ResolvedType::Task(Box::new(inner)))
             }
             Type::Range(inner) => {
                 let inner = self.resolve_type_with_bindings(inner, bindings);
                 self.resolve_user_defined_generic_type("Range", std::slice::from_ref(&inner))
-                    .or_else(|| self.module_scoped_generic_type("Range", std::slice::from_ref(&inner)))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Range", std::slice::from_ref(&inner))
+                    })
                     .unwrap_or_else(|| ResolvedType::Range(Box::new(inner)))
             }
             Type::Function(params, ret) => ResolvedType::Function(
@@ -5271,33 +5293,43 @@ impl TypeChecker {
             Type::Option(inner) => {
                 let inner = self.resolve_type(inner);
                 self.resolve_user_defined_generic_type("Option", std::slice::from_ref(&inner))
-                    .or_else(|| self.module_scoped_generic_type("Option", std::slice::from_ref(&inner)))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Option", std::slice::from_ref(&inner))
+                    })
                     .unwrap_or_else(|| ResolvedType::Option(Box::new(inner)))
             }
             Type::Result(ok, err) => {
                 let ok = self.resolve_type(ok);
                 let err = self.resolve_type(err);
                 self.resolve_user_defined_generic_type("Result", &[ok.clone(), err.clone()])
-                    .or_else(|| self.module_scoped_generic_type("Result", &[ok.clone(), err.clone()]))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Result", &[ok.clone(), err.clone()])
+                    })
                     .unwrap_or_else(|| ResolvedType::Result(Box::new(ok), Box::new(err)))
             }
             Type::List(inner) => {
                 let inner = self.resolve_type(inner);
                 self.resolve_user_defined_generic_type("List", std::slice::from_ref(&inner))
-                    .or_else(|| self.module_scoped_generic_type("List", std::slice::from_ref(&inner)))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("List", std::slice::from_ref(&inner))
+                    })
                     .unwrap_or_else(|| ResolvedType::List(Box::new(inner)))
             }
             Type::Map(k, v) => {
                 let key = self.resolve_type(k);
                 let value = self.resolve_type(v);
                 self.resolve_user_defined_generic_type("Map", &[key.clone(), value.clone()])
-                    .or_else(|| self.module_scoped_generic_type("Map", &[key.clone(), value.clone()]))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Map", &[key.clone(), value.clone()])
+                    })
                     .unwrap_or_else(|| ResolvedType::Map(Box::new(key), Box::new(value)))
             }
             Type::Set(inner) => {
                 let inner = self.resolve_type(inner);
                 self.resolve_user_defined_generic_type("Set", std::slice::from_ref(&inner))
-                    .or_else(|| self.module_scoped_generic_type("Set", std::slice::from_ref(&inner)))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Set", std::slice::from_ref(&inner))
+                    })
                     .unwrap_or_else(|| ResolvedType::Set(Box::new(inner)))
             }
             Type::Ref(inner) => ResolvedType::Ref(Box::new(self.resolve_type(inner))),
@@ -5305,7 +5337,9 @@ impl TypeChecker {
             Type::Box(inner) => {
                 let inner = self.resolve_type(inner);
                 self.resolve_user_defined_generic_type("Box", std::slice::from_ref(&inner))
-                    .or_else(|| self.module_scoped_generic_type("Box", std::slice::from_ref(&inner)))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Box", std::slice::from_ref(&inner))
+                    })
                     .unwrap_or_else(|| ResolvedType::Box(Box::new(inner)))
             }
             Type::Rc(inner) => {
@@ -5317,25 +5351,33 @@ impl TypeChecker {
             Type::Arc(inner) => {
                 let inner = self.resolve_type(inner);
                 self.resolve_user_defined_generic_type("Arc", std::slice::from_ref(&inner))
-                    .or_else(|| self.module_scoped_generic_type("Arc", std::slice::from_ref(&inner)))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Arc", std::slice::from_ref(&inner))
+                    })
                     .unwrap_or_else(|| ResolvedType::Arc(Box::new(inner)))
             }
             Type::Ptr(inner) => {
                 let inner = self.resolve_type(inner);
                 self.resolve_user_defined_generic_type("Ptr", std::slice::from_ref(&inner))
-                    .or_else(|| self.module_scoped_generic_type("Ptr", std::slice::from_ref(&inner)))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Ptr", std::slice::from_ref(&inner))
+                    })
                     .unwrap_or_else(|| ResolvedType::Ptr(Box::new(inner)))
             }
             Type::Task(inner) => {
                 let inner = self.resolve_type(inner);
                 self.resolve_user_defined_generic_type("Task", std::slice::from_ref(&inner))
-                    .or_else(|| self.module_scoped_generic_type("Task", std::slice::from_ref(&inner)))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Task", std::slice::from_ref(&inner))
+                    })
                     .unwrap_or_else(|| ResolvedType::Task(Box::new(inner)))
             }
             Type::Range(inner) => {
                 let inner = self.resolve_type(inner);
                 self.resolve_user_defined_generic_type("Range", std::slice::from_ref(&inner))
-                    .or_else(|| self.module_scoped_generic_type("Range", std::slice::from_ref(&inner)))
+                    .or_else(|| {
+                        self.module_scoped_generic_type("Range", std::slice::from_ref(&inner))
+                    })
                     .unwrap_or_else(|| ResolvedType::Range(Box::new(inner)))
             }
             Type::Function(params, ret) => ResolvedType::Function(
@@ -5346,8 +5388,12 @@ impl TypeChecker {
                 if let Some(bound) = self.current_generic_type_bindings.get(name) {
                     return bound.clone();
                 }
-                let resolved_args = args.iter().map(|arg| self.resolve_type(arg)).collect::<Vec<_>>();
-                if let Some(resolved) = self.resolve_user_defined_generic_type(name, &resolved_args) {
+                let resolved_args = args
+                    .iter()
+                    .map(|arg| self.resolve_type(arg))
+                    .collect::<Vec<_>>();
+                if let Some(resolved) = self.resolve_user_defined_generic_type(name, &resolved_args)
+                {
                     return resolved;
                 }
                 // Handle generic types

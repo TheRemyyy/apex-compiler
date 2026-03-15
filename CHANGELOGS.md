@@ -64,6 +64,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed canonical type-name handling for qualified and builtin-shadowing user types:
   - qualified module type annotations like `item: util.Item = util.mk()` now canonicalize to the mangled owner symbol through typecheck and backend lowering instead of failing with mixed `util.Item` / `util__Item` identities or late `Unknown type: Item`
   - user-defined generic classes named like built-in containers, such as `class Box<T>`, now win consistently over the built-in `Box<T>` runtime path during parsing, type resolution, specialization discovery, and codegen, so `Box<Integer>(42).get()` no longer miscompile as a smart-pointer constructor or pointer-returning method call
+- Fixed parser-adjacent tooling and semantic checks around borrow/module/import workflows:
+  - `apex fmt` now preserves parser-valid `borrow mut` parameter ordering and keeps multi-bound generic constraints comma-separated, so formatter roundtrips no longer emit syntax the parser rejects
+  - `apex fix` no longer hoists commented-out fake imports into live import blocks, and lint alias-usage detection now counts type-position paths like `u.Box` as real uses of alias `u`
+  - borrow checking now initializes borrowed constructor parameters correctly and keeps full nested-module function prefixes during call-mode lookup, so constructor `borrow` params and calls like `Outer.Inner.keep(s)` no longer degrade into accidental moves
+  - import-check now rejects invalid namespace alias direct calls like `alias()` during import analysis instead of deferring them into later undefined-variable failures
+- Fixed tooling coverage in `apex test`, bindgen, and LSP:
+  - test discovery now includes module-nested `@Test` and lifecycle hooks, preserving their mangled names in generated runners instead of silently skipping them
+  - bindgen now accepts pointer-return C prototypes like `char *strdup(...)` and skips whole function-pointer-param prototypes instead of emitting ABI-wrong partial signatures
+  - LSP rename/references/go-to-definition now tracks pattern-bound names and recurses through nested module declarations instead of missing `match` bindings and module-local class/enum definitions
 - Fixed filtered project codegen for direct constructor method receivers:
   - calls like `Boxed(23).get()` now seed the owning method symbol into the declaration closure instead of linking against a missing `Boxed__get` symbol
   - filtered object emission now also activates closure-discovered body symbols that belong to the rebuilt source file itself, so direct-constructor receiver methods are compiled into the correct per-file object without duplicating imported dependency bodies

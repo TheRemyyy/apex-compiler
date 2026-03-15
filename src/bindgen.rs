@@ -124,11 +124,17 @@ fn generate_from_prototype(proto: &str) -> Option<String> {
         return None;
     }
 
-    let name = head_tokens[head_tokens.len() - 1];
+    let mut name = head_tokens[head_tokens.len() - 1].to_string();
+    let pointer_prefix_len = name.chars().take_while(|c| *c == '*').count();
+    let pointer_prefix = "*".repeat(pointer_prefix_len);
+    if pointer_prefix_len > 0 {
+        name = name[pointer_prefix_len..].to_string();
+    }
     if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return None;
     }
-    let ret_c = head_tokens[..head_tokens.len() - 1].join(" ");
+    let mut ret_c = head_tokens[..head_tokens.len() - 1].join(" ");
+    ret_c.push_str(&pointer_prefix);
     let ret_apex = map_c_type_to_apex(&ret_c)?;
 
     let mut params = Vec::new();
@@ -140,9 +146,8 @@ fn generate_from_prototype(proto: &str) -> Option<String> {
                 variadic = true;
                 break;
             }
-            if let Some((pname, pty)) = parse_param(part, i) {
-                params.push(format!("{}: {}", pname, pty));
-            }
+            let (pname, pty) = parse_param(part, i)?;
+            params.push(format!("{}: {}", pname, pty));
         }
     }
 
@@ -185,4 +190,24 @@ pub fn generate_bindings(header: &Path, output: Option<&Path>) -> Result<usize, 
     }
 
     Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_from_prototype;
+
+    #[test]
+    fn parses_pointer_return_prototypes() {
+        let generated = generate_from_prototype("char *strdup(const char *s)")
+            .expect("pointer return prototype should parse");
+        assert_eq!(generated, "extern(c) function strdup(s: String): String;");
+    }
+
+    #[test]
+    fn skips_function_pointer_param_prototypes_entirely() {
+        let generated = generate_from_prototype(
+            "void qsort(void *base, size_t n, size_t sz, int (*cmp)(const void*, const void*))",
+        );
+        assert!(generated.is_none());
+    }
 }

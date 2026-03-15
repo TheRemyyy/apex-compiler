@@ -866,11 +866,12 @@ fn format_params(params: &[Parameter]) -> String {
 
 fn format_param(param: &Parameter) -> String {
     let mut text = String::new();
-    if param.mutable {
-        text.push_str("mut ");
-    }
     match param.mode {
-        crate::ast::ParamMode::Owned => {}
+        crate::ast::ParamMode::Owned => {
+            if param.mutable {
+                text.push_str("mut ");
+            }
+        }
         crate::ast::ParamMode::Borrow => text.push_str("borrow "),
         crate::ast::ParamMode::BorrowMut => text.push_str("borrow mut "),
     }
@@ -891,7 +892,7 @@ fn format_generic_params(params: &[GenericParam]) -> String {
             if param.bounds.is_empty() {
                 param.name.clone()
             } else {
-                format!("{} extends {}", param.name, param.bounds.join(" + "))
+                format!("{} extends {}", param.name, param.bounds.join(", "))
             }
         })
         .collect::<Vec<_>>()
@@ -1260,5 +1261,40 @@ function main(): Result<None, String> {
         parser
             .parse_program()
             .expect("formatted output should parse");
+    }
+
+    #[test]
+    fn formats_borrow_mut_params_in_parser_order() {
+        let source = r#"
+function f(borrow mut value: String): None {
+    return None;
+}
+"#;
+        let formatted = format_source(source).expect("format succeeds");
+        assert!(
+            formatted.contains("borrow mut value: String"),
+            "{formatted}"
+        );
+        let tokens = tokenize(&formatted).expect("formatted output should lex");
+        let mut parser = Parser::new(tokens);
+        parser
+            .parse_program()
+            .expect("formatted borrow-mut params should parse");
+    }
+
+    #[test]
+    fn formats_multiple_generic_bounds_with_commas() {
+        let source = r#"
+function f<T extends A, B>(value: T): None {
+    return None;
+}
+"#;
+        let formatted = format_source(source).expect("format succeeds");
+        assert!(formatted.contains("T extends A, B"), "{formatted}");
+        let tokens = tokenize(&formatted).expect("formatted output should lex");
+        let mut parser = Parser::new(tokens);
+        parser
+            .parse_program()
+            .expect("formatted generic bounds should parse");
     }
 }

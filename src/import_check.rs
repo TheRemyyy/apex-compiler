@@ -387,6 +387,17 @@ impl<'a> ImportChecker<'a> {
 
     /// Check if a function call is valid (imported or local)
     pub fn check_function_call(&mut self, name: &str, span: Span) {
+        if self.invalid_namespace_aliases.contains(name) {
+            self.errors.push(ImportError {
+                function_name: name.to_string(),
+                defined_in: "<invalid import alias>".to_string(),
+                used_in: self.current_namespace.clone(),
+                span,
+                suggestion: None,
+            });
+            return;
+        }
+
         // Local function in the same checked program/file always wins over stdlib names.
         if self.local_functions.contains(name) {
             return;
@@ -1146,5 +1157,19 @@ function main(): None {
         let errors = check_import_errors(source);
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].function_name, "Math__abs");
+    }
+
+    #[test]
+    fn invalid_namespace_alias_direct_call_is_reported_at_import_check_time() {
+        let source = r#"
+import nope.missing as alias;
+function main(): None {
+    alias();
+    return None;
+}
+"#;
+        let errors = check_import_errors(source);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].function_name, "alias");
     }
 }

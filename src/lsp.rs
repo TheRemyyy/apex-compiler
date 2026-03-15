@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::ast::{Block, Decl, Expr, FunctionDecl, Program, Stmt};
+use crate::ast::{Block, Decl, Expr, FunctionDecl, Pattern, Program, Stmt};
 use crate::lexer;
 use crate::parser::{ParseError, Parser};
 
@@ -294,6 +294,7 @@ impl<'a> ScopedSymbolResolver<'a> {
                 self.walk_expr(expr);
                 for arm in arms {
                     self.enter_scope();
+                    self.walk_pattern_bindings(&arm.pattern, &stmt.span);
                     self.walk_block(&arm.body);
                     self.exit_scope();
                 }
@@ -357,6 +358,7 @@ impl<'a> ScopedSymbolResolver<'a> {
                 self.walk_expr(expr);
                 for arm in arms {
                     self.enter_scope();
+                    self.walk_pattern_bindings(&arm.pattern, &expr.span);
                     self.walk_block(&arm.body);
                     self.exit_scope();
                 }
@@ -403,6 +405,35 @@ impl<'a> ScopedSymbolResolver<'a> {
                 }
             }
             Expr::Literal(_) | Expr::This => {}
+        }
+    }
+
+    fn walk_pattern_bindings(&mut self, pattern: &Pattern, search_span: &std::ops::Range<usize>) {
+        match pattern {
+            Pattern::Ident(name) => {
+                if name == self.symbol {
+                    if let Some(span) =
+                        self.backend
+                            .find_name_occurrence_in_span(self.text, name, search_span)
+                    {
+                        self.declare_binding(name, span);
+                    }
+                }
+            }
+            Pattern::Variant(_, bindings) => {
+                for binding in bindings {
+                    if binding == self.symbol {
+                        if let Some(span) = self.backend.find_name_occurrence_in_span(
+                            self.text,
+                            binding,
+                            search_span,
+                        ) {
+                            self.declare_binding(binding, span);
+                        }
+                    }
+                }
+            }
+            Pattern::Wildcard | Pattern::Literal(_) => {}
         }
     }
 
@@ -610,56 +641,80 @@ impl Backend {
         text: &str,
         program: &Program,
         symbol: &str,
+        cursor_offset: usize,
     ) -> Vec<Location> {
         let mut out = Vec::new();
         for decl in &program.declarations {
-            match &decl.node {
-                Decl::Function(func) if func.name == symbol => {
-                    out.push(Location::new(
-                        uri.clone(),
-                        self.span_to_range(text, decl.span.clone()),
-                    ));
-                }
-                Decl::Class(class) if class.name == symbol => {
-                    out.push(Location::new(
-                        uri.clone(),
-                        self.span_to_range(text, decl.span.clone()),
-                    ));
-                }
-                Decl::Enum(en) if en.name == symbol => {
-                    out.push(Location::new(
-                        uri.clone(),
-                        self.span_to_range(text, decl.span.clone()),
-                    ));
-                }
-                Decl::Interface(inter) if inter.name == symbol => {
-                    out.push(Location::new(
-                        uri.clone(),
-                        self.span_to_range(text, decl.span.clone()),
-                    ));
-                }
-                Decl::Module(module) => {
-                    if module.name == symbol {
-                        out.push(Location::new(
-                            uri.clone(),
-                            self.span_to_range(text, decl.span.clone()),
-                        ));
-                    }
-                    for inner in &module.declarations {
-                        if let Decl::Function(func) = &inner.node {
-                            if func.name == symbol {
-                                out.push(Location::new(
-                                    uri.clone(),
-                                    self.span_to_range(text, inner.span.clone()),
-                                ));
-                            }
-                        }
-                    }
-                }
-                _ => {}
+            self.collect_definition_locations(text, uri, decl, symbol, &mut out);
+        }
+
+        if out.is_empty() {
+            let mut ranges = self.find_symbol_ranges(text, program, symbol, cursor_offset);
+            ranges.sort_by_key(|range| {
+                (
+                    range.start.line,
+                    range.start.character,
+                    range.end.line,
+                    range.end.character,
+                )
+            });
+            if let Some(range) = ranges.into_iter().next() {
+                out.push(Location::new(uri.clone(), range));
             }
         }
         out
+    }
+
+    fn collect_definition_locations(
+        &self,
+        text: &str,
+        uri: &Url,
+        decl: &crate::ast::Spanned<Decl>,
+        symbol: &str,
+        out: &mut Vec<Location>,
+    ) {
+        match &decl.node {
+            Decl::Function(func) if func.name == symbol => {
+                out.push(Location::new(
+                    uri.clone(),
+                    self.span_to_range(text, decl.span.clone()),
+                ));
+            }
+            Decl::Class(class) if class.name == symbol => {
+                out.push(Location::new(
+                    uri.clone(),
+                    self.span_to_range(text, decl.span.clone()),
+                ));
+            }
+            Decl::Enum(en) if en.name == symbol => {
+                out.push(Location::new(
+                    uri.clone(),
+                    self.span_to_range(text, decl.span.clone()),
+                ));
+            }
+            Decl::Interface(inter) if inter.name == symbol => {
+                out.push(Location::new(
+                    uri.clone(),
+                    self.span_to_range(text, decl.span.clone()),
+                ));
+            }
+            Decl::Module(module) => {
+                if module.name == symbol {
+                    out.push(Location::new(
+                        uri.clone(),
+                        self.span_to_range(text, decl.span.clone()),
+                    ));
+                }
+                for inner in &module.declarations {
+                    self.collect_definition_locations(text, uri, inner, symbol, out);
+                }
+            }
+            Decl::Function(_)
+            | Decl::Class(_)
+            | Decl::Enum(_)
+            | Decl::Interface(_)
+            | Decl::Import(_) => {}
+        }
     }
 
     fn find_symbol_ranges(
@@ -1261,7 +1316,13 @@ impl LanguageServer for Backend {
         if let Some(doc) = docs.get(&uri) {
             if let Some(program) = &doc.parsed {
                 if let Some(symbol) = self.word_at_position(&doc.text, pos) {
-                    let locations = self.definition_locations(&uri, &doc.text, program, &symbol);
+                    let locations = self.definition_locations(
+                        &uri,
+                        &doc.text,
+                        program,
+                        &symbol,
+                        self.position_to_offset(&doc.text, pos),
+                    );
                     if !locations.is_empty() {
                         return Ok(Some(GotoDefinitionResponse::Array(locations)));
                     }

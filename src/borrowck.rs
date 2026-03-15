@@ -201,12 +201,23 @@ impl BorrowChecker {
     }
 
     fn collect_sig(&mut self, decl: &Decl) {
+        self.collect_sig_with_prefix(decl, None);
+    }
+
+    fn collect_sig_with_prefix(&mut self, decl: &Decl, module_prefix: Option<&str>) {
         match decl {
             Decl::Function(func) => {
-                self.functions.insert(
-                    func.name.clone(),
-                    func.params.iter().map(|p| p.mode).collect(),
-                );
+                let qualified_name = module_prefix
+                    .map(|prefix| format!("{}__{}", prefix, func.name))
+                    .unwrap_or_else(|| func.name.clone());
+                self.functions
+                    .insert(qualified_name, func.params.iter().map(|p| p.mode).collect());
+                if module_prefix.is_none() {
+                    self.functions.insert(
+                        func.name.clone(),
+                        func.params.iter().map(|p| p.mode).collect(),
+                    );
+                }
             }
             Decl::Class(class) => {
                 let mut methods = HashMap::new();
@@ -245,21 +256,11 @@ impl BorrowChecker {
                 );
             }
             Decl::Module(module) => {
+                let next_prefix = module_prefix
+                    .map(|prefix| format!("{}__{}", prefix, module.name))
+                    .unwrap_or_else(|| module.name.clone());
                 for inner in &module.declarations {
-                    match &inner.node {
-                        Decl::Function(func) => {
-                            self.functions.insert(
-                                format!("{}__{}", module.name, func.name),
-                                func.params.iter().map(|p| p.mode).collect(),
-                            );
-                            // Keep unprefixed for backward compatibility.
-                            self.functions.insert(
-                                func.name.clone(),
-                                func.params.iter().map(|p| p.mode).collect(),
-                            );
-                        }
-                        _ => self.collect_sig(&inner.node),
-                    }
+                    self.collect_sig_with_prefix(&inner.node, Some(&next_prefix));
                 }
             }
             Decl::Import(import) => {
@@ -339,6 +340,19 @@ impl BorrowChecker {
                     self.needs_drop(&param.ty),
                     Some(param.ty.clone()),
                 );
+                match param.mode {
+                    ParamMode::Borrow => {
+                        if let Some(var) = self.get_var_mut(&param.name) {
+                            var.state = OwnershipState::Borrowed(1);
+                        }
+                    }
+                    ParamMode::BorrowMut => {
+                        if let Some(var) = self.get_var_mut(&param.name) {
+                            var.state = OwnershipState::MutBorrowed(0..0);
+                        }
+                    }
+                    ParamMode::Owned => {}
+                }
             }
             self.check_block(&ctor.body);
             self.exit_scope();
@@ -1140,12 +1154,34 @@ impl BorrowChecker {
                 }
             }
 
+            if let Some(path_parts) = Self::flatten_field_chain(callee) {
+                let mangled = path_parts.join("__");
+                if let Some(modes) = self.functions.get(&mangled) {
+                    return modes.clone();
+                }
+                if self.is_borrowing_stdlib_call(&mangled) {
+                    return vec![ParamMode::Borrow; arg_len];
+                }
+            }
+
             // Unknown method receiver type: stay conservative and avoid
             // implicit move-default on arguments for member-call syntax.
             return vec![ParamMode::Borrow; arg_len];
         }
 
         param_modes
+    }
+
+    fn flatten_field_chain(expr: &Expr) -> Option<Vec<String>> {
+        match expr {
+            Expr::Ident(name) => Some(vec![name.clone()]),
+            Expr::Field { object, field } => {
+                let mut parts = Self::flatten_field_chain(&object.node)?;
+                parts.push(field.clone());
+                Some(parts)
+            }
+            _ => None,
+        }
     }
 
     fn resolve_call_receiver_mode(&self, callee: &Expr) -> Option<ParamMode> {
@@ -2774,6 +2810,42 @@ mod tests {
                     consume(s);
                     return None;
                 }
+                consume(s);
+                return None;
+            }
+        "#;
+        borrow_ok(source);
+    }
+
+    #[test]
+    fn constructor_borrow_params_cannot_be_moved() {
+        let source = r#"
+            function consume(owned s: String): None { return None; }
+            class Boxed {
+                constructor(borrow s: String) {
+                    consume(s);
+                    return None;
+                }
+            }
+        "#;
+        let errors = borrow_errors(source);
+        assert!(errors
+            .iter()
+            .any(|m| m.contains("Cannot move 's' while borrowed")));
+    }
+
+    #[test]
+    fn nested_module_borrow_calls_keep_argument_usable() {
+        let source = r#"
+            module Outer {
+                module Inner {
+                    function keep(borrow s: String): None { return None; }
+                }
+            }
+            function consume(owned s: String): None { return None; }
+            function main(): None {
+                s: String = "x";
+                Outer.Inner.keep(s);
                 consume(s);
                 return None;
             }

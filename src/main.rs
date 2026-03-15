@@ -7729,9 +7729,8 @@ function main(): None {
         .expect("write main");
 
         with_current_dir(&temp_root, || {
-            build_project(false, false, true, false, false).expect(
-                "project build should support qualified module type paths end-to-end",
-            );
+            build_project(false, false, true, false, false)
+                .expect("project build should support qualified module type paths end-to-end");
         });
 
         let status = std::process::Command::new(temp_root.join("smoke"))

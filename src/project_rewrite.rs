@@ -900,21 +900,51 @@ fn rewrite_type_for_project_with_ctx(ty: &ast::Type, ctx: &RewriteTypeContext<'_
             Box::new(rewrite_type_for_project_with_ctx(ret, ctx)),
         ),
         ast::Type::Option(inner) => {
-            ast::Type::Option(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+            let rewritten_inner = rewrite_type_for_project_with_ctx(inner, ctx);
+            let rewritten_name = rewrite_named_type_name_for_project("Option", ctx);
+            if rewritten_name != "Option" {
+                ast::Type::Generic(rewritten_name, vec![rewritten_inner])
+            } else {
+                ast::Type::Option(Box::new(rewritten_inner))
+            }
         }
-        ast::Type::Result(ok, err) => ast::Type::Result(
-            Box::new(rewrite_type_for_project_with_ctx(ok, ctx)),
-            Box::new(rewrite_type_for_project_with_ctx(err, ctx)),
-        ),
+        ast::Type::Result(ok, err) => {
+            let rewritten_ok = rewrite_type_for_project_with_ctx(ok, ctx);
+            let rewritten_err = rewrite_type_for_project_with_ctx(err, ctx);
+            let rewritten_name = rewrite_named_type_name_for_project("Result", ctx);
+            if rewritten_name != "Result" {
+                ast::Type::Generic(rewritten_name, vec![rewritten_ok, rewritten_err])
+            } else {
+                ast::Type::Result(Box::new(rewritten_ok), Box::new(rewritten_err))
+            }
+        }
         ast::Type::List(inner) => {
-            ast::Type::List(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+            let rewritten_inner = rewrite_type_for_project_with_ctx(inner, ctx);
+            let rewritten_name = rewrite_named_type_name_for_project("List", ctx);
+            if rewritten_name != "List" {
+                ast::Type::Generic(rewritten_name, vec![rewritten_inner])
+            } else {
+                ast::Type::List(Box::new(rewritten_inner))
+            }
         }
-        ast::Type::Map(k, v) => ast::Type::Map(
-            Box::new(rewrite_type_for_project_with_ctx(k, ctx)),
-            Box::new(rewrite_type_for_project_with_ctx(v, ctx)),
-        ),
+        ast::Type::Map(k, v) => {
+            let rewritten_k = rewrite_type_for_project_with_ctx(k, ctx);
+            let rewritten_v = rewrite_type_for_project_with_ctx(v, ctx);
+            let rewritten_name = rewrite_named_type_name_for_project("Map", ctx);
+            if rewritten_name != "Map" {
+                ast::Type::Generic(rewritten_name, vec![rewritten_k, rewritten_v])
+            } else {
+                ast::Type::Map(Box::new(rewritten_k), Box::new(rewritten_v))
+            }
+        }
         ast::Type::Set(inner) => {
-            ast::Type::Set(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+            let rewritten_inner = rewrite_type_for_project_with_ctx(inner, ctx);
+            let rewritten_name = rewrite_named_type_name_for_project("Set", ctx);
+            if rewritten_name != "Set" {
+                ast::Type::Generic(rewritten_name, vec![rewritten_inner])
+            } else {
+                ast::Type::Set(Box::new(rewritten_inner))
+            }
         }
         ast::Type::Ref(inner) => {
             ast::Type::Ref(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
@@ -923,22 +953,58 @@ fn rewrite_type_for_project_with_ctx(ty: &ast::Type, ctx: &RewriteTypeContext<'_
             ast::Type::MutRef(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
         }
         ast::Type::Box(inner) => {
-            ast::Type::Box(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+            let rewritten_inner = rewrite_type_for_project_with_ctx(inner, ctx);
+            let rewritten_name = rewrite_named_type_name_for_project("Box", ctx);
+            if rewritten_name != "Box" {
+                ast::Type::Generic(rewritten_name, vec![rewritten_inner])
+            } else {
+                ast::Type::Box(Box::new(rewritten_inner))
+            }
         }
         ast::Type::Rc(inner) => {
-            ast::Type::Rc(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+            let rewritten_inner = rewrite_type_for_project_with_ctx(inner, ctx);
+            let rewritten_name = rewrite_named_type_name_for_project("Rc", ctx);
+            if rewritten_name != "Rc" {
+                ast::Type::Generic(rewritten_name, vec![rewritten_inner])
+            } else {
+                ast::Type::Rc(Box::new(rewritten_inner))
+            }
         }
         ast::Type::Arc(inner) => {
-            ast::Type::Arc(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+            let rewritten_inner = rewrite_type_for_project_with_ctx(inner, ctx);
+            let rewritten_name = rewrite_named_type_name_for_project("Arc", ctx);
+            if rewritten_name != "Arc" {
+                ast::Type::Generic(rewritten_name, vec![rewritten_inner])
+            } else {
+                ast::Type::Arc(Box::new(rewritten_inner))
+            }
         }
         ast::Type::Ptr(inner) => {
-            ast::Type::Ptr(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+            let rewritten_inner = rewrite_type_for_project_with_ctx(inner, ctx);
+            let rewritten_name = rewrite_named_type_name_for_project("Ptr", ctx);
+            if rewritten_name != "Ptr" {
+                ast::Type::Generic(rewritten_name, vec![rewritten_inner])
+            } else {
+                ast::Type::Ptr(Box::new(rewritten_inner))
+            }
         }
         ast::Type::Task(inner) => {
-            ast::Type::Task(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+            let rewritten_inner = rewrite_type_for_project_with_ctx(inner, ctx);
+            let rewritten_name = rewrite_named_type_name_for_project("Task", ctx);
+            if rewritten_name != "Task" {
+                ast::Type::Generic(rewritten_name, vec![rewritten_inner])
+            } else {
+                ast::Type::Task(Box::new(rewritten_inner))
+            }
         }
         ast::Type::Range(inner) => {
-            ast::Type::Range(Box::new(rewrite_type_for_project_with_ctx(inner, ctx)))
+            let rewritten_inner = rewrite_type_for_project_with_ctx(inner, ctx);
+            let rewritten_name = rewrite_named_type_name_for_project("Range", ctx);
+            if rewritten_name != "Range" {
+                ast::Type::Generic(rewritten_name, vec![rewritten_inner])
+            } else {
+                ast::Type::Range(Box::new(rewritten_inner))
+            }
         }
         _ => ty.clone(),
     }
@@ -1570,12 +1636,20 @@ fn remap_module_local_mangled_name(
     let _ = expected_prefix;
     local_symbols.iter().find_map(|symbol| {
         let unscoped = mangle_project_symbol(current_namespace, entry_namespace, symbol);
-        (name == unscoped).then(|| {
+        if name == unscoped {
+            return Some(mangle_project_symbol(
+                current_namespace,
+                entry_namespace,
+                &module_prefixed_symbol(module_prefix, symbol),
+            ));
+        }
+        name.strip_prefix(&format!("{}<", unscoped)).map(|suffix| {
             mangle_project_symbol(
                 current_namespace,
                 entry_namespace,
                 &module_prefixed_symbol(module_prefix, symbol),
-            )
+            ) + "<"
+                + suffix
         })
     })
 }
@@ -7501,6 +7575,92 @@ mod tests {
             panic!("expected rewritten constructor expression");
         };
         assert_eq!(ty, "util__M__Box<Integer>");
+        assert_eq!(args.len(), 1);
+    }
+
+    #[test]
+    fn rewrites_top_level_generic_classes_that_shadow_builtin_names() {
+        let program = Program {
+            package: Some("app".to_string()),
+            declarations: vec![
+                sp(Decl::Class(ast::ClassDecl {
+                    name: "Box".to_string(),
+                    generic_params: vec![ast::GenericParam {
+                        name: "T".to_string(),
+                        bounds: vec![],
+                    }],
+                    extends: None,
+                    implements: vec![],
+                    fields: vec![ast::Field {
+                        name: "value".to_string(),
+                        ty: ast::Type::Named("T".to_string()),
+                        mutable: false,
+                        visibility: ast::Visibility::Private,
+                    }],
+                    constructor: None,
+                    destructor: None,
+                    methods: vec![],
+                    visibility: ast::Visibility::Private,
+                })),
+                sp(Decl::Function(ast::FunctionDecl {
+                    name: "mk".to_string(),
+                    generic_params: vec![],
+                    params: vec![ast::Parameter {
+                        name: "value".to_string(),
+                        ty: ast::Type::Integer,
+                        mutable: false,
+                        mode: ast::ParamMode::Owned,
+                    }],
+                    is_variadic: false,
+                    extern_abi: None,
+                    extern_link_name: None,
+                    return_type: ast::Type::Box(Box::new(ast::Type::Integer)),
+                    body: vec![sp(Stmt::Return(Some(sp(Expr::Construct {
+                        ty: "Box<Integer>".to_string(),
+                        args: vec![sp(Expr::Ident("value".to_string()))],
+                    }))))],
+                    is_async: false,
+                    is_extern: false,
+                    visibility: ast::Visibility::Private,
+                    attributes: vec![],
+                })),
+            ],
+        };
+
+        let rewritten = rewrite_program_for_project(
+            &program,
+            "app",
+            "app",
+            &HashMap::from([("app".to_string(), HashSet::from(["mk".to_string()]))]),
+            &HashMap::new(),
+            &HashMap::from([("app".to_string(), HashSet::from(["Box".to_string()]))]),
+            &HashMap::from([("Box".to_string(), "app".to_string())]),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &[],
+        );
+
+        let func = rewritten
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Decl::Function(func) if func.name.ends_with("mk") => Some(func),
+                _ => None,
+            })
+            .expect("expected mk function declaration");
+        assert_eq!(
+            func.return_type,
+            ast::Type::Generic("app__Box".to_string(), vec![ast::Type::Integer])
+        );
+        let Stmt::Return(Some(expr)) = &func.body[0].node else {
+            panic!("expected return statement");
+        };
+        let Expr::Construct { ty, args } = &expr.node else {
+            panic!("expected rewritten constructor expression");
+        };
+        assert_eq!(ty, "app__Box<Integer>");
         assert_eq!(args.len(), 1);
     }
 }

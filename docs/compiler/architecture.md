@@ -127,8 +127,11 @@ Runtime unwrap failure diagnostics now emit real newline-terminated panic messag
 - **Scope-aware LSP rename/references**:
   - Symbol rename/reference resolution now follows lexical bindings selected at cursor position.
   - Prevents accidental edits of unrelated same-name symbols in nested/outer scopes.
+  - Pattern-bound names in `match` arms now enter the scoped binding table too, so rename/references on `Some(v)` / `Error(err)` resolve the real arm-local binding instead of falling back to plain text matching.
 - **Precise LSP hover token targeting**:
   - Hover docs are now resolved from the exact token under cursor, not from broad line substring checks.
+ - **Nested declaration lookup in LSP**:
+  - Go-to-definition now recursively searches nested modules for classes, enums, interfaces, and functions instead of stopping at one module layer or only seeing nested free functions.
 - **If-expression parsing in expression positions**:
   - Parser now supports `if (...) { ... } else { ... }` as `Expr::IfExpr` where an expression is expected.
   - `if (...) { ... }` without `else` remains valid and is `None`-typed in type analysis.
@@ -136,6 +139,8 @@ Runtime unwrap failure diagnostics now emit real newline-terminated panic messag
   - Unreachable RHS of `true || ...` and `false && ...` is no longer analyzed for move/borrow effects.
   - Constant `if` and `while(false)` paths are handled as unreachable in borrow analysis where possible.
   - Constant `if` with early termination no longer triggers false-positive downstream move/use errors.
+  - Borrowed constructor parameters now initialize with the same borrowed state as ordinary function parameters, so constructors do not accidentally treat `borrow` / `borrow mut` inputs as owned values.
+  - Nested module function calls now retain full mangled owner prefixes in borrow-mode lookup, so calls like `Outer.Inner.keep(s)` resolve the declared borrow signature instead of silently defaulting to move semantics.
 - **Improved type-check diagnostic spans**:
   - Visibility/signature diagnostics now use declaration-context spans instead of synthetic `0..0` placeholders.
 - **Match-expression correctness checks**:
@@ -146,6 +151,7 @@ Runtime unwrap failure diagnostics now emit real newline-terminated panic messag
   - Module function namespace extraction uses mangled names consistently (`Module__func`) during import resolution.
   - Nested-module local function collection now preserves full prefix chains (`A__X__f`) for correct local-shadow/import checks.
   - Namespace alias imports (`import ... as alias`) no longer implicitly grant unqualified access to all symbols in that namespace.
+  - Invalid namespace alias direct calls like `alias()` now fail during import-check instead of surviving until later undefined-name passes.
 - **Alias resolution hardening**:
   - Specific-symbol aliases (for example `import std.math.Math__abs as abs_fn`) are resolved across type checking and code generation, so aliased calls compile and execute correctly.
   - Alias canonicalization now uses symbol-table/registry lookups instead of brittle namespace-prefix checks.
@@ -200,6 +206,9 @@ Runtime unwrap failure diagnostics now emit real newline-terminated panic messag
 - **Else-if parser/formatter hardening**:
   - Statement-form and expression-form `else if` chains are now accepted by `src/parser.rs`.
   - `src/formatter.rs` preserves nested `else if` chains instead of rewriting them as `else { if ... }`.
+- **Formatter roundtrip stability**:
+  - `src/formatter.rs` now preserves parser-valid parameter mode ordering (`borrow mut x: T`) instead of emitting `mut borrow x: T`.
+  - Multi-bound generic constraints stay comma-separated in formatter output so the parser can read them back without a syntax drift step.
 - **Declaration-header parser hardening**:
   - Visibility modifiers on `module` declarations now produce a direct parser error instead of falling through to a token mismatch.
   - `class ... extends ...` now rejects comma-suffixed multi-base syntax with a direct single-base-class diagnostic.
@@ -265,6 +274,8 @@ Runtime unwrap failure diagnostics now emit real newline-terminated panic messag
 - `src/typeck.rs`: Type checker implementation.
 - `src/borrowck.rs`: Borrow checker implementation.
 - `src/formatter.rs`: AST-driven source formatter used by `apex fmt`.
+- `src/test_runner.rs`: Test discovery and generated runner pipeline; now recurses nested modules for `@Test` and lifecycle hooks.
+- `src/bindgen.rs`: Lightweight C header bridge; now keeps pointer-return prototypes and rejects whole function-pointer-param signatures instead of emitting truncated bindings.
 - `src/codegen/mod.rs`: Codegen module entry.
 - `src/codegen/core.rs`: Core IR generation and lowering.
 - `src/codegen/types.rs`: Built-in collection/Option/Result/Range codegen helpers.
