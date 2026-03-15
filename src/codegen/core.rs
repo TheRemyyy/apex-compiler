@@ -5122,6 +5122,9 @@ impl<'ctx> Codegen<'ctx> {
 
         let name = format!("{}__new", class.name);
         let func = self.module.add_function(&name, fn_type, None);
+        if name.contains("__spec__") {
+            func.set_linkage(Linkage::LinkOnceODR);
+        }
         self.functions.insert(
             name,
             (
@@ -5154,6 +5157,9 @@ impl<'ctx> Codegen<'ctx> {
 
         let name = format!("{}__{}", class.name, method.name);
         let func = self.module.add_function(&name, fn_type, None);
+        if name.contains("__spec__") {
+            func.set_linkage(Linkage::LinkOnceODR);
+        }
         self.functions.insert(
             name,
             (
@@ -5456,6 +5462,9 @@ impl<'ctx> Codegen<'ctx> {
         };
 
         let function = self.module.add_function(&func.name, fn_type, None);
+        if func.name.contains("__spec__") {
+            function.set_linkage(Linkage::LinkOnceODR);
+        }
 
         // Add optimization attributes
         // Always inline small functions

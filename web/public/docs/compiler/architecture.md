@@ -162,7 +162,7 @@ Runtime unwrap failure diagnostics now emit real newline-terminated panic messag
   - Filtered project compilation now recursively declares and compiles nested module symbols when a parent module namespace is active, preventing missing-symbol linker failures for deep module calls.
 - **Generic call safety hardening**:
   - Codegen now performs on-demand specialization for explicit generic free/module calls (for example `id<T>(...)`, `A.X.id<T>(...)`) and rewrites call sites to concrete specialized symbols.
-  - Project filtered compilation now always emits generated specialization bodies to avoid missing-symbol linker regressions.
+  - Project filtered compilation now emits dependency-owned generated class specializations only from the owning object while still allowing call-site generic method specializations to lower in the consumer object, avoiding both duplicate-symbol and missing-symbol linker regressions.
 - **Shared stdlib registry**:
   - Compiler stages now reuse a single lazy-initialized stdlib registry (`OnceLock`) instead of repeatedly constructing stdlib lookup maps during hot-path analysis and lowering.
 - **Lint scope analysis hardening**:

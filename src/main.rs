@@ -2998,37 +2998,46 @@ fn compute_semantic_project_fingerprint(
 }
 
 fn collect_active_symbols(program: &Program) -> HashSet<String> {
-    let mut symbols = HashSet::new();
-    for decl in &program.declarations {
-        match &decl.node {
+    fn collect_decl_active_symbols(
+        decl: &Decl,
+        module_prefix: Option<&str>,
+        symbols: &mut HashSet<String>,
+    ) {
+        match decl {
             Decl::Function(func) => {
-                symbols.insert(func.name.clone());
+                let name = module_prefix
+                    .map(|prefix| format!("{}__{}", prefix, func.name))
+                    .unwrap_or_else(|| func.name.clone());
+                symbols.insert(name);
             }
             Decl::Class(class) => {
-                symbols.insert(class.name.clone());
+                let name = module_prefix
+                    .map(|prefix| format!("{}__{}", prefix, class.name))
+                    .unwrap_or_else(|| class.name.clone());
+                symbols.insert(name);
             }
             Decl::Enum(en) => {
-                symbols.insert(en.name.clone());
+                let name = module_prefix
+                    .map(|prefix| format!("{}__{}", prefix, en.name))
+                    .unwrap_or_else(|| en.name.clone());
+                symbols.insert(name);
             }
             Decl::Module(module) => {
-                symbols.insert(module.name.clone());
+                let module_name = module_prefix
+                    .map(|prefix| format!("{}__{}", prefix, module.name))
+                    .unwrap_or_else(|| module.name.clone());
+                symbols.insert(module_name.clone());
                 for inner in &module.declarations {
-                    match &inner.node {
-                        Decl::Function(func) => {
-                            symbols.insert(format!("{}__{}", module.name, func.name));
-                        }
-                        Decl::Class(class) => {
-                            symbols.insert(format!("{}__{}", module.name, class.name));
-                        }
-                        Decl::Enum(en) => {
-                            symbols.insert(format!("{}__{}", module.name, en.name));
-                        }
-                        _ => {}
-                    }
+                    collect_decl_active_symbols(&inner.node, Some(&module_name), symbols);
                 }
             }
             Decl::Import(_) | Decl::Interface(_) => {}
         }
+    }
+
+    let mut symbols = HashSet::new();
+    for decl in &program.declarations {
+        collect_decl_active_symbols(&decl.node, None, &mut symbols);
     }
     symbols
 }
@@ -7539,6 +7548,66 @@ function main(): None {
             .status()
             .expect("run compiled nested generic alias method binary");
         assert_eq!(status.code(), Some(3));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn project_build_supports_namespace_alias_nested_generic_class_specializations() {
+        let temp_root = make_temp_project_root("namespace-alias-nested-generic-class-project");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(
+            &temp_root,
+            &["src/main.apex", "src/util.apex"],
+            "src/main.apex",
+            "smoke",
+        );
+        fs::write(
+            src_dir.join("util.apex"),
+            "package util;\nmodule M {\n    module N {\n        class Box<T> {\n            value: T;\n            constructor(value: T) { this.value = value; }\n            function get(): T { return this.value; }\n        }\n        function mk(value: Integer): Box<Integer> { return Box<Integer>(value); }\n        async function mk_async(value: Integer): Task<Box<Integer>> { return Box<Integer>(value); }\n    }\n}\n",
+        )
+        .expect("write util");
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nimport util as u;\nimport util.M.N.Box as B;\nfunction main(): Integer { return u.M.N.Box<Integer>(41).value + B<Integer>(1).get(); }\n",
+        )
+        .expect("write main");
+
+        with_current_dir(&temp_root, || {
+            build_project(false, false, true, false, false).expect(
+                "project build should support namespace alias nested generic class specializations",
+            );
+        });
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn project_build_supports_namespace_alias_nested_generic_method_specializations() {
+        let temp_root = make_temp_project_root("namespace-alias-nested-generic-method-project");
+        let src_dir = temp_root.join("src");
+        write_test_project_config(
+            &temp_root,
+            &["src/main.apex", "src/util.apex"],
+            "src/main.apex",
+            "smoke",
+        );
+        fs::write(
+            src_dir.join("util.apex"),
+            "package util;\nmodule M {\n    module N {\n        class Box<T> {\n            value: T;\n            constructor(value: T) { this.value = value; }\n            function map<U>(f: (T) -> U): Box<U> { return Box<U>(f(this.value)); }\n            function get(): T { return this.value; }\n        }\n        function mk(value: Integer): Box<Integer> { return Box<Integer>(value); }\n    }\n}\n",
+        )
+        .expect("write util");
+        fs::write(
+            src_dir.join("main.apex"),
+            "package app;\nimport util as u;\nfunction inc(x: Integer): Integer { return x + 1; }\nfunction main(): Integer { return u.M.N.mk(46).map<Integer>(inc).get(); }\n",
+        )
+        .expect("write main");
+
+        with_current_dir(&temp_root, || {
+            build_project(false, false, true, false, false).expect(
+                "project build should support namespace alias nested generic method specializations",
+            );
+        });
 
         let _ = fs::remove_dir_all(temp_root);
     }

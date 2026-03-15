@@ -54,6 +54,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - explicit generic method calls like `b.map<Integer>(inc).get()` now specialize across all matching owner-class instantiations instead of being dropped when both base and `__spec__` class templates exist
   - nested generic method bodies now remap module-local shadowed class constructors/types during specialization, so `module M { class Box<T> { function map<U>(...): Box<U> { return Box<U>(...); } } }` no longer returns zeroed objects at runtime
   - filtered project codegen now emits only the explicitly requested class methods for class declarations activated via method symbols, which fixes imported expression-receiver paths like `import app.M.make as make; make<Integer>(2).map<Integer>(inc).get()` without re-emitting duplicate base class symbols in the caller object
+- Fixed filtered generic specialization ownership in project object builds:
+  - nested namespace-alias and exact-import paths like `u.M.N.Box<Integer>(...)`, `await(u.M.N.mk_async(...)).get()`, and `import util.M.N.Box as B; B<Integer>(...)` no longer duplicate-link the same dependency class specialization into both caller and owner objects
+  - the filtered object pipeline now recursively marks deep nested-module declarations as active in the owning unit, so dependency generic class specializations are emitted exactly once instead of disappearing after the duplicate-symbol fix
+  - explicit generic method specializations on imported specialized classes, such as `u.M.N.mk(46).map<Integer>(inc).get()`, continue to emit from the call-site object without regressing back to missing-symbol links
 - Fixed filtered project codegen for direct constructor method receivers:
   - calls like `Boxed(23).get()` now seed the owning method symbol into the declaration closure instead of linking against a missing `Boxed__get` symbol
   - filtered object emission now also activates closure-discovered body symbols that belong to the rebuilt source file itself, so direct-constructor receiver methods are compiled into the correct per-file object without duplicating imported dependency bodies
