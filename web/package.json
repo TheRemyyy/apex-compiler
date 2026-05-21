@@ -39,7 +39,7 @@
         "@tailwindcss/vite": "^4.3.0",
         "@testing-library/jest-dom": "^6.9.1",
         "@testing-library/react": "^16.3.2",
-        "@types/jsdom": "^28.0.1",
+        "@types/jsdom": "^28.0.3",
         "@types/marked": "^6.0.0",
         "@types/node": "^25.9.1",
         "@types/react": "^19.2.15",
@@ -54,6 +54,6 @@
         "vite": "^8.0.13",
         "vite-plugin-compression": "^0.5.1",
         "vite-plugin-webfont-dl": "^3.11.1",
-        "vitest": "^4.1.6"
+        "vitest": "^4.1.7"
     }
 }
